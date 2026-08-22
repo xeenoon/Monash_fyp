@@ -22,25 +22,47 @@ _Static_assert(offsetof(FrameUniforms, time) == 592, "FrameUniforms time offset"
 _Static_assert(offsetof(FrameUniforms, near_plane) == 596, "FrameUniforms near offset");
 _Static_assert(offsetof(FrameUniforms, depth_debug) == 600, "FrameUniforms depth debug offset");
 _Static_assert(sizeof(FrameUniforms) == 608, "FrameUniforms std140 size");
+_Static_assert(sizeof(DrawPushConstants) == 128, "terrain push constant size");
 
 /* Staging capacity for the upload ring: large enough for the 2048x2048 albedo
    (16 MiB) plus the terrain mesh in a single batch. */
 #define UPLOAD_STAGING_CAPACITY (32u * 1024u * 1024u)
-#define MAX_TEXTURE_SETS 16
+#define MAX_TEXTURE_SETS 256
 
-VkDescriptorSet renderer_allocate_material_set(Renderer *r, VkImageView view, VkSampler sampler) {
+VkDescriptorSet renderer_allocate_terrain_set(Renderer *r,
+    VkImageView albedo_view, VkSampler albedo_sampler,
+    VkImageView elevation_view, VkSampler elevation_sampler) {
     VkDescriptorSetAllocateInfo alloc = { .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
         .descriptorPool = r->descriptor_pool, .descriptorSetCount = 1,
         .pSetLayouts = &r->material_set_layout };
     VkDescriptorSet set;
     VK_CHECK(vkAllocateDescriptorSets(r->device, &alloc, &set));
-    VkDescriptorImageInfo image = { .sampler = sampler, .imageView = view,
-        .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-    VkWriteDescriptorSet write = { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-        .dstSet = set, .dstBinding = 0, .descriptorCount = 1,
-        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &image };
-    vkUpdateDescriptorSets(r->device, 1, &write, 0, NULL);
+    VkDescriptorImageInfo images[2] = {
+        { .sampler = albedo_sampler, .imageView = albedo_view,
+          .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+        { .sampler = elevation_sampler, .imageView = elevation_view,
+          .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+    };
+    VkWriteDescriptorSet writes[2] = {
+        { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+          .dstSet = set, .dstBinding = 0, .descriptorCount = 1,
+          .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+          .pImageInfo = &images[0] },
+        { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+          .dstSet = set, .dstBinding = 1, .descriptorCount = 1,
+          .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+          .pImageInfo = &images[1] },
+    };
+    vkUpdateDescriptorSets(r->device, 2, writes, 0, NULL);
     return set;
+}
+
+VkDescriptorSet renderer_allocate_material_set(Renderer *r, VkImageView view, VkSampler sampler) {
+    return renderer_allocate_terrain_set(r, view, sampler, view, sampler);
+}
+
+void renderer_free_material_set(Renderer *r, VkDescriptorSet set) {
+    if (r && set) VK_CHECK(vkFreeDescriptorSets(r->device, r->descriptor_pool, 1, &set));
 }
 
 /* Descriptor roles: set 0 = per-frame UBO (vertex+fragment), set 1 = per-material
@@ -54,18 +76,24 @@ static void create_descriptors(Renderer *r) {
         .bindingCount = 1, .pBindings = &frame_binding };
     VK_CHECK(vkCreateDescriptorSetLayout(r->device, &frame_layout, NULL, &r->frame_set_layout));
 
-    VkDescriptorSetLayoutBinding material_binding = { .binding = 0,
-        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = 1,
-        .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT };
+    VkDescriptorSetLayoutBinding material_bindings[2] = {
+        { .binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+          .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT },
+        { .binding = 1, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+          .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_VERTEX_BIT },
+    };
     VkDescriptorSetLayoutCreateInfo material_layout = { .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        .bindingCount = 1, .pBindings = &material_binding };
+        .bindingCount = 2, .pBindings = material_bindings };
     VK_CHECK(vkCreateDescriptorSetLayout(r->device, &material_layout, NULL, &r->material_set_layout));
 
     VkDescriptorPoolSize pool_sizes[2] = {
         { .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = MAX_FRAMES_IN_FLIGHT },
-        { .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = MAX_TEXTURE_SETS } };
+        { .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+          .descriptorCount = MAX_TEXTURE_SETS * 2u } };
     VkDescriptorPoolCreateInfo pool = { .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-        .poolSizeCount = 2, .pPoolSizes = pool_sizes, .maxSets = MAX_FRAMES_IN_FLIGHT + MAX_TEXTURE_SETS };
+        .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
+        .poolSizeCount = 2, .pPoolSizes = pool_sizes,
+        .maxSets = MAX_FRAMES_IN_FLIGHT + MAX_TEXTURE_SETS };
     VK_CHECK(vkCreateDescriptorPool(r->device, &pool, NULL, &r->descriptor_pool));
 
     /* One persistently-mapped UBO + set per frame in flight. */
@@ -231,12 +259,16 @@ static void create_render_pass(Renderer *r, VkFormat depth_format) {
     VK_CHECK(vkCreateRenderPass(r->device, &info, NULL, &r->render_pass));
 }
 
-/* Pipeline layout is stable: set 0 frame data, set 1 material data, no push
-   constants (per-frame data lives in the set-0 UBO). Built once at init. */
+/* Pipeline layout is stable: set 0 frame data, set 1 tile textures, and one
+   minimum-guaranteed 128-byte push range for per-tile draw data. */
 static void create_pipeline_layout(Renderer *r) {
     VkDescriptorSetLayout layouts[2] = {r->frame_set_layout, r->material_set_layout};
+    VkPushConstantRange push = { .stageFlags = VK_SHADER_STAGE_VERTEX_BIT |
+                                               VK_SHADER_STAGE_FRAGMENT_BIT,
+        .offset = 0, .size = sizeof(DrawPushConstants) };
     VkPipelineLayoutCreateInfo layout_info = { .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .setLayoutCount = 2, .pSetLayouts = layouts };
+        .setLayoutCount = 2, .pSetLayouts = layouts,
+        .pushConstantRangeCount = 1, .pPushConstantRanges = &push };
     VK_CHECK(vkCreatePipelineLayout(r->device, &layout_info, NULL, &r->pipeline_layout));
 }
 
@@ -403,7 +435,8 @@ static void create_command_and_sync(Renderer *r) {
     }
 }
 
-static void record_commands(Renderer *r, uint32_t image_index, const Mesh *mesh) {
+static void record_commands(Renderer *r, uint32_t image_index,
+                            const RendererDraw *draws, uint32_t draw_count) {
     VkCommandBuffer command = r->command_buffers[r->frame];
     VkCommandBufferBeginInfo begin = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
     VK_CHECK(vkBeginCommandBuffer(command, &begin));
@@ -420,18 +453,27 @@ static void record_commands(Renderer *r, uint32_t image_index, const Mesh *mesh)
     VkRect2D scissor = {{0,0}, r->swapchain_extent};
     vkCmdSetViewport(command, 0, 1, &viewport);
     vkCmdSetScissor(command, 0, 1, &scissor);
-    /* Set 0: per-frame data. Set 1: the mesh's material, or the fallback. */
+    /* Set 0: per-frame data. Set 1 + push constants: per terrain tile. */
     vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, r->pipeline_layout, 0, 1,
         &r->frame_set[r->frame], 0, NULL);
-    VkDescriptorSet material_set = mesh->material_set ? mesh->material_set : r->fallback_material_set;
-    vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, r->pipeline_layout, 1, 1,
-        &material_set, 0, NULL);
-    mesh_draw(command, mesh);
+    for (uint32_t i = 0; i < draw_count; ++i) {
+        const Mesh *mesh = draws[i].mesh;
+        VkDescriptorSet material_set = mesh->material_set ? mesh->material_set
+                                                          : r->fallback_material_set;
+        vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            r->pipeline_layout, 1, 1, &material_set, 0, NULL);
+        vkCmdPushConstants(command, r->pipeline_layout,
+            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+            0, sizeof(draws[i].push), &draws[i].push);
+        mesh_draw(command, mesh);
+    }
     vkCmdEndRenderPass(command);
     VK_CHECK(vkEndCommandBuffer(command));
 }
 
-void renderer_draw_frame(Renderer *r, const FrameUniforms *frame, const Mesh *mesh, bool resized) {
+void renderer_draw_frame(Renderer *r, const FrameUniforms *frame,
+                         const RendererDraw *draws, uint32_t draw_count,
+                         bool resized) {
     VkFence fence = r->in_flight[r->frame];
     VK_CHECK(vkWaitForFences(r->device, 1, &fence, VK_TRUE, UINT64_MAX));
     uint32_t image_index;
@@ -445,7 +487,7 @@ void renderer_draw_frame(Renderer *r, const FrameUniforms *frame, const Mesh *me
     memcpy(r->frame_ubo[r->frame].allocation.mapped, frame, sizeof(*frame));
 
     VK_CHECK(vkResetCommandBuffer(r->command_buffers[r->frame], 0));
-    record_commands(r, image_index, mesh);
+    record_commands(r, image_index, draws, draw_count);
     VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     VkSubmitInfo submit = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
         .waitSemaphoreCount = 1, .pWaitSemaphores = &r->image_available[r->frame],

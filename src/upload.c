@@ -12,6 +12,7 @@ typedef struct {
     VkDeviceSize    used;
     bool            open;       /* between upload_begin and upload_submit  */
     bool            submitted;  /* fence armed, awaiting completion         */
+    uint64_t        serial;
 } UploadSlot;
 
 struct UploadContext {
@@ -23,6 +24,8 @@ struct UploadContext {
 
     UploadSlot slots[UPLOAD_SLOTS];
     uint32_t   current;
+    uint64_t   next_serial;
+    UploadTicket last_ticket;
 };
 
 static void slot_reset_fence(UploadContext *ctx, UploadSlot *slot) {
@@ -187,9 +190,9 @@ void upload_image(UploadContext *ctx, VkImage image, VkFormat format,
         VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
 }
 
-void upload_submit(UploadContext *ctx) {
+UploadTicket upload_submit(UploadContext *ctx) {
     UploadSlot *slot = &ctx->slots[ctx->current];
-    if (!slot->open) return;
+    if (!slot->open) return ctx->last_ticket;
 
     /* Make transfer writes visible to later work on this (graphics) queue.
        Image copies already carry their own layout/availability barriers; this
@@ -211,7 +214,21 @@ void upload_submit(UploadContext *ctx) {
     VK_CHECK(vkQueueSubmit(ctx->queue, 1, &submit, slot->fence));
     slot->open = false;
     slot->submitted = true;
+    slot->serial = ++ctx->next_serial;
+    ctx->last_ticket = (UploadTicket){ctx->current, slot->serial};
     ctx->current = (ctx->current + 1) % UPLOAD_SLOTS;
+    return ctx->last_ticket;
+}
+
+UploadTicket upload_last_ticket(const UploadContext *ctx) {
+    return ctx ? ctx->last_ticket : (UploadTicket){0};
+}
+
+bool upload_complete(const UploadContext *ctx, UploadTicket ticket) {
+    if (!ctx || ticket.serial == 0 || ticket.slot >= UPLOAD_SLOTS) return true;
+    const UploadSlot *slot = &ctx->slots[ticket.slot];
+    if (slot->serial != ticket.serial || !slot->submitted) return true;
+    return vkGetFenceStatus(ctx->device, slot->fence) == VK_SUCCESS;
 }
 
 void upload_wait_idle(UploadContext *ctx) {

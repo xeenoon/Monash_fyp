@@ -73,6 +73,8 @@ add_executable(terrain_renderer
     src/upload.c
     src/mesh.c
     src/terrain_tile.c
+    src/terrain_grid.c
+    src/terrain_quadtree.c
     src/cube.c
     src/terrain_runtime.c
     src/texture.c
@@ -131,4 +133,18 @@ if(BUILD_TESTING)
                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/phase3_tests.py"
                 --tool "${CMAKE_CURRENT_SOURCE_DIR}/tools/terrain_tiles.py"
                 --loader "$<TARGET_FILE:phase3_tile_loader_tests>")
+
+    add_executable(phase4_quadtree_tests
+        tests/phase4_quadtree_tests.c
+        src/terrain_quadtree.c
+        src/terrain_grid.c)
+    target_include_directories(phase4_quadtree_tests PRIVATE src include)
+    target_link_libraries(phase4_quadtree_tests PRIVATE cglm::cglm m)
+    target_compile_definitions(phase4_quadtree_tests PRIVATE
+        CGLM_FORCE_DEPTH_ZERO_TO_ONE)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(phase4_quadtree_tests PRIVATE
+            -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME phase4_global_terrain_quadtree COMMAND phase4_quadtree_tests)
 endif()

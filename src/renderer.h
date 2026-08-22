@@ -34,6 +34,21 @@ typedef struct {
     float _pad;
 } FrameUniforms;
 
+/* Exactly 128 bytes, the Vulkan minimum guaranteed push-constant capacity.
+   This is tile/draw data; camera and lighting remain in the frame UBO. */
+typedef struct {
+    mat4s local_to_camera_relative;
+    vec4s geometry;      /* tile span X/Z, elevation range, skirt depth */
+    vec4s elevation_uv;  /* scale U/V, bias U/V into the guttered raster */
+    vec4s imagery_uv;    /* scale U/V, bias U/V into the guttered image  */
+    vec4s debug;         /* LOD, lifecycle state, fallback flag, unused */
+} DrawPushConstants;
+
+typedef struct {
+    const Mesh *mesh;
+    DrawPushConstants push;
+} RendererDraw;
+
 typedef struct Renderer {
     SDL_Window *window;
     VkInstance instance;
@@ -90,11 +105,16 @@ float renderer_aspect(const Renderer *r);
 /* Acquire, update the frame UBO, record (bind sets + draw mesh), submit, present.
    Recreates the swapchain on OUT_OF_DATE/SUBOPTIMAL or when `resized`. */
 void renderer_draw_frame(Renderer *r, const FrameUniforms *frame,
-                         const Mesh *mesh, bool resized);
+                         const RendererDraw *draws, uint32_t draw_count,
+                         bool resized);
 
 /* Allocate a set-1 combined-image-sampler descriptor set bound to view+sampler.
    Meshes call this in mesh_upload to get a material set they can bind. */
 VkDescriptorSet renderer_allocate_material_set(Renderer *r, VkImageView view, VkSampler sampler);
+VkDescriptorSet renderer_allocate_terrain_set(Renderer *r,
+    VkImageView albedo_view, VkSampler albedo_sampler,
+    VkImageView elevation_view, VkSampler elevation_sampler);
+void renderer_free_material_set(Renderer *r, VkDescriptorSet set);
 
 /* Manual shader reload: rebuild the graphics pipeline from the current .spv on
    disk at a frame boundary. Safe to call from the main loop (e.g. on a keypress). */

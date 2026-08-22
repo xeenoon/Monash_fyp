@@ -38,12 +38,16 @@ python3 tools/terrain_tiles.py inspect trn --output trn/tile_atlas.png
 The binary format and validation contract are documented in
 [`docs/offline_terrain_tile_format.md`](docs/offline_terrain_tile_format.md).
 
-The renderer now loads `trn/tiles/0/0/0.trn` at startup, generates its inherited
-`Mesh`, resolves its external imagery beneath `trn/`, and uploads both. Generate
-the dataset before running the renderer. The previous C-array implementation is
-preserved only in the deprecated `src/terrain.c` and `src/terrain.h` files. They
-are excluded from every CMake target, and no active source includes or calls
-them; they can be deleted together in the commit after deprecation.
+The renderer makes `trn/tiles/0/0/0.trn` its always-resident fallback, then pages
+the remaining quadtree using screen-space error, hysteresis, frustum culling,
+explicit lifecycle/memory budgets, and complete-child-quad replacement. Every
+tile inherits `Mesh`, but projected tiles share one grid and displace it from
+per-tile elevation textures. Generate the dataset before running the renderer.
+The previous C-array implementation was removed after its deprecation commit;
+`.trn` is the only terrain path.
+
+The Phase 4 architecture, Rocky provenance, and runtime workflow are documented
+in [`docs/phase4_terrain_quadtree.md`](docs/phase4_terrain_quadtree.md).
 
 ## Controls
 
@@ -51,5 +55,6 @@ them; they can be deleted together in the commit after deprecation.
 - W/A/S/D: move relative to the direction you are looking
 - Left Shift: move faster
 - F6: toggle logarithmic linear-depth debug view
+- F7: toggle quadtree LOD colours
 - F5: reload shaders
 - Escape: quit

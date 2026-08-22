@@ -20,10 +20,18 @@ int main(void) {
 
     Renderer renderer;
     renderer_init(&renderer, window);
-    Terrain terrain = terrain_create(&renderer);
+    TerrainRuntime *terrain = terrain_runtime_create(&renderer, TRN_DIR, NULL);
+    if (!terrain) {
+        fprintf(stderr, "Could not create terrain quadtree from %s\n", TRN_DIR);
+        renderer_shutdown(&renderer);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return EXIT_FAILURE;
+    }
+    LocalToWorldTransform root_transform = terrain_runtime_root_transform(terrain);
     /* Overlook the ~1 km field from above one corner, looking down into it. */
     Camera camera = {
-        .position = coordinate_local_to_world(&terrain.base.local_to_world,
+        .position = coordinate_local_to_world(&root_transform,
                                                (TileLocalPosition){-600, 500, -600}),
         .yaw = 45.0f,
         .pitch = -30.0f,
@@ -35,15 +43,20 @@ int main(void) {
     mat4s previous_projection = GLMS_MAT4_IDENTITY_INIT;
     mat4s previous_view = GLMS_MAT4_IDENTITY_INIT;
     mat4s previous_view_projection = GLMS_MAT4_IDENTITY_INIT;
-    mat4s previous_local_to_camera_relative = GLMS_MAT4_IDENTITY_INIT;
     bool history_valid = false;
-    bool depth_debug = false;
+    unsigned debug_mode = 0;
+    uint64_t terrain_frame = 0;
+    uint64_t last_stats_log = 0;
+    TerrainRuntimeStats previous_stats = {0};
     bool running = true;
     while (running) {
         input_poll(&input, window);
         if (input.quit) running = false;
         if (input.reload_shaders) renderer_reload_pipeline(&renderer);
-        if (input.toggle_depth_debug) depth_debug = !depth_debug;
+        if (input.toggle_depth_debug)
+            debug_mode = debug_mode == 1u ? 0u : 1u;
+        if (input.toggle_lod_debug)
+            debug_mode = debug_mode == 2u ? 0u : 2u;
 
         uint64_t ticks = SDL_GetTicksNS();
         float dt = (float)(ticks - previous_ticks) / 1000000000.0f;
@@ -53,16 +66,29 @@ int main(void) {
         camera_update(&camera, input.move_forward, input.move_right,
                       input.look_dx, input.look_dy, input.sprint, dt);
 
+        vec3s camera_forward_direction = camera_forward(&camera);
+        TerrainQuadtreeView terrain_view = {
+            .camera_world = camera.position,
+            .forward = {camera_forward_direction.x, camera_forward_direction.y,
+                        camera_forward_direction.z},
+            .up = {0.0, 1.0, 0.0},
+            .vertical_fov_radians = glm_rad(60.0f),
+            .aspect = renderer_aspect(&renderer),
+            .near_plane_m = CAMERA_NEAR_PLANE,
+            .viewport_height_px = renderer.swapchain_extent.height,
+        };
+        terrain_runtime_update(terrain, &terrain_view, terrain_frame++);
+        uint32_t terrain_draw_count = 0;
+        const RendererDraw *terrain_draws =
+            terrain_runtime_draws(terrain, &terrain_draw_count);
+
         mat4s projection = camera_projection(&camera, renderer_aspect(&renderer));
         mat4s view = camera_view(&camera);
         mat4s view_projection = glms_mat4_mul(projection, view);
-        mat4s local_to_camera_relative = coordinate_local_to_camera_relative(
-            &terrain.base.local_to_world, camera.position);
         if (!history_valid) {
             previous_projection = projection;
             previous_view = view;
             previous_view_projection = view_projection;
-            previous_local_to_camera_relative = local_to_camera_relative;
             history_valid = true;
         }
 
@@ -74,24 +100,38 @@ int main(void) {
             .previous_projection = previous_projection,
             .previous_view = previous_view,
             .previous_view_projection = previous_view_projection,
-            .local_to_camera_relative = local_to_camera_relative,
-            .previous_local_to_camera_relative = previous_local_to_camera_relative,
+            .local_to_camera_relative = GLMS_MAT4_IDENTITY_INIT,
+            .previous_local_to_camera_relative = GLMS_MAT4_IDENTITY_INIT,
             /* Fixed afternoon sun until the sky phase drives it. */
             .sun_direction = glms_vec4(glms_vec3_normalize((vec3s){{-0.4f, -1.0f, -0.3f}}), 0.0f),
             .time = (float)(ticks - start_ticks) / 1000000000.0f,
             .near_plane = CAMERA_NEAR_PLANE,
-            .depth_debug = depth_debug ? 1.0f : 0.0f,
+            .depth_debug = (float)debug_mode,
         };
-        renderer_draw_frame(&renderer, &frame, &terrain.base, input.resized);
+        renderer_draw_frame(&renderer, &frame, terrain_draws,
+                            terrain_draw_count, input.resized);
+        terrain_runtime_collect_evictions(terrain);
+
+        TerrainRuntimeStats stats = terrain_runtime_stats(terrain);
+        bool stats_changed = stats.resident_tiles != previous_stats.resident_tiles ||
+                             stats.drawn_tiles != previous_stats.drawn_tiles;
+        if (stats_changed &&
+            (last_stats_log == 0 || ticks - last_stats_log >= UINT64_C(1000000000))) {
+            printf("Terrain: known=%u resident=%u drawn=%u CPU=%.2f MiB GPU=%.2f MiB\n",
+                   stats.known_tiles, stats.resident_tiles, stats.drawn_tiles,
+                   (double)stats.cpu_bytes / (1024.0 * 1024.0),
+                   (double)stats.gpu_bytes / (1024.0 * 1024.0));
+            previous_stats = stats;
+            last_stats_log = ticks;
+        }
 
         previous_projection = projection;
         previous_view = view;
         previous_view_projection = view_projection;
-        previous_local_to_camera_relative = local_to_camera_relative;
     }
 
     renderer_wait_idle(&renderer);
-    terrain_destroy(&renderer, &terrain);
+    terrain_runtime_destroy(terrain);
     renderer_shutdown(&renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();

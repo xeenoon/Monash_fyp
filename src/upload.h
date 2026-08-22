@@ -25,6 +25,11 @@
 
 typedef struct UploadContext UploadContext;
 
+typedef struct {
+    uint32_t slot;
+    uint64_t serial;
+} UploadTicket;
+
 UploadContext *upload_context_create(VkDevice device, GpuAllocator *allocator,
                                      VkQueue queue, uint32_t queue_family,
                                      VkDeviceSize staging_capacity);
@@ -49,8 +54,14 @@ void upload_image(UploadContext *ctx, VkImage image, VkFormat format,
                   const void *data, VkDeviceSize size);
 
 /* Close and submit the current batch. Does not wait for completion. */
-void upload_submit(UploadContext *ctx);
+UploadTicket upload_submit(UploadContext *ctx);
+
+/* A ticket names the fence submission that contains an upload. If its ring
+   slot has since been reused, reuse already waited for that submission. */
+UploadTicket upload_last_ticket(const UploadContext *ctx);
+bool         upload_complete(const UploadContext *ctx, UploadTicket ticket);
 
 /* Block until every submitted transfer has completed (waits on slot fences,
-   not the device). Call before first use of freshly uploaded resources. */
+   not the device). Normally graphics-queue ordering avoids this; use it for
+   teardown or when CPU code must observe completion immediately. */
 void upload_wait_idle(UploadContext *ctx);

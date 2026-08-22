@@ -32,6 +32,8 @@ void mesh_upload(struct Renderer *r, Mesh *mesh) {
 }
 
 void mesh_destroy(struct Renderer *r, Mesh *mesh) {
+    if (mesh->material_set)
+        renderer_free_material_set(r, mesh->material_set);
     gpu_buffer_destroy(r->device, r->allocator, &mesh->vertex_buffer);
     if (mesh->index_count)
         gpu_buffer_destroy(r->device, r->allocator, &mesh->index_buffer);
