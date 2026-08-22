@@ -31,8 +31,8 @@ typedef struct {
 /* Sampler + image creation policy. Zeroed fields take sensible defaults:
    mip_levels 0 means "full chain from extent", array_layers 0 means 1,
    filter 0 is NEAREST so callers usually set LINEAR, max_anisotropy 0 disables
-   anisotropy. Set create_sampler=false for attachments that are only rendered
-   to (e.g. depth) and never sampled. */
+   anisotropy, and compare_enable creates a depth-comparison sampler using
+   compare_op. Set create_sampler=false for render-only attachments. */
 typedef struct {
     VkFormat             format;
     uint32_t             width, height;
@@ -44,6 +44,8 @@ typedef struct {
     VkSamplerAddressMode address_mode;
     float                max_anisotropy;
     bool                 create_sampler;
+    bool                 compare_enable;
+    VkCompareOp          compare_op;
 } TextureDesc;
 
 /* Create image + view (+ optional sampler). No pixel data; layout is UNDEFINED. */
@@ -79,5 +81,10 @@ Texture texture_create_hdr_target(VkDevice device, GpuAllocator *allocator,
 /* Depth target with the given format, usable as depth attachment. */
 Texture texture_create_depth_target(VkDevice device, GpuAllocator *allocator,
                                     VkFormat format, uint32_t width, uint32_t height);
+
+/* Sampleable depth-array target used by cascaded directional shadows. */
+Texture texture_create_shadow_array(VkDevice device, GpuAllocator *allocator,
+                                    VkFormat format, uint32_t resolution,
+                                    uint32_t layers);
 
 void texture_destroy(VkDevice device, GpuAllocator *allocator, Texture *t);

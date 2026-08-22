@@ -10,6 +10,7 @@
 #include "upload.h"
 #include "mesh.h"
 #include "texture.h"
+#include "shadow_cascade.h"
 
 #define MAX_FRAMES_IN_FLIGHT 1
 
@@ -32,6 +33,10 @@ typedef struct {
     float near_plane;
     float debug_view;
     float relight_strength;
+    mat4s shadow_view_projection[SHADOW_CASCADE_COUNT];
+    vec4s shadow_splits;
+    vec4s shadow_parameters; /* normal bias m, PCF radius px, exposure, depth bias */
+    vec4s sun_radiance;
 } FrameUniforms;
 
 /* Exactly 128 bytes, the Vulkan minimum guaranteed push-constant capacity.
@@ -71,24 +76,37 @@ typedef struct Renderer {
     uint32_t image_count;
     VkImage *images;
     VkImageView *image_views;
-    VkFramebuffer *framebuffers;
+    VkFramebuffer *display_framebuffers;
     Texture depth;
+    Texture hdr_color;
+    VkFramebuffer scene_framebuffer;
 
-    /* Descriptor roles. Set 0 is per-frame data (camera/sun/time), set 1 is
-       per-material/tile data (imagery, elevation, shared surface detail). Sets
-       are stable so later passes can add shadow maps and atmosphere LUTs. */
+    /* Descriptor roles. Set 0 is frame data plus the shared shadow array; the
+       terrain set 1 holds imagery/elevation/detail, while the display set 1
+       holds the HDR scene sampled by the tone-map pass. */
     VkDescriptorSetLayout frame_set_layout;     /* set 0 */
     VkDescriptorSetLayout material_set_layout;  /* set 1 */
+    VkDescriptorSetLayout display_set_layout;   /* tone-map set 1 */
     VkDescriptorPool descriptor_pool;
     GpuBuffer       frame_ubo[MAX_FRAMES_IN_FLIGHT];
     VkDescriptorSet frame_set[MAX_FRAMES_IN_FLIGHT];
     Texture         fallback_texture;
     Texture         terrain_detail_texture;
     VkDescriptorSet fallback_material_set;
+    VkDescriptorSet display_set;
 
-    VkRenderPass render_pass;
+    VkRenderPass scene_render_pass;
+    VkRenderPass display_render_pass;
+    VkRenderPass shadow_render_pass;
     VkPipelineLayout pipeline_layout;
-    VkPipeline pipeline;
+    VkPipelineLayout display_pipeline_layout;
+    VkPipeline terrain_pipeline;
+    VkPipeline tone_map_pipeline;
+    VkPipeline shadow_pipeline;
+    Texture shadow_map;
+    VkSampler shadow_raw_sampler;
+    VkImageView shadow_layer_views[SHADOW_CASCADE_COUNT];
+    VkFramebuffer shadow_framebuffers[SHADOW_CASCADE_COUNT];
     VkCommandPool command_pool;
     VkCommandBuffer command_buffers[MAX_FRAMES_IN_FLIGHT];
     VkSemaphore image_available[MAX_FRAMES_IN_FLIGHT];

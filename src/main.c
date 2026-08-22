@@ -66,6 +66,9 @@ int main(void) {
         if (input.cycle_surface_debug)
             debug_mode = debug_mode >= 3u && debug_mode < 6u
                 ? debug_mode + 1u : (debug_mode == 6u ? 0u : 3u);
+        if (input.cycle_shadow_debug)
+            debug_mode = debug_mode >= 7u && debug_mode < 11u
+                ? debug_mode + 1u : (debug_mode == 11u ? 0u : 7u);
 
         uint64_t ticks = SDL_GetTicksNS();
         float dt = (float)(ticks - previous_ticks) / 1000000000.0f;
@@ -101,6 +104,20 @@ int main(void) {
             history_valid = true;
         }
 
+        vec3s sun_direction = glms_vec3_normalize(
+            (vec3s){{-0.4f, -1.0f, -0.3f}});
+        ShadowCascadeConfig shadow_config =
+            shadow_cascade_default_config(renderer_aspect(&renderer));
+        ShadowCascadeSet shadow_cascades;
+        if (!shadow_cascade_build(&shadow_config, camera.position,
+                                  camera_forward_direction,
+                                  (vec3s){{0.0f, 1.0f, 0.0f}},
+                                  sun_direction, &shadow_cascades)) {
+            fprintf(stderr, "Could not build sun shadow cascades\n");
+            running = false;
+            continue;
+        }
+
         FrameUniforms frame = {
             .projection = projection,
             .view = view,
@@ -112,12 +129,19 @@ int main(void) {
             .local_to_camera_relative = GLMS_MAT4_IDENTITY_INIT,
             .previous_local_to_camera_relative = GLMS_MAT4_IDENTITY_INIT,
             /* Fixed afternoon sun until the sky phase drives it. */
-            .sun_direction = glms_vec4(glms_vec3_normalize((vec3s){{-0.4f, -1.0f, -0.3f}}), 0.0f),
+            .sun_direction = glms_vec4(sun_direction, 0.0f),
             .time = (float)(ticks - start_ticks) / 1000000000.0f,
             .near_plane = CAMERA_NEAR_PLANE,
             .debug_view = (float)debug_mode,
             .relight_strength = (const float[]){0.0f, 0.35f, 1.0f}[relight_mode],
+            .shadow_splits = (vec4s){{
+                shadow_config.split_m[0], shadow_config.split_m[1],
+                shadow_config.split_m[2], shadow_config.split_m[3]}},
+            .shadow_parameters = (vec4s){{0.35f, 1.75f, 1.0f, 1.25f}},
+            .sun_radiance = (vec4s){{3.2f, 3.0f, 2.7f, 0.0f}},
         };
+        for (uint32_t i = 0; i < SHADOW_CASCADE_COUNT; ++i)
+            frame.shadow_view_projection[i] = shadow_cascades.view_projection[i];
         renderer_draw_frame(&renderer, &frame, terrain_draws,
                             terrain_draw_count, input.resized);
         terrain_runtime_collect_evictions(terrain);

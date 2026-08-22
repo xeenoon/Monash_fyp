@@ -48,6 +48,9 @@ The previous C-array implementation was removed after its deprecation commit;
 
 The Phase 4 architecture, Rocky provenance, and runtime workflow are documented
 in [`docs/phase4_terrain_quadtree.md`](docs/phase4_terrain_quadtree.md).
+Terrain surface normals/detail and the HDR lighting/shadow frame are documented
+in [`docs/phase5_surface_quality.md`](docs/phase5_surface_quality.md) and
+[`docs/phase6_hdr_lighting_shadows.md`](docs/phase6_hdr_lighting_shadows.md).
 
 ## Controls
 
@@ -56,5 +59,8 @@ in [`docs/phase4_terrain_quadtree.md`](docs/phase4_terrain_quadtree.md).
 - Left Shift: move faster
 - F6: toggle logarithmic linear-depth debug view
 - F7: toggle quadtree LOD colours
+- F8: cycle unlit, subtle relight, and full material lighting
+- F9: cycle normal, slope, curvature, and height-gradient views
+- F10: cycle cascade, shadow-coordinate, visibility, bias, and raw-map views
 - F5: reload shaders
 - Escape: quit

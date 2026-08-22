@@ -35,7 +35,8 @@ endif()
 # nested #ifdef combinations with no inventory. Shared includes (common.glsl)
 # are picked up automatically via the per-shader depfile below, so editing an
 # include rebuilds every dependent shader.
-foreach(SHADER cube.vert cube.frag terrain.vert terrain.frag)
+foreach(SHADER cube.vert cube.frag terrain.vert terrain.frag shadow.vert
+               fullscreen.vert tonemap.frag)
     add_custom_command(
         OUTPUT "${SHADER_OUTPUT_DIR}/${SHADER}.spv"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${SHADER_OUTPUT_DIR}"
@@ -78,6 +79,7 @@ add_executable(terrain_renderer
     src/cube.c
     src/terrain_runtime.c
     src/surface_detail.c
+    src/shadow_cascade.c
     src/texture.c
     src/renderer.c
     include/stb_image.c)
@@ -159,4 +161,17 @@ if(BUILD_TESTING)
             -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME phase5_terrain_surface_quality COMMAND phase5_surface_tests)
+
+    add_executable(phase6_lighting_tests
+        tests/phase6_lighting_tests.c
+        src/shadow_cascade.c)
+    target_include_directories(phase6_lighting_tests PRIVATE src)
+    target_link_libraries(phase6_lighting_tests PRIVATE cglm::cglm m)
+    target_compile_definitions(phase6_lighting_tests PRIVATE
+        CGLM_FORCE_DEPTH_ZERO_TO_ONE)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(phase6_lighting_tests PRIVATE
+            -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME phase6_hdr_lighting_and_shadows COMMAND phase6_lighting_tests)
 endif()

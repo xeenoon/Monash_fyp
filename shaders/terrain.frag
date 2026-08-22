@@ -184,11 +184,125 @@ vec3 apply_macro_variation(vec3 color, vec3 surface_position, vec3 normal) {
     return color * mix(1.0, variation, smoothstep(0.15, 0.70, normal.y));
 }
 
-vec3 evaluate_terrain_lighting(vec3 base_color, vec3 normal) {
+struct ShadowResult {
+    float visibility;
+    float receiver_bias;
+    uint cascade;
+    vec3 coordinate;
+};
+
+/* Eight of Wicked shadowHF.hlsli's Vogel disk points (MIT). Rotating this
+   compact kernel per pixel avoids axis-aligned PCF banding without importing
+   Wicked's bindless atlas, transparent-shadow, or PCSS machinery. */
+const vec2 vogel_points[8] = vec2[8](
+    vec2( 0.25000000,  0.00000000), vec2(-0.31930089,  0.29248416),
+    vec2( 0.04891348, -0.55687296), vec2( 0.40238643,  0.52496207),
+    vec2(-0.73851585, -0.13074535), vec2( 0.69968677, -0.44490278),
+    vec2(-0.23419666,  0.87043202), vec2(-0.44604915, -0.85938364));
+
+float sample_shadow_pcf(uint cascade, vec3 coordinate) {
+    float angle = random_cell(floor(gl_FragCoord.xy * 0.5)) * TAU;
+    vec2 cs = vec2(cos(angle), sin(angle));
+    vec2 texel_radius = vec2(frame.shadow_parameters.y /
+                             float(textureSize(shadow_map, 0).x));
+    float visibility = 0.0;
+    for (uint i = 0u; i < 8u; ++i) {
+        vec2 offset = rotate_vec2(vogel_points[i], cs) * texel_radius;
+        visibility += texture(shadow_map,
+            vec4(coordinate.xy + offset, float(cascade), coordinate.z));
+    }
+    return visibility * (1.0 / 8.0);
+}
+
+vec3 shadow_coordinate(uint cascade, vec3 receiver) {
+    vec4 clip = frame.shadow_view_projection[cascade] * vec4(receiver, 1.0);
+    clip.xyz /= clip.w;
+    return vec3(clip.xy * 0.5 + 0.5, clip.z);
+}
+
+/* Adapted from Wicked lightingHF.hlsli:87-126 (MIT): choose the smallest
+   containing cascade, then blend across its inner 10% edge into the next one. */
+ShadowResult terrain_shadow(vec3 position, vec3 normal) {
     vec3 to_sun = normalize(-frame.sun_direction.xyz);
-    float diffuse = max(dot(normal, to_sun), 0.0);
-    float hemisphere = mix(0.32, 0.48, clamp(normal.y * 0.5 + 0.5, 0.0, 1.0));
-    return base_color * (hemisphere + 0.72 * diffuse);
+    float grazing = 1.0 - max(dot(normal, to_sun), 0.0);
+    float receiver_bias = frame.shadow_parameters.x * grazing;
+    vec3 receiver = position + normal * receiver_bias;
+    ShadowResult result = ShadowResult(1.0, receiver_bias, 4u, vec3(0.0));
+    vec3 clip_coordinate = vec3(0.0);
+    for (uint cascade = 0u; cascade < 4u; ++cascade) {
+        vec4 clip = frame.shadow_view_projection[cascade] * vec4(receiver, 1.0);
+        clip.xyz /= clip.w;
+        vec3 uv_depth = vec3(clip.xy * 0.5 + 0.5, clip.z);
+        if (all(greaterThanEqual(uv_depth, vec3(0.0))) &&
+            all(lessThanEqual(uv_depth, vec3(1.0)))) {
+            result.cascade = cascade;
+            result.coordinate = uv_depth;
+            clip_coordinate = clip.xyz;
+            break;
+        }
+    }
+    if (result.cascade >= 4u) return result;
+
+    result.visibility = sample_shadow_pcf(result.cascade, result.coordinate);
+    if (result.cascade < 3u) {
+        vec3 edge = clamp((abs(vec3(clip_coordinate.xy,
+                                    clip_coordinate.z * 2.0 - 1.0)) - 0.8) * 5.0,
+                          0.0, 1.0);
+        float blend = max(edge.x, max(edge.y, edge.z));
+        if (blend > 0.0) {
+            uint fallback = result.cascade + 1u;
+            float fallback_visibility = sample_shadow_pcf(
+                fallback, shadow_coordinate(fallback, receiver));
+            result.visibility = mix(result.visibility, fallback_visibility, blend);
+        }
+    }
+    return result;
+}
+
+/* Direct GLSL subset of Wicked brdf.hlsli:8-64 (MIT), itself based on
+   Filament. Only the isotropic dielectric GGX path is retained. */
+float D_GGX(float NoH, float roughness) {
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float denominator = NoH * NoH * (a2 - 1.0) + 1.0;
+    return a2 / max(3.141592653589793 * denominator * denominator, 1e-6);
+}
+
+float V_SmithGGXCorrelated(float roughness, float NoV, float NoL) {
+    float a2 = roughness * roughness;
+    float lambda_v = NoL * sqrt(max((NoV - a2 * NoV) * NoV + a2, 0.0));
+    float lambda_l = NoV * sqrt(max((NoL - a2 * NoL) * NoL + a2, 0.0));
+    return 0.5 / max(lambda_v + lambda_l, 1e-5);
+}
+
+vec3 F_Schlick(float VoH, vec3 f0) {
+    float factor = pow(1.0 - VoH, 5.0);
+    return f0 + (1.0 - f0) * factor;
+}
+
+vec3 evaluate_terrain_lighting(vec3 base_color, vec3 normal, float roughness,
+                               float occlusion, float shadow_visibility) {
+    vec3 view_direction = normalize(-camera_relative_position);
+    vec3 light_direction = normalize(-frame.sun_direction.xyz);
+    vec3 half_direction = normalize(view_direction + light_direction);
+    float NoV = max(dot(normal, view_direction), 1e-4);
+    float NoL = max(dot(normal, light_direction), 0.0);
+    float NoH = max(dot(normal, half_direction), 0.0);
+    float VoH = max(dot(view_direction, half_direction), 0.0);
+    vec3 fresnel = F_Schlick(VoH, vec3(0.04));
+    float distribution = D_GGX(NoH, roughness);
+    float visibility = V_SmithGGXCorrelated(roughness * roughness, NoV, NoL);
+    vec3 specular = distribution * visibility * fresnel;
+    vec3 diffuse = (1.0 - fresnel) * base_color / 3.141592653589793;
+
+    /* Mirrors Wicked ApplyLighting's direct/indirect separation. The temporary
+       hemisphere term is replaced by physical sky irradiance in Phase 7. */
+    vec3 direct = (diffuse + specular) * frame.sun_radiance.rgb *
+                  NoL * shadow_visibility;
+    float hemisphere = mix(0.08, 0.22,
+        clamp(normal.y * 0.5 + 0.5, 0.0, 1.0));
+    vec3 indirect = base_color * (1.0 - fresnel) * hemisphere * occlusion;
+    return direct + indirect;
 }
 
 void main() {
@@ -203,6 +317,8 @@ void main() {
     mat3 tile_rotation = mat3(draw.local_to_camera_relative);
     vec3 geometric_normal = normalize(tile_rotation * surface.local_normal);
     float distance_m = length(camera_relative_position);
+    ShadowResult shadow = terrain_shadow(camera_relative_position,
+                                          geometric_normal);
 
     if (frame.debug_view > 2.5 && frame.debug_view < 3.5) {
         out_color = vec4(geometric_normal * 0.5 + 0.5, 1.0);
@@ -228,6 +344,34 @@ void main() {
                          clamp(log2(1.0 + magnitude) / 5.0, 0.0, 1.0), 1.0);
         return;
     }
+    if (frame.debug_view > 6.5 && frame.debug_view < 7.5) {
+        const vec3 cascade_colors[5] = vec3[5](
+            vec3(0.95, 0.18, 0.12), vec3(0.18, 0.82, 0.25),
+            vec3(0.15, 0.45, 1.0), vec3(0.95, 0.75, 0.10), vec3(0.1));
+        out_color = vec4(cascade_colors[shadow.cascade], 1.0);
+        return;
+    }
+    if (frame.debug_view > 7.5 && frame.debug_view < 8.5) {
+        out_color = vec4(shadow.coordinate, 1.0);
+        return;
+    }
+    if (frame.debug_view > 8.5 && frame.debug_view < 9.5) {
+        out_color = vec4(vec3(shadow.visibility), 1.0);
+        return;
+    }
+    if (frame.debug_view > 9.5 && frame.debug_view < 10.5) {
+        out_color = vec4(vec3(clamp(shadow.receiver_bias /
+                                    max(frame.shadow_parameters.x, 1e-5), 0.0, 1.0)),
+                         1.0);
+        return;
+    }
+    if (frame.debug_view > 10.5 && frame.debug_view < 11.5) {
+        float raw_depth = shadow.cascade < 4u
+            ? texture(shadow_map_raw,
+                      vec3(shadow.coordinate.xy, float(shadow.cascade))).r : 1.0;
+        out_color = vec4(vec3(raw_depth), 1.0);
+        return;
+    }
 
     vec3 map_color = textureGrad(albedo, texcoord,
                                  dFdxCoarse(texcoord), dFdyCoarse(texcoord)).rgb;
@@ -248,7 +392,9 @@ void main() {
     }
 
     vec3 lit_normal = normalize(tile_rotation * local_lit_normal);
-    vec3 relit_color = evaluate_terrain_lighting(map_color, lit_normal);
+    float roughness = mix(0.88, 0.68, material_strength);
+    vec3 relit_color = evaluate_terrain_lighting(
+        map_color, lit_normal, roughness, 1.0, shadow.visibility);
     vec3 color = mix(map_color, relit_color,
                      clamp(frame.relight_strength, 0.0, 1.0));
     if (frame.debug_view > 1.5)

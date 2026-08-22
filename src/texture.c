@@ -49,9 +49,12 @@ Texture texture_create(VkDevice device, GpuAllocator *allocator, const TextureDe
             .magFilter = desc->filter, .minFilter = desc->filter,
             .addressModeU = desc->address_mode, .addressModeV = desc->address_mode,
             .addressModeW = desc->address_mode,
+            .borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE,
             .mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR, .maxLod = (float)mips,
             .anisotropyEnable = desc->max_anisotropy > 1.0f ? VK_TRUE : VK_FALSE,
-            .maxAnisotropy = desc->max_anisotropy };
+            .maxAnisotropy = desc->max_anisotropy,
+            .compareEnable = desc->compare_enable,
+            .compareOp = desc->compare_op };
         VK_CHECK(vkCreateSampler(device, &sampler, NULL, &t.sampler));
     }
     return t;
@@ -146,6 +149,20 @@ Texture texture_create_depth_target(VkDevice device, GpuAllocator *allocator,
     TextureDesc desc = { .format = format, .width = width, .height = height, .mip_levels = 1,
         .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
         .aspect = VK_IMAGE_ASPECT_DEPTH_BIT, .create_sampler = false };
+    return texture_create(device, allocator, &desc);
+}
+
+Texture texture_create_shadow_array(VkDevice device, GpuAllocator *allocator,
+                                    VkFormat format, uint32_t resolution,
+                                    uint32_t layers) {
+    TextureDesc desc = { .format = format, .width = resolution, .height = resolution,
+        .mip_levels = 1, .array_layers = layers,
+        .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                 VK_IMAGE_USAGE_SAMPLED_BIT,
+        .aspect = VK_IMAGE_ASPECT_DEPTH_BIT, .filter = VK_FILTER_LINEAR,
+        .address_mode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+        .create_sampler = true, .compare_enable = true,
+        .compare_op = VK_COMPARE_OP_LESS_OR_EQUAL };
     return texture_create(device, allocator, &desc);
 }
 

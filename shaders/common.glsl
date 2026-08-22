@@ -20,7 +20,14 @@ layout(set = 0, binding = 0) uniform FrameUniforms {
     float near_plane;
     float debug_view;
     float relight_strength;
+    mat4  shadow_view_projection[4];
+    vec4  shadow_splits;
+    vec4  shadow_parameters;
+    vec4  sun_radiance;
 } frame;
+
+layout(set = 0, binding = 1) uniform sampler2DArrayShadow shadow_map;
+layout(set = 0, binding = 2) uniform sampler2DArray shadow_map_raw;
 
 /* Infinite reversed-Z helpers. UV follows Vulkan framebuffer orientation, so
    the projection's single Y flip is not repeated here. The reconstructed
