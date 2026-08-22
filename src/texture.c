@@ -1,95 +1,138 @@
 #include "texture.h"
-#include "renderer.h"
+#include "upload.h"
 #include "vk_common.h"
 #include "stb_image.h"
 
-#include <stdint.h>
 #include <string.h>
 
-/* Upload width*height RGBA8 pixels into a sampled sRGB texture, filling `t`. */
-static void create_from_pixels(struct Renderer *r, Texture *t,
-                               const void *pixels, uint32_t width, uint32_t height) {
-    VkDeviceSize size = (VkDeviceSize)width * height * 4;
-
-    VkBuffer staging; VkDeviceMemory staging_memory;
-    renderer_create_buffer(r, size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-        &staging, &staging_memory);
-    void *mapped;
-    VK_CHECK(vkMapMemory(r->device, staging_memory, 0, size, 0, &mapped));
-    memcpy(mapped, pixels, (size_t)size);
-    vkUnmapMemory(r->device, staging_memory);
-
-    VkImageCreateInfo image_info = { .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-        .imageType = VK_IMAGE_TYPE_2D, .format = VK_FORMAT_R8G8B8A8_SRGB,
-        .extent = {width, height, 1}, .mipLevels = 1, .arrayLayers = 1,
-        .samples = VK_SAMPLE_COUNT_1_BIT, .tiling = VK_IMAGE_TILING_OPTIMAL,
-        .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-        .sharingMode = VK_SHARING_MODE_EXCLUSIVE, .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED };
-    VK_CHECK(vkCreateImage(r->device, &image_info, NULL, &t->image));
-    VkMemoryRequirements requirements;
-    vkGetImageMemoryRequirements(r->device, t->image, &requirements);
-    VkMemoryAllocateInfo allocation = { .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-        .allocationSize = requirements.size, .memoryTypeIndex = renderer_find_memory_type(r,
-        requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) };
-    VK_CHECK(vkAllocateMemory(r->device, &allocation, NULL, &t->memory));
-    VK_CHECK(vkBindImageMemory(r->device, t->image, t->memory, 0));
-
-    /* UNDEFINED -> TRANSFER_DST, copy, TRANSFER_DST -> SHADER_READ_ONLY. */
-    VkCommandBuffer command = renderer_begin_single_time(r);
-    VkImageMemoryBarrier barrier = { .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-        .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED, .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .image = t->image, .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
-        .srcAccessMask = 0, .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT };
-    vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-        0, 0, NULL, 0, NULL, 1, &barrier);
-    VkBufferImageCopy copy = { .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
-        .imageExtent = {width, height, 1} };
-    vkCmdCopyBufferToImage(command, staging, t->image,
-        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
-    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-        0, 0, NULL, 0, NULL, 1, &barrier);
-    renderer_end_single_time(r, command);
-    vkDestroyBuffer(r->device, staging, NULL);
-    vkFreeMemory(r->device, staging_memory, NULL);
-
-    VkImageViewCreateInfo view = { .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-        .image = t->image, .viewType = VK_IMAGE_VIEW_TYPE_2D, .format = VK_FORMAT_R8G8B8A8_SRGB,
-        .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1} };
-    VK_CHECK(vkCreateImageView(r->device, &view, NULL, &t->view));
-    VkSamplerCreateInfo sampler = { .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-        .magFilter = VK_FILTER_LINEAR, .minFilter = VK_FILTER_LINEAR,
-        .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-        .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-        .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-        .mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR };
-    VK_CHECK(vkCreateSampler(r->device, &sampler, NULL, &t->sampler));
+uint32_t texture_mip_levels(uint32_t width, uint32_t height) {
+    uint32_t size = width > height ? width : height;
+    uint32_t levels = 1;
+    while (size > 1) { size >>= 1; ++levels; }
+    return levels;
 }
 
-void texture_load(struct Renderer *r, Texture *t, const char *path) {
+Texture texture_create(VkDevice device, GpuAllocator *allocator, const TextureDesc *desc) {
+    uint32_t layers = desc->array_layers ? desc->array_layers : 1;
+    uint32_t mips = desc->mip_levels ? desc->mip_levels
+                                     : texture_mip_levels(desc->width, desc->height);
+    VkImageAspectFlags aspect = desc->aspect ? desc->aspect : VK_IMAGE_ASPECT_COLOR_BIT;
+
+    Texture t = { .format = desc->format, .extent = {desc->width, desc->height},
+        .mip_levels = mips, .array_layers = layers, .usage = desc->usage,
+        .aspect = aspect, .layout = VK_IMAGE_LAYOUT_UNDEFINED };
+
+    VkImageCreateInfo image_info = { .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .imageType = VK_IMAGE_TYPE_2D, .format = desc->format,
+        .extent = {desc->width, desc->height, 1}, .mipLevels = mips, .arrayLayers = layers,
+        .samples = VK_SAMPLE_COUNT_1_BIT, .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = desc->usage, .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED };
+    VK_CHECK(vkCreateImage(device, &image_info, NULL, &t.image));
+
+    VkMemoryRequirements requirements;
+    vkGetImageMemoryRequirements(device, t.image, &requirements);
+    /* Optimally-tiled image: non-linear allocator class. */
+    t.allocation = gpu_alloc(allocator, requirements, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, false);
+    VK_CHECK(vkBindImageMemory(device, t.image, t.allocation.memory, t.allocation.offset));
+
+    VkImageViewCreateInfo view = { .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .image = t.image,
+        .viewType = layers > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D,
+        .format = desc->format, .subresourceRange = {aspect, 0, mips, 0, layers} };
+    VK_CHECK(vkCreateImageView(device, &view, NULL, &t.view));
+
+    if (desc->create_sampler) {
+        VkSamplerCreateInfo sampler = { .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+            .magFilter = desc->filter, .minFilter = desc->filter,
+            .addressModeU = desc->address_mode, .addressModeV = desc->address_mode,
+            .addressModeW = desc->address_mode,
+            .mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR, .maxLod = (float)mips,
+            .anisotropyEnable = desc->max_anisotropy > 1.0f ? VK_TRUE : VK_FALSE,
+            .maxAnisotropy = desc->max_anisotropy };
+        VK_CHECK(vkCreateSampler(device, &sampler, NULL, &t.sampler));
+    }
+    return t;
+}
+
+/* Upload width*height texels of `bytes_per_texel`, generating mips if the
+   texture was created with more than one level. Leaves it SHADER_READ_ONLY. */
+static void upload_pixels(struct UploadContext *upload, Texture *t,
+                          const void *pixels, uint32_t bytes_per_texel) {
+    VkDeviceSize size = (VkDeviceSize)t->extent.width * t->extent.height * bytes_per_texel;
+    upload_begin(upload);
+    upload_image(upload, t->image, t->format, t->extent.width, t->extent.height,
+                 t->mip_levels, t->aspect, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                 pixels, size);
+    upload_submit(upload);
+    t->layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+}
+
+static Texture create_sampled(VkDevice device, GpuAllocator *allocator, VkFormat format,
+                              uint32_t width, uint32_t height, uint32_t mips,
+                              VkSamplerAddressMode address, float max_anisotropy) {
+    VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    if (mips > 1) usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT; /* blit source for mip-gen */
+    TextureDesc desc = { .format = format, .width = width, .height = height,
+        .mip_levels = mips, .usage = usage, .aspect = VK_IMAGE_ASPECT_COLOR_BIT,
+        .filter = VK_FILTER_LINEAR, .address_mode = address,
+        .max_anisotropy = max_anisotropy, .create_sampler = true };
+    return texture_create(device, allocator, &desc);
+}
+
+void texture_load(VkDevice device, GpuAllocator *allocator, struct UploadContext *upload,
+                  Texture *t, const char *path, float max_anisotropy) {
     int width, height, channels;
     stbi_uc *pixels = stbi_load(path, &width, &height, &channels, STBI_rgb_alpha);
     if (!pixels) {
         fprintf(stderr, "Could not load texture %s: %s\n", path, stbi_failure_reason());
         exit(EXIT_FAILURE);
     }
-    create_from_pixels(r, t, pixels, (uint32_t)width, (uint32_t)height);
+    uint32_t mips = texture_mip_levels((uint32_t)width, (uint32_t)height);
+    *t = create_sampled(device, allocator, VK_FORMAT_R8G8B8A8_SRGB,
+                        (uint32_t)width, (uint32_t)height, mips,
+                        VK_SAMPLER_ADDRESS_MODE_REPEAT, max_anisotropy);
+    upload_pixels(upload, t, pixels, 4);
     stbi_image_free(pixels);
 }
 
-void texture_create_white(struct Renderer *r, Texture *t) {
+void texture_create_white(VkDevice device, GpuAllocator *allocator,
+                          struct UploadContext *upload, Texture *t) {
     const uint8_t white[4] = {255, 255, 255, 255};
-    create_from_pixels(r, t, white, 1, 1);
+    *t = create_sampled(device, allocator, VK_FORMAT_R8G8B8A8_SRGB, 1, 1, 1,
+                        VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, 0.0f);
+    upload_pixels(upload, t, white, 4);
 }
 
-void texture_destroy(struct Renderer *r, Texture *t) {
-    vkDestroySampler(r->device, t->sampler, NULL);
-    vkDestroyImageView(r->device, t->view, NULL);
-    vkDestroyImage(r->device, t->image, NULL);
-    vkFreeMemory(r->device, t->memory, NULL);
+void texture_create_elevation(VkDevice device, GpuAllocator *allocator, struct UploadContext *upload,
+                              Texture *t, const uint16_t *heights, uint32_t width, uint32_t height) {
+    *t = create_sampled(device, allocator, VK_FORMAT_R16_UNORM, width, height, 1,
+                        VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, 0.0f);
+    upload_pixels(upload, t, heights, 2);
+}
+
+Texture texture_create_hdr_target(VkDevice device, GpuAllocator *allocator,
+                                  uint32_t width, uint32_t height) {
+    TextureDesc desc = { .format = VK_FORMAT_R16G16B16A16_SFLOAT, .width = width, .height = height,
+        .mip_levels = 1, .aspect = VK_IMAGE_ASPECT_COLOR_BIT,
+        .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        .filter = VK_FILTER_LINEAR, .address_mode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+        .create_sampler = true };
+    return texture_create(device, allocator, &desc);
+}
+
+Texture texture_create_depth_target(VkDevice device, GpuAllocator *allocator,
+                                    VkFormat format, uint32_t width, uint32_t height) {
+    TextureDesc desc = { .format = format, .width = width, .height = height, .mip_levels = 1,
+        .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+        .aspect = VK_IMAGE_ASPECT_DEPTH_BIT, .create_sampler = false };
+    return texture_create(device, allocator, &desc);
+}
+
+void texture_destroy(VkDevice device, GpuAllocator *allocator, Texture *t) {
+    if (t->sampler) vkDestroySampler(device, t->sampler, NULL);
+    vkDestroyImageView(device, t->view, NULL);
+    vkDestroyImage(device, t->image, NULL);
+    gpu_free(allocator, t->allocation);
+    *t = (Texture){0};
 }

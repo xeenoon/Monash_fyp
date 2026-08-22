@@ -6,10 +6,23 @@
 #include <stdint.h>
 
 #include <cglm/struct.h>
+#include "gpu_memory.h"
+#include "upload.h"
 #include "mesh.h"
 #include "texture.h"
 
 #define MAX_FRAMES_IN_FLIGHT 1
+
+/* Per-frame shader data (descriptor set 0). Kept in a UBO rather than push
+   constants so it scales to sun/atmosphere/history state later. std140 layout:
+   vec4-align every member and pad the tail. */
+typedef struct {
+    mat4s view_projection;
+    vec4s camera_position;   /* xyz + pad */
+    vec4s sun_direction;     /* xyz + pad */
+    float time;
+    float _pad[3];
+} FrameUniforms;
 
 typedef struct Renderer {
     SDL_Window *window;
@@ -21,6 +34,11 @@ typedef struct Renderer {
     uint32_t present_family;
     VkQueue graphics_queue;
     VkQueue present_queue;
+    float max_anisotropy;
+
+    /* Reusable GPU resource infrastructure, shared by every subsystem. */
+    GpuAllocator  *allocator;
+    UploadContext *upload;
 
     VkSwapchainKHR swapchain;
     VkFormat swapchain_format;
@@ -29,19 +47,19 @@ typedef struct Renderer {
     VkImage *images;
     VkImageView *image_views;
     VkFramebuffer *framebuffers;
-    VkImage depth_image;
-    VkDeviceMemory depth_memory;
-    VkImageView depth_view;
-    VkFormat depth_format;
+    Texture depth;
 
-    /* Texturing infrastructure, shared by every mesh. The layout matches the
-       fragment shader's binding 0; sets are handed out by
-       renderer_allocate_texture_set. Untextured meshes fall back to the 1x1
-       white texture so a single sampler-bound pipeline stays valid. */
-    VkDescriptorSetLayout descriptor_set_layout;
+    /* Descriptor roles. Set 0 is per-frame data (camera/sun/time), set 1 is
+       per-material/tile data (currently the albedo sampler). Sets are stable so
+       later passes can slot shadow maps, atmosphere LUTs, and tile metadata into
+       the same scheme. */
+    VkDescriptorSetLayout frame_set_layout;     /* set 0 */
+    VkDescriptorSetLayout material_set_layout;  /* set 1 */
     VkDescriptorPool descriptor_pool;
-    Texture fallback_texture;
-    VkDescriptorSet fallback_set;
+    GpuBuffer       frame_ubo[MAX_FRAMES_IN_FLIGHT];
+    VkDescriptorSet frame_set[MAX_FRAMES_IN_FLIGHT];
+    Texture         fallback_texture;
+    VkDescriptorSet fallback_material_set;
 
     VkRenderPass render_pass;
     VkPipelineLayout pipeline_layout;
@@ -59,22 +77,15 @@ void  renderer_shutdown(Renderer *r);
 void  renderer_wait_idle(Renderer *r);
 float renderer_aspect(const Renderer *r);
 
-/* Acquire, record (view_projection push constant + draw mesh), submit, present.
+/* Acquire, update the frame UBO, record (bind sets + draw mesh), submit, present.
    Recreates the swapchain on OUT_OF_DATE/SUBOPTIMAL or when `resized`. */
-void renderer_draw_frame(Renderer *r, const mat4s *view_projection,
+void renderer_draw_frame(Renderer *r, const FrameUniforms *frame,
                          const Mesh *mesh, bool resized);
 
-/* GPU allocation helpers, exported for mesh.c */
-uint32_t renderer_find_memory_type(Renderer *r, uint32_t type_bits,
-                                   VkMemoryPropertyFlags properties);
-void     renderer_create_buffer(Renderer *r, VkDeviceSize size,
-                                VkBufferUsageFlags usage, VkMemoryPropertyFlags properties,
-                                VkBuffer *buffer, VkDeviceMemory *memory);
+/* Allocate a set-1 combined-image-sampler descriptor set bound to view+sampler.
+   Meshes call this in mesh_upload to get a material set they can bind. */
+VkDescriptorSet renderer_allocate_material_set(Renderer *r, VkImageView view, VkSampler sampler);
 
-/* Begin/submit a throwaway command buffer for a one-off GPU transfer. */
-VkCommandBuffer renderer_begin_single_time(Renderer *r);
-void            renderer_end_single_time(Renderer *r, VkCommandBuffer command);
-
-/* Allocate a combined-image-sampler descriptor set bound to view+sampler.
-   Meshes call this in mesh_upload to get a set they can bind while drawing. */
-VkDescriptorSet renderer_allocate_texture_set(Renderer *r, VkImageView view, VkSampler sampler);
+/* Manual shader reload: rebuild the graphics pipeline from the current .spv on
+   disk at a frame boundary. Safe to call from the main loop (e.g. on a keypress). */
+void renderer_reload_pipeline(Renderer *r);

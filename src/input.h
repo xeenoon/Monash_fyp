@@ -9,6 +9,7 @@ typedef struct {
     bool  sprint;                   /* shift held              */
     bool  quit;                     /* window close / escape   */
     bool  resized;                  /* framebuffer size change */
+    bool  reload_shaders;           /* F5 pressed this frame   */
 } Input;
 
 /* Pumps SDL events + keyboard/mouse state into `in`. */

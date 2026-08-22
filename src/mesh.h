@@ -3,9 +3,16 @@
 #include <vulkan/vulkan.h>
 #include <stdint.h>
 
+#include "gpu_buffer.h"
 #include "texture.h"
 
-typedef struct { float position[3]; float normal[3]; float texcoord[2]; } Vertex;
+typedef struct {
+    float position[3];
+    float normal[3];
+    float texcoord[2];
+    /* 0 = sample the material texture, 1 = use the solid shell colour. */
+    float untextured;
+} Vertex;
 
 /* Base "class". Every primitive embeds this as its FIRST member, so a
    Cube* casts cleanly to Mesh* — the well-defined version of the
@@ -13,23 +20,21 @@ typedef struct { float position[3]; float normal[3]; float texcoord[2]; } Vertex
 typedef struct {
     const Vertex   *vertices;     /* CPU geometry (may point at static data) */
     uint32_t        vertex_count;
-    VkBuffer        buffer;       /* GPU copy, filled by mesh_upload         */
-    VkDeviceMemory  memory;
+    GpuBuffer       vertex_buffer;/* device-local GPU copy, via mesh_upload  */
 
     /* Optional index buffer. Leave indices=NULL / index_count=0 for a plain
        non-indexed draw; set both to have mesh_upload build a GPU index buffer
        and mesh_draw switch to vkCmdDrawIndexed. */
     const uint32_t *indices;      /* CPU indices (may point at static data)  */
     uint32_t        index_count;
-    VkBuffer        index_buffer;
-    VkDeviceMemory  index_memory;
+    GpuBuffer       index_buffer;
 
     /* Optional albedo texture. A mesh implementation sets texture_path to its
-       own image file; mesh_upload then loads it and allocates descriptor_set.
+       own image file; mesh_upload then loads it and allocates material_set.
        Leave texture_path NULL to draw untextured (renderer binds a fallback). */
     const char     *texture_path;
     Texture         texture;
-    VkDescriptorSet descriptor_set;
+    VkDescriptorSet material_set; /* set 1: combined image sampler           */
 } Mesh;
 
 struct Renderer;

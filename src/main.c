@@ -25,11 +25,13 @@ int main(void) {
     Camera camera = { .position = {{-600, 500, -600}}, .yaw = 45.0f, .pitch = -30.0f };
 
     Input input = {0};
-    uint64_t previous_ticks = SDL_GetTicksNS();
+    uint64_t start_ticks = SDL_GetTicksNS();
+    uint64_t previous_ticks = start_ticks;
     bool running = true;
     while (running) {
         input_poll(&input, window);
         if (input.quit) running = false;
+        if (input.reload_shaders) renderer_reload_pipeline(&renderer);
 
         uint64_t ticks = SDL_GetTicksNS();
         float dt = (float)(ticks - previous_ticks) / 1000000000.0f;
@@ -39,10 +41,16 @@ int main(void) {
         camera_update(&camera, input.move_forward, input.move_right,
                       input.look_dx, input.look_dy, input.sprint, dt);
 
-        mat4s view_projection = glms_mat4_mul(
-            camera_projection(&camera, renderer_aspect(&renderer)),
-            camera_view(&camera));
-        renderer_draw_frame(&renderer, &view_projection, &terrain.base, input.resized);
+        FrameUniforms frame = {
+            .view_projection = glms_mat4_mul(
+                camera_projection(&camera, renderer_aspect(&renderer)),
+                camera_view(&camera)),
+            .camera_position = (vec4s){{camera.position.x, camera.position.y, camera.position.z, 1.0f}},
+            /* Fixed afternoon sun until the sky phase drives it. */
+            .sun_direction = glms_vec4(glms_vec3_normalize((vec3s){{-0.4f, -1.0f, -0.3f}}), 0.0f),
+            .time = (float)(ticks - start_ticks) / 1000000000.0f,
+        };
+        renderer_draw_frame(&renderer, &frame, &terrain.base, input.resized);
     }
 
     renderer_wait_idle(&renderer);
