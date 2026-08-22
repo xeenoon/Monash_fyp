@@ -99,7 +99,7 @@ static bool find_queue_families(Renderer *r, VkPhysicalDevice device, uint32_t *
 }
 
 static void create_instance_and_device(Renderer *r) {
-    Uint32 extension_count = 0;
+    uint32_t extension_count = 0;
     const char *const *extensions = SDL_Vulkan_GetInstanceExtensions(&extension_count);
     if (!extensions) { fprintf(stderr, "SDL Vulkan extensions: %s\n", SDL_GetError()); exit(EXIT_FAILURE); }
 

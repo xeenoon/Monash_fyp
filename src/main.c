@@ -24,13 +24,13 @@ int main(void) {
     Camera camera = { .position = {{0, 0, 5}}, .yaw = -90.0f, .pitch = 0.0f };
 
     Input input = {0};
-    Uint64 previous_ticks = SDL_GetTicksNS();
+    uint64_t previous_ticks = SDL_GetTicksNS();
     bool running = true;
     while (running) {
         input_poll(&input, window);
         if (input.quit) running = false;
 
-        Uint64 ticks = SDL_GetTicksNS();
+        uint64_t ticks = SDL_GetTicksNS();
         float dt = (float)(ticks - previous_ticks) / 1000000000.0f;
         previous_ticks = ticks;
         if (dt > 0.1f) dt = 0.1f;
