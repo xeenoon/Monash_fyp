@@ -38,6 +38,13 @@ python3 tools/terrain_tiles.py inspect trn --output trn/tile_atlas.png
 The binary format and validation contract are documented in
 [`docs/offline_terrain_tile_format.md`](docs/offline_terrain_tile_format.md).
 
+The renderer now loads `trn/tiles/0/0/0.trn` at startup, generates its inherited
+`Mesh`, resolves its external imagery beneath `trn/`, and uploads both. Generate
+the dataset before running the renderer. The previous C-array implementation is
+preserved only in the deprecated `src/terrain.c` and `src/terrain.h` files. They
+are excluded from every CMake target, and no active source includes or calls
+them; they can be deleted together in the commit after deprecation.
+
 ## Controls
 
 - Mouse: look around

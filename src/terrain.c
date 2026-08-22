@@ -1,4 +1,8 @@
+/* DEPRECATED: intentionally excluded from CMake and retained only so the
+   deprecation commit can be followed by a clean deletion commit. */
+#define TERRAIN_INCLUDE_DEPRECATED_HARDCODED_DATA
 #include "terrain.h"
+#undef TERRAIN_INCLUDE_DEPRECATED_HARDCODED_DATA
 
 #include <math.h>
 
@@ -16,7 +20,7 @@
 #define TERRAIN_INDEX_COUNT  (TOP_INDEX_COUNT + SIDE_INDEX_COUNT + BASE_INDEX_COUNT)
 #define TERRAIN_BASE_Y       (-100.0f)
 
-/* Static geometry for the (single) terrain instance, mirroring cube.c: the grid
+/* DEPRECATED hardcoded geometry, retained but disconnected from main. The grid
    is stored as GRID_N x GRID_N unique vertices plus an index buffer that stitches
    them into two triangles per cell. mesh_upload copies both to the GPU. */
 static Vertex   TERRAIN_VERTICES[TERRAIN_VERTEX_COUNT];
@@ -58,7 +62,7 @@ static void normal_at(int i, int j, float out[3]) {
     out[0] = nx / len; out[1] = ny / len; out[2] = nz / len;
 }
 
-Terrain terrain_create(struct Renderer *r) {
+Terrain terrain_create_hardcoded_deprecated(struct Renderer *r) {
     /* Centre the field on the origin and drop its lowest point to y = 0. */
     float min_h = TERRAIN_HEIGHTMAP[0];
     for (int k = 1; k < GRID_N * GRID_N; ++k)

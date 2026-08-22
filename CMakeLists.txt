@@ -17,6 +17,12 @@ find_program(GLSLC glslc REQUIRED)
 set(SHADER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/shaders")
 set(SHADER_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/shaders")
 
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/trn/tiles/0/0/0.trn")
+    message(WARNING
+        "The runtime terrain tile is missing. Generate it with "
+        "'python3 tools/terrain_tiles.py build ... --output trn' before running.")
+endif()
+
 # Debug builds keep symbols and stay unoptimised for readable RenderDoc/validation
 # output; every other config optimises. Single-config generator, so decide here.
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -48,6 +54,7 @@ add_library(core_utils STATIC
     src/byte_utils.c
     src/checksum_utils.c
     src/file_utils.c
+    src/path_utils.c
     src/size_utils.c
     src/str_utils.c)
 target_include_directories(core_utils PUBLIC src)
@@ -67,7 +74,7 @@ add_executable(terrain_renderer
     src/mesh.c
     src/terrain_tile.c
     src/cube.c
-    src/terrain.c
+    src/terrain_runtime.c
     src/texture.c
     src/renderer.c
     include/stb_image.c)
@@ -78,6 +85,7 @@ target_link_libraries(terrain_renderer PRIVATE
 target_compile_definitions(terrain_renderer PRIVATE
     SHADER_DIR="${SHADER_OUTPUT_DIR}"
     ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets"
+    TRN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/trn"
     CGLM_FORCE_DEPTH_ZERO_TO_ONE)
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")

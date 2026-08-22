@@ -12,6 +12,7 @@ Current modules are:
 - `str_utils`: allocation-based string operations with explicit ownership;
 - `size_utils`: overflow-checked `size_t` arithmetic;
 - `file_utils`: whole-file reads and typed error results;
+- `path_utils`: allocation-based path composition;
 - `checksum_utils`: checksum APIs backed by the system zlib implementation.
 
 Use a standard/system implementation when it is portable and matches the

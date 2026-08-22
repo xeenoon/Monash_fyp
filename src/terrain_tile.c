@@ -3,6 +3,7 @@
 #include "byte_utils.h"
 #include "checksum_utils.h"
 #include "file_utils.h"
+#include "path_utils.h"
 #include "size_utils.h"
 #include "str_utils.h"
 
@@ -239,6 +240,9 @@ void terrain_tile_unload(TerrainTile *tile) {
         free(tile->profile);
         free(tile->source);
         free(tile->imagery_uri);
+        free(tile->resolved_imagery_path);
+        free(tile->owned_vertices);
+        free(tile->owned_indices);
     }
     *tile = (TerrainTile){0};
 }
@@ -276,4 +280,173 @@ const char *terrain_tile_result_string(TerrainTileResult result) {
     case TERRAIN_TILE_OUT_OF_MEMORY: return "out of memory";
     }
     return "unknown terrain tile error";
+}
+
+bool terrain_tile_resolve_imagery(TerrainTile *tile, const char *dataset_root) {
+    if (!tile || !dataset_root || !tile->owns_offline_data ||
+        !tile->imagery_uri || !tile->imagery_uri[0])
+        return false;
+    char *resolved = path_join(dataset_root, tile->imagery_uri);
+    if (!resolved) return false;
+    free(tile->resolved_imagery_path);
+    tile->resolved_imagery_path = resolved;
+    tile->base.texture_path = resolved;
+    return true;
+}
+
+#define TILE_BASE_Y (-100.0f)
+
+static float local_height(const TerrainTile *tile, uint32_t x, uint32_t y) {
+    return terrain_tile_height(tile, x, y) - tile->header.min_height_m;
+}
+
+static float neighbour_height(const TerrainTile *tile, uint32_t x, uint32_t y,
+                              float fallback) {
+    float height = terrain_tile_height(tile, x, y);
+    return isfinite(height) ? height - tile->header.min_height_m : fallback;
+}
+
+static void tile_normal(const TerrainTile *tile, uint32_t sample_x,
+                        uint32_t sample_y, float spacing_x, float spacing_z,
+                        float out[3]) {
+    float centre = local_height(tile, sample_x, sample_y);
+    float west = neighbour_height(tile, sample_x - 1u, sample_y, centre);
+    float east = neighbour_height(tile, sample_x + 1u, sample_y, centre);
+    float north = neighbour_height(tile, sample_x, sample_y - 1u, centre);
+    float south = neighbour_height(tile, sample_x, sample_y + 1u, centre);
+    float nx = -(east - west) / (2.0f * spacing_x);
+    float ny = 1.0f;
+    float nz = -(south - north) / (2.0f * spacing_z);
+    float length = sqrtf(nx * nx + ny * ny + nz * nz);
+    out[0] = nx / length;
+    out[1] = ny / length;
+    out[2] = nz / length;
+}
+
+static void append_tile_wall(Vertex *vertices, Vertex **vertex,
+                             uint32_t **index,
+                             float ax, float ay, float az,
+                             float bx, float by, float bz,
+                             float nx, float nz) {
+    Vertex *v = *vertex;
+    uint32_t first = (uint32_t)(v - vertices);
+    v[0] = (Vertex){{ax, ay, az}, {nx, 0.0f, nz}, {0.0f, 0.0f}, 1.0f};
+    v[1] = (Vertex){{ax, TILE_BASE_Y, az}, {nx, 0.0f, nz}, {0.0f, 0.0f}, 1.0f};
+    v[2] = (Vertex){{bx, TILE_BASE_Y, bz}, {nx, 0.0f, nz}, {0.0f, 0.0f}, 1.0f};
+    v[3] = (Vertex){{bx, by, bz}, {nx, 0.0f, nz}, {0.0f, 0.0f}, 1.0f};
+    *vertex += 4;
+
+    uint32_t *out = *index;
+    *out++ = first; *out++ = first + 1u; *out++ = first + 2u;
+    *out++ = first; *out++ = first + 2u; *out++ = first + 3u;
+    *index = out;
+}
+
+bool terrain_tile_build_mesh(TerrainTile *tile) {
+    if (!tile || !tile->owns_offline_data || tile->base.vertices ||
+        tile->header.gutter == 0)
+        return false;
+    uint32_t gutter = tile->header.gutter;
+    uint32_t width = tile->header.sample_width - gutter * 2u;
+    uint32_t height = tile->header.sample_height - gutter * 2u;
+    if (width < 2u || height < 2u) return false;
+    for (uint32_t y = 0; y < height; ++y)
+        for (uint32_t x = 0; x < width; ++x)
+            if (!terrain_tile_sample_valid(tile, x + gutter, y + gutter))
+                return false;
+
+    uint64_t cells_x = width - 1u;
+    uint64_t cells_y = height - 1u;
+    uint64_t top_vertices = (uint64_t)width * height;
+    uint64_t top_indices = cells_x * cells_y * 6u;
+    uint64_t side_segments = 2u * (cells_x + cells_y);
+    uint64_t vertex_count = top_vertices + side_segments * 4u + 4u;
+    uint64_t index_count = top_indices + side_segments * 6u + 6u;
+    if (vertex_count > UINT32_MAX || index_count > UINT32_MAX ||
+        vertex_count > SIZE_MAX / sizeof(Vertex) ||
+        index_count > SIZE_MAX / sizeof(uint32_t))
+        return false;
+
+    Vertex *vertices = calloc((size_t)vertex_count, sizeof(*vertices));
+    uint32_t *indices = malloc((size_t)index_count * sizeof(*indices));
+    if (!vertices || !indices) {
+        free(vertices);
+        free(indices);
+        return false;
+    }
+    tile->owned_vertices = vertices;
+    tile->owned_indices = indices;
+
+    float span_x = (float)(tile->header.extent[2] - tile->header.extent[0]);
+    float span_z = (float)(tile->header.extent[3] - tile->header.extent[1]);
+    float spacing_x = span_x / (float)cells_x;
+    float spacing_z = span_z / (float)cells_y;
+    float half_x = span_x * 0.5f;
+    float half_z = span_z * 0.5f;
+
+    for (uint32_t y = 0; y < height; ++y) {
+        for (uint32_t x = 0; x < width; ++x) {
+            uint32_t sample_x = x + gutter;
+            uint32_t sample_y = y + gutter;
+            Vertex *vertex = &vertices[(size_t)y * width + x];
+            vertex->position[0] = x * spacing_x - half_x;
+            vertex->position[1] = local_height(tile, sample_x, sample_y);
+            vertex->position[2] = y * spacing_z - half_z;
+            tile_normal(tile, sample_x, sample_y, spacing_x, spacing_z,
+                        vertex->normal);
+            vertex->texcoord[0] = (float)x / (float)cells_x;
+            vertex->texcoord[1] = (float)y / (float)cells_y;
+        }
+    }
+
+    uint32_t *index = indices;
+    for (uint32_t y = 0; y < height - 1u; ++y) {
+        for (uint32_t x = 0; x < width - 1u; ++x) {
+            uint32_t v00 = y * width + x;
+            uint32_t v10 = v00 + 1u;
+            uint32_t v01 = v00 + width;
+            uint32_t v11 = v01 + 1u;
+            *index++ = v00; *index++ = v11; *index++ = v10;
+            *index++ = v00; *index++ = v01; *index++ = v11;
+        }
+    }
+
+    Vertex *wall = vertices + top_vertices;
+    for (uint32_t x = width - 1u; x > 0; --x)
+        append_tile_wall(vertices, &wall, &index,
+            x * spacing_x - half_x, vertices[x].position[1], -half_z,
+            (x - 1u) * spacing_x - half_x, vertices[x - 1u].position[1], -half_z,
+            0.0f, -1.0f);
+    for (uint32_t y = 0; y < height - 1u; ++y)
+        append_tile_wall(vertices, &wall, &index,
+            -half_x, vertices[(size_t)y * width].position[1], y * spacing_z - half_z,
+            -half_x, vertices[(size_t)(y + 1u) * width].position[1],
+            (y + 1u) * spacing_z - half_z, -1.0f, 0.0f);
+    for (uint32_t x = 0; x < width - 1u; ++x)
+        append_tile_wall(vertices, &wall, &index,
+            x * spacing_x - half_x,
+            vertices[(size_t)(height - 1u) * width + x].position[1], half_z,
+            (x + 1u) * spacing_x - half_x,
+            vertices[(size_t)(height - 1u) * width + x + 1u].position[1], half_z,
+            0.0f, 1.0f);
+    for (uint32_t y = height - 1u; y > 0; --y)
+        append_tile_wall(vertices, &wall, &index,
+            half_x, vertices[(size_t)y * width + width - 1u].position[1],
+            y * spacing_z - half_z,
+            half_x, vertices[(size_t)(y - 1u) * width + width - 1u].position[1],
+            (y - 1u) * spacing_z - half_z, 1.0f, 0.0f);
+
+    uint32_t base = (uint32_t)(wall - vertices);
+    wall[0] = (Vertex){{-half_x, TILE_BASE_Y, -half_z}, {0, -1, 0}, {0, 0}, 1.0f};
+    wall[1] = (Vertex){{ half_x, TILE_BASE_Y, -half_z}, {0, -1, 0}, {0, 0}, 1.0f};
+    wall[2] = (Vertex){{ half_x, TILE_BASE_Y,  half_z}, {0, -1, 0}, {0, 0}, 1.0f};
+    wall[3] = (Vertex){{-half_x, TILE_BASE_Y,  half_z}, {0, -1, 0}, {0, 0}, 1.0f};
+    *index++ = base; *index++ = base + 1u; *index++ = base + 2u;
+    *index++ = base; *index++ = base + 2u; *index++ = base + 3u;
+
+    tile->base.vertices = vertices;
+    tile->base.vertex_count = (uint32_t)vertex_count;
+    tile->base.indices = indices;
+    tile->base.index_count = (uint32_t)index_count;
+    return true;
 }

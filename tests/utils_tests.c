@@ -7,6 +7,7 @@
 #include "byte_utils.h"
 #include "checksum_utils.h"
 #include "file_utils.h"
+#include "path_utils.h"
 #include "size_utils.h"
 #include "str_utils.h"
 
@@ -41,6 +42,11 @@ static void test_string_and_size_utils(void) {
     total = SIZE_MAX - 1u;
     require(!size_add_checked(&total, 2) && total == SIZE_MAX - 1u,
             "checked add did not detect overflow");
+
+    char *path = path_join("terrain/", "/tiles/0.trn");
+    require(path && strcmp(path, "terrain/tiles/0.trn") == 0,
+            "path join failed");
+    free(path);
 }
 
 static void test_checksum(void) {

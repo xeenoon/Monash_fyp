@@ -73,7 +73,7 @@ def main() -> None:
             "--imagery-size", "8", "--gutter", "1", "--height-encoding", "r16")
         run("python3", args.tool, "validate", str(r16))
         run(args.loader, str(r16 / "tiles" / "0" / "0" / "0.trn"),
-            "allow-all-valid")
+            "allow-all-valid", str(r16))
 
     print("phase 3 offline terrain tile tests passed")
 

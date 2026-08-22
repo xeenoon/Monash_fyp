@@ -5,7 +5,7 @@
 #include "camera.h"
 #include "input.h"
 #include "renderer.h"
-#include "terrain.h"
+#include "terrain_runtime.h"
 
 #define WINDOW_WIDTH 1280
 #define WINDOW_HEIGHT 720
@@ -91,7 +91,7 @@ int main(void) {
     }
 
     renderer_wait_idle(&renderer);
-    mesh_destroy(&renderer, &terrain.base);
+    terrain_destroy(&renderer, &terrain);
     renderer_shutdown(&renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();

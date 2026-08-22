@@ -67,6 +67,10 @@ typedef struct {
     char *profile;
     char *source;
     char *imagery_uri;
+    char *resolved_imagery_path;
+
+    Vertex *owned_vertices;
+    uint32_t *owned_indices;
 
     bool owns_offline_data;
 } TerrainTile;
@@ -92,6 +96,13 @@ typedef enum {
    upload. Mesh geometry remains the responsibility of terrain generation.
    `out` need not be initialised, but must not already own a loaded tile. */
 TerrainTileResult terrain_tile_load(const char *path, TerrainTile *out);
+
+/* Resolves the serialized dataset-relative imagery URI and generates a CPU
+   Mesh from the interior height samples. Mesh generation currently requires
+   every interior sample to be valid. */
+bool terrain_tile_resolve_imagery(TerrainTile *tile, const char *dataset_root);
+bool terrain_tile_build_mesh(TerrainTile *tile);
+/* If the inherited Mesh was uploaded, call mesh_destroy before unloading. */
 void terrain_tile_unload(TerrainTile *tile);
 
 bool terrain_tile_sample_valid(const TerrainTile *tile, uint32_t x, uint32_t y);
