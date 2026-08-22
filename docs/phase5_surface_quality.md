@@ -27,7 +27,7 @@ The order in `shaders/terrain.frag` follows the Phase 5 specification:
 3. fade a shared high-frequency normal map by camera distance;
 4. switch steep slopes to an octant-snapped cliff projection;
 5. apply two low-frequency macro-colour channels;
-6. randomise detail rotation/offset per cell with explicit `textureGrad`;
+6. crossfade two rotated/offset detail bases with explicit `textureGrad`;
 7. blend to a lower detail scale in the distance.
 
 The packed linear detail texture is generated once by `surface_detail.c`: RG is
@@ -48,7 +48,9 @@ Terrain3D is the primary donor. Adjacent source comments identify every adapted
 shader function and its original file/range:
 
 - `main.glsl:263-269` for the compact rotation/hash helpers;
-- `main.glsl:321-345` for derivative-preserving random detiling;
+- `main.glsl:321-345` for derivative-preserving rotation and detiling. Hard
+  random cells were replaced by a continuous blend because the generated
+  periodic normal map is not authored to match at arbitrarily rotated edges;
 - `main.glsl:439-445` for the derivative-controlled distant normal path;
 - `projection.glsl` for cheap cliff projection;
 - `dual_scaling.glsl:15-75` for distance blending between detail scales;

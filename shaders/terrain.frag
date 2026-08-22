@@ -83,7 +83,7 @@ HeightSurface height_surface() {
 
 /* Adapted from Terrain3D main.glsl:263-269 (Petkovsek, Palmroos et al., MIT).
    Keeping its two-component sin/cos representation avoids constructing a mat2
-   for every randomised detail cell. */
+   for each detail basis and rotated shadow-filter kernel. */
 float random_cell(vec2 xy) {
     return fract(sin(dot(xy, vec2(12.9898, 78.233))) * 43758.5453);
 }
@@ -93,17 +93,9 @@ vec2 rotate_vec2(vec2 v, vec2 cs) {
                 fma(cs.x, v.y, -cs.y * v.x));
 }
 
-/* Adapted from Terrain3D main.glsl:321-345 (MIT). The important retained
-   behaviour is rotating the original derivatives alongside each discontinuous
-   hashed UV cell, then using textureGrad so cell boundaries do not shimmer. */
-vec4 sample_detiled(vec2 uv, vec2 ddx_uv, vec2 ddy_uv, out vec2 rotation) {
-    vec2 centre = floor(uv + 0.5);
-    float hash = random_cell(centre);
-    vec2 detile = (hash * 2.0 - 1.0) * vec2(0.42, 0.50) * TAU;
-    rotation = vec2(cos(detile.x), sin(detile.x));
-    vec2 rotated_uv = rotate_vec2(uv - centre, rotation) +
-                      centre + detile.y - 0.5;
-    return textureGrad(surface_detail, rotated_uv,
+vec4 sample_rotated_detail(vec2 uv, vec2 ddx_uv, vec2 ddy_uv,
+                           vec2 rotation, vec2 offset) {
+    return textureGrad(surface_detail, rotate_vec2(uv, rotation) + offset,
                        rotate_vec2(ddx_uv, rotation),
                        rotate_vec2(ddy_uv, rotation));
 }
@@ -135,11 +127,46 @@ vec3 unpack_detail_normal(vec4 packed, vec2 rotation, vec3 terrain_normal,
                           vec3 tangent_hint) {
     vec2 xy = packed.rg * 2.0 - 1.0;
     xy = rotate_vec2(xy, rotation);
+    /* The generated map contains unit normals so its RG range is suitable for
+       storage, but applying that full amplitude overwhelms aerial imagery.
+       Treat it as micro-normal perturbation, not replacement geometry. */
+    xy *= 0.22;
     float z = sqrt(max(1.0 - dot(xy, xy), 0.02));
     vec3 tangent = normalize(tangent_hint -
                              terrain_normal * dot(terrain_normal, tangent_hint));
     vec3 bitangent = normalize(cross(tangent, terrain_normal));
     return normalize(tangent * xy.x + bitangent * xy.y + terrain_normal * z);
+}
+
+/* Terrain3D main.glsl:321-345 (MIT) supplies the derivative-rotation pattern.
+   Its hard random cells assume authored material textures whose rotated edges
+   match. Our generated periodic map does not have that property—the old direct
+   port exposed every cell as a rectangle. Instead we blend two continuous,
+   derivative-correct bases with a low-frequency mask. Quarter-turn rotation is
+   deliberate: it preserves the 4096 m CPU phase lattice across tile seams. */
+vec3 sample_detail_scale(vec2 projected_uv, vec2 projected_ddx,
+                         vec2 projected_ddy, float scale,
+                         vec3 terrain_normal, vec3 tangent_hint) {
+    vec2 uv = projected_uv * scale;
+    vec2 ddx_uv = projected_ddx * scale;
+    vec2 ddy_uv = projected_ddy * scale;
+    const vec2 rotation_a = vec2(1.0, 0.0);
+    const vec2 rotation_b = vec2(0.0, 1.0); /* 90 degrees */
+    vec4 packed_a = sample_rotated_detail(uv, ddx_uv, ddy_uv,
+                                           rotation_a, vec2(0.13, 0.37));
+    vec4 packed_b = sample_rotated_detail(uv, ddx_uv, ddy_uv,
+                                           rotation_b, vec2(0.61, 0.19));
+    vec3 normal_a = unpack_detail_normal(packed_a, rotation_a,
+                                          terrain_normal, tangent_hint);
+    vec3 normal_b = unpack_detail_normal(packed_b, rotation_b,
+                                          terrain_normal, tangent_hint);
+
+    vec2 mask_uv = projected_uv * (1.0 / 128.0) + vec2(0.31, 0.73);
+    float mask = textureGrad(surface_detail, mask_uv,
+                             projected_ddx * (1.0 / 128.0),
+                             projected_ddy * (1.0 / 128.0)).b;
+    return normalize(mix(normal_a, normal_b,
+                         smoothstep(0.25, 0.75, mask)));
 }
 
 vec3 detailed_normal(vec3 terrain_normal, vec3 surface_position, float distance_m) {
@@ -148,23 +175,17 @@ vec3 detailed_normal(vec3 terrain_normal, vec3 surface_position, float distance_
     projected_coordinates(surface_position, terrain_normal,
                           projected_uv, projected_ddx, projected_ddy, tangent_hint);
 
-    const float near_scale = 0.25;
-    const float far_scale = 0.0625;
-    vec2 near_rotation;
-    vec4 near_sample = sample_detiled(projected_uv * near_scale,
-        projected_ddx * near_scale, projected_ddy * near_scale, near_rotation);
-    vec3 near_normal = unpack_detail_normal(near_sample, near_rotation,
-                                             terrain_normal, tangent_hint);
+    const float near_scale = 0.0625;   /* one packed texture per 16 metres */
+    const float far_scale = 0.015625;  /* one packed texture per 64 metres */
+    vec3 near_normal = sample_detail_scale(projected_uv, projected_ddx,
+        projected_ddy, near_scale, terrain_normal, tangent_hint);
 
     /* Adapted from Terrain3D dual_scaling.glsl:15-75 (MIT): blend a reduced
        scale over distance while preserving each scale's own derivatives. */
     float far_factor = smoothstep(90.0, 260.0, distance_m);
     if (far_factor <= 0.0) return near_normal;
-    vec2 far_rotation;
-    vec4 far_sample = sample_detiled(projected_uv * far_scale,
-        projected_ddx * far_scale, projected_ddy * far_scale, far_rotation);
-    vec3 far_normal = unpack_detail_normal(far_sample, far_rotation,
-                                            terrain_normal, tangent_hint);
+    vec3 far_normal = sample_detail_scale(projected_uv, projected_ddx,
+        projected_ddy, far_scale, terrain_normal, tangent_hint);
     return normalize(mix(near_normal, far_normal, far_factor));
 }
 
@@ -383,7 +404,7 @@ void main() {
     if (material_strength > 0.0) {
         vec3 detail_normal = detailed_normal(surface.local_normal,
                                              surface_position, distance_m);
-        float detail_fade = 1.0 - smoothstep(300.0, 650.0, distance_m);
+        float detail_fade = 1.0 - smoothstep(120.0, 400.0, distance_m);
         local_lit_normal = normalize(mix(surface.local_normal, detail_normal,
                                          material_strength * detail_fade));
         vec3 varied = apply_macro_variation(map_color, surface_position,
