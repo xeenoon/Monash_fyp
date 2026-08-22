@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(vulkan_cube C)
+project(terrain_renderer C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -25,7 +25,7 @@ endforeach()
 
 add_custom_target(shaders ALL DEPENDS ${SHADER_BINARIES})
 
-add_executable(vulkan_cube
+add_executable(terrain_renderer
     src/main.c
     src/input.c
     src/camera.c
@@ -35,16 +35,16 @@ add_executable(vulkan_cube
     src/texture.c
     src/renderer.c
     include/stb_image.c)
-add_dependencies(vulkan_cube shaders)
-target_include_directories(vulkan_cube PRIVATE include)
-target_link_libraries(vulkan_cube PRIVATE Vulkan::Vulkan cglm::cglm PkgConfig::SDL3 m)
-target_compile_definitions(vulkan_cube PRIVATE
+add_dependencies(terrain_renderer shaders)
+target_include_directories(terrain_renderer PRIVATE include)
+target_link_libraries(terrain_renderer PRIVATE Vulkan::Vulkan cglm::cglm PkgConfig::SDL3 m)
+target_compile_definitions(terrain_renderer PRIVATE
     SHADER_DIR="${SHADER_OUTPUT_DIR}"
     ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets"
     CGLM_FORCE_DEPTH_ZERO_TO_ONE)
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(vulkan_cube PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(terrain_renderer PRIVATE -Wall -Wextra -Wpedantic)
     # Vendored third-party header; not held to our warning bar.
     set_source_files_properties(include/stb_image.c PROPERTIES COMPILE_OPTIONS "-w")
 endif()

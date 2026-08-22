@@ -18,7 +18,7 @@ On Ubuntu/Debian, SDL3 may need to come from a newer release or be built locally
 ```sh
 cmake -S . -B build
 cmake --build build
-./build/vulkan_cube
+./build/terrain_renderer
 ```
 
 ## Controls

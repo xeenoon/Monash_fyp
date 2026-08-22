@@ -60,7 +60,7 @@ in `CMakeLists.txt` resolves without any extra flags.
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
-./build/vulkan_cube
+./build/terrain_renderer
 ```
 
 ## Notes

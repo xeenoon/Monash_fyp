@@ -1,6 +1,9 @@
 /build/
 /alps-data/
-/sources.md
 /inspo/
 /tools/*.txt
 /.claude/
+
+# Repository-root notes and plans. Keep the public README tracked.
+/*.md
+!/readme.md
