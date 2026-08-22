@@ -23,6 +23,10 @@ void mesh_upload(struct Renderer *r, Mesh *mesh) {
     if (mesh->index_count)
         upload_buffer(r, sizeof(uint32_t) * mesh->index_count, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
                       mesh->indices, &mesh->index_buffer, &mesh->index_memory);
+    if (mesh->texture_path) {
+        texture_load(r, &mesh->texture, mesh->texture_path);
+        mesh->descriptor_set = renderer_allocate_texture_set(r, mesh->texture.view, mesh->texture.sampler);
+    }
 }
 
 void mesh_destroy(struct Renderer *r, Mesh *mesh) {
@@ -32,6 +36,8 @@ void mesh_destroy(struct Renderer *r, Mesh *mesh) {
         vkDestroyBuffer(r->device, mesh->index_buffer, NULL);
         vkFreeMemory(r->device, mesh->index_memory, NULL);
     }
+    if (mesh->texture_path)
+        texture_destroy(r, &mesh->texture);
 }
 
 void mesh_draw(VkCommandBuffer cmd, const Mesh *mesh) {
@@ -50,10 +56,11 @@ VkVertexInputBindingDescription mesh_binding_description(void) {
 }
 
 const VkVertexInputAttributeDescription *mesh_attribute_descriptions(uint32_t *count) {
-    static const VkVertexInputAttributeDescription attributes[2] = {
+    static const VkVertexInputAttributeDescription attributes[3] = {
         {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, position)},
-        {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, normal)}
+        {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, normal)},
+        {2, 0, VK_FORMAT_R32G32_SFLOAT,    offsetof(Vertex, texcoord)}
     };
-    *count = 2;
+    *count = 3;
     return attributes;
 }

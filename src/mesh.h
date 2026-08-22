@@ -3,7 +3,9 @@
 #include <vulkan/vulkan.h>
 #include <stdint.h>
 
-typedef struct { float position[3]; float normal[3]; } Vertex;
+#include "texture.h"
+
+typedef struct { float position[3]; float normal[3]; float texcoord[2]; } Vertex;
 
 /* Base "class". Every primitive embeds this as its FIRST member, so a
    Cube* casts cleanly to Mesh* — the well-defined version of the
@@ -21,6 +23,13 @@ typedef struct {
     uint32_t        index_count;
     VkBuffer        index_buffer;
     VkDeviceMemory  index_memory;
+
+    /* Optional albedo texture. A mesh implementation sets texture_path to its
+       own image file; mesh_upload then loads it and allocates descriptor_set.
+       Leave texture_path NULL to draw untextured (renderer binds a fallback). */
+    const char     *texture_path;
+    Texture         texture;
+    VkDescriptorSet descriptor_set;
 } Mesh;
 
 struct Renderer;

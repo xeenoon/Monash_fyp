@@ -7,6 +7,7 @@
 
 #include <cglm/struct.h>
 #include "mesh.h"
+#include "texture.h"
 
 #define MAX_FRAMES_IN_FLIGHT 1
 
@@ -32,6 +33,15 @@ typedef struct Renderer {
     VkDeviceMemory depth_memory;
     VkImageView depth_view;
     VkFormat depth_format;
+
+    /* Texturing infrastructure, shared by every mesh. The layout matches the
+       fragment shader's binding 0; sets are handed out by
+       renderer_allocate_texture_set. Untextured meshes fall back to the 1x1
+       white texture so a single sampler-bound pipeline stays valid. */
+    VkDescriptorSetLayout descriptor_set_layout;
+    VkDescriptorPool descriptor_pool;
+    Texture fallback_texture;
+    VkDescriptorSet fallback_set;
 
     VkRenderPass render_pass;
     VkPipelineLayout pipeline_layout;
@@ -60,3 +70,11 @@ uint32_t renderer_find_memory_type(Renderer *r, uint32_t type_bits,
 void     renderer_create_buffer(Renderer *r, VkDeviceSize size,
                                 VkBufferUsageFlags usage, VkMemoryPropertyFlags properties,
                                 VkBuffer *buffer, VkDeviceMemory *memory);
+
+/* Begin/submit a throwaway command buffer for a one-off GPU transfer. */
+VkCommandBuffer renderer_begin_single_time(Renderer *r);
+void            renderer_end_single_time(Renderer *r, VkCommandBuffer command);
+
+/* Allocate a combined-image-sampler descriptor set bound to view+sampler.
+   Meshes call this in mesh_upload to get a set they can bind while drawing. */
+VkDescriptorSet renderer_allocate_texture_set(Renderer *r, VkImageView view, VkSampler sampler);

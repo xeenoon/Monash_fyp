@@ -13,7 +13,7 @@ find_program(GLSLC glslc REQUIRED)
 set(SHADER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/shaders")
 set(SHADER_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/shaders")
 
-foreach(SHADER cube.vert cube.frag)
+foreach(SHADER cube.vert cube.frag terrain.vert terrain.frag)
     add_custom_command(
         OUTPUT "${SHADER_OUTPUT_DIR}/${SHADER}.spv"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${SHADER_OUTPUT_DIR}"
@@ -32,13 +32,19 @@ add_executable(vulkan_cube
     src/mesh.c
     src/cube.c
     src/terrain.c
-    src/renderer.c)
+    src/texture.c
+    src/renderer.c
+    include/stb_image.c)
 add_dependencies(vulkan_cube shaders)
+target_include_directories(vulkan_cube PRIVATE include)
 target_link_libraries(vulkan_cube PRIVATE Vulkan::Vulkan cglm::cglm PkgConfig::SDL3 m)
 target_compile_definitions(vulkan_cube PRIVATE
     SHADER_DIR="${SHADER_OUTPUT_DIR}"
+    ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets"
     CGLM_FORCE_DEPTH_ZERO_TO_ONE)
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(vulkan_cube PRIVATE -Wall -Wextra -Wpedantic)
+    # Vendored third-party header; not held to our warning bar.
+    set_source_files_properties(include/stb_image.c PROPERTIES COMPILE_OPTIONS "-w")
 endif()

@@ -45,6 +45,9 @@ Terrain terrain_create(struct Renderer *r) {
             v->position[1] = height_at(i, j) - min_h;
             v->position[2] = j * SPACING - half;
             normal_at(i, j, v->normal);
+            /* Texture spans the field 1:1; grid row 0 = north = image row 0. */
+            v->texcoord[0] = (float)i / (GRID_N - 1);
+            v->texcoord[1] = (float)j / (GRID_N - 1);
         }
     }
 
@@ -67,6 +70,7 @@ Terrain terrain_create(struct Renderer *r) {
         .vertex_count = (uint32_t)TERRAIN_VERTEX_COUNT,
         .indices = TERRAIN_INDICES,
         .index_count = (uint32_t)TERRAIN_INDEX_COUNT,
+        .texture_path = ASSET_DIR "/terrain_albedo.png",
     }};
     mesh_upload(r, &terrain.base);
     return terrain;

@@ -45,6 +45,63 @@ void renderer_create_buffer(Renderer *r, VkDeviceSize size, VkBufferUsageFlags u
     VK_CHECK(vkBindBufferMemory(r->device, *buffer, *memory, 0));
 }
 
+VkCommandBuffer renderer_begin_single_time(Renderer *r) {
+    VkCommandBufferAllocateInfo alloc = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandPool = r->command_pool, .commandBufferCount = 1 };
+    VkCommandBuffer command;
+    VK_CHECK(vkAllocateCommandBuffers(r->device, &alloc, &command));
+    VkCommandBufferBeginInfo begin = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT };
+    VK_CHECK(vkBeginCommandBuffer(command, &begin));
+    return command;
+}
+
+void renderer_end_single_time(Renderer *r, VkCommandBuffer command) {
+    VK_CHECK(vkEndCommandBuffer(command));
+    VkSubmitInfo submit = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .commandBufferCount = 1, .pCommandBuffers = &command };
+    VK_CHECK(vkQueueSubmit(r->graphics_queue, 1, &submit, VK_NULL_HANDLE));
+    VK_CHECK(vkQueueWaitIdle(r->graphics_queue));
+    vkFreeCommandBuffers(r->device, r->command_pool, 1, &command);
+}
+
+VkDescriptorSet renderer_allocate_texture_set(Renderer *r, VkImageView view, VkSampler sampler) {
+    VkDescriptorSetAllocateInfo alloc = { .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool = r->descriptor_pool, .descriptorSetCount = 1,
+        .pSetLayouts = &r->descriptor_set_layout };
+    VkDescriptorSet set;
+    VK_CHECK(vkAllocateDescriptorSets(r->device, &alloc, &set));
+    VkDescriptorImageInfo image = { .sampler = sampler, .imageView = view,
+        .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+    VkWriteDescriptorSet write = { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .dstSet = set, .dstBinding = 0, .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &image };
+    vkUpdateDescriptorSets(r->device, 1, &write, 0, NULL);
+    return set;
+}
+
+/* Set-0/binding-0 combined-image-sampler layout + pool shared by all meshes,
+   plus a 1x1 white fallback set for meshes that carry no texture. */
+#define MAX_TEXTURE_SETS 16
+static void create_texture_infrastructure(Renderer *r) {
+    VkDescriptorSetLayoutBinding binding = { .binding = 0,
+        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = 1,
+        .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT };
+    VkDescriptorSetLayoutCreateInfo layout = { .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .bindingCount = 1, .pBindings = &binding };
+    VK_CHECK(vkCreateDescriptorSetLayout(r->device, &layout, NULL, &r->descriptor_set_layout));
+
+    VkDescriptorPoolSize pool_size = { .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        .descriptorCount = MAX_TEXTURE_SETS };
+    VkDescriptorPoolCreateInfo pool = { .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .poolSizeCount = 1, .pPoolSizes = &pool_size, .maxSets = MAX_TEXTURE_SETS };
+    VK_CHECK(vkCreateDescriptorPool(r->device, &pool, NULL, &r->descriptor_pool));
+
+    texture_create_white(r, &r->fallback_texture);
+    r->fallback_set = renderer_allocate_texture_set(r, r->fallback_texture.view,
+                                                    r->fallback_texture.sampler);
+}
+
 static VkFormat find_depth_format(Renderer *r) {
     const VkFormat candidates[] = {VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT,
                                    VK_FORMAT_D24_UNORM_S8_UINT};
@@ -176,8 +233,8 @@ static void create_render_pass(Renderer *r) {
 
 static void create_pipeline(Renderer *r) {
     char vert_path[1024], frag_path[1024];
-    snprintf(vert_path, sizeof(vert_path), "%s/cube.vert.spv", SHADER_DIR);
-    snprintf(frag_path, sizeof(frag_path), "%s/cube.frag.spv", SHADER_DIR);
+    snprintf(vert_path, sizeof(vert_path), "%s/terrain.vert.spv", SHADER_DIR);
+    snprintf(frag_path, sizeof(frag_path), "%s/terrain.frag.spv", SHADER_DIR);
     VkShaderModule vert = create_shader_module(r, vert_path);
     VkShaderModule frag = create_shader_module(r, frag_path);
     VkPipelineShaderStageCreateInfo stages[2] = {
@@ -212,6 +269,7 @@ static void create_pipeline(Renderer *r) {
         .dynamicStateCount = 2, .pDynamicStates = dynamics };
     VkPushConstantRange push = { .stageFlags = VK_SHADER_STAGE_VERTEX_BIT, .offset = 0, .size = sizeof(mat4s) };
     VkPipelineLayoutCreateInfo layout_info = { .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .setLayoutCount = 1, .pSetLayouts = &r->descriptor_set_layout,
         .pushConstantRangeCount = 1, .pPushConstantRanges = &push };
     VK_CHECK(vkCreatePipelineLayout(r->device, &layout_info, NULL, &r->pipeline_layout));
     VkGraphicsPipelineCreateInfo pipeline_info = { .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
@@ -373,6 +431,10 @@ static void record_commands(Renderer *r, uint32_t image_index, const mat4s *view
     vkCmdSetViewport(command, 0, 1, &viewport);
     vkCmdSetScissor(command, 0, 1, &scissor);
     vkCmdPushConstants(command, r->pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(*view_projection), view_projection);
+    /* Each mesh brings its own texture set; untextured meshes use the fallback. */
+    VkDescriptorSet texture_set = mesh->descriptor_set ? mesh->descriptor_set : r->fallback_set;
+    vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, r->pipeline_layout, 0, 1,
+        &texture_set, 0, NULL);
     mesh_draw(command, mesh);
     vkCmdEndRenderPass(command);
     VK_CHECK(vkEndCommandBuffer(command));
@@ -411,6 +473,7 @@ void renderer_init(Renderer *r, SDL_Window *window) {
     r->window = window;
     create_instance_and_device(r);
     create_command_and_sync(r);
+    create_texture_infrastructure(r);
     create_swapchain(r);
 }
 
@@ -430,6 +493,9 @@ void renderer_shutdown(Renderer *r) {
         vkDestroySemaphore(r->device, r->image_available[i], NULL);
         vkDestroyFence(r->device, r->in_flight[i], NULL);
     }
+    vkDestroyDescriptorPool(r->device, r->descriptor_pool, NULL);
+    vkDestroyDescriptorSetLayout(r->device, r->descriptor_set_layout, NULL);
+    texture_destroy(r, &r->fallback_texture);
     vkDestroyCommandPool(r->device, r->command_pool, NULL);
     vkDestroyDevice(r->device, NULL);
     vkDestroySurfaceKHR(r->instance, r->surface, NULL);
