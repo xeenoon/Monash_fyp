@@ -1,7 +1,12 @@
 #include "terrain_tile.h"
 
+#include "byte_utils.h"
+#include "checksum_utils.h"
+#include "file_utils.h"
+#include "size_utils.h"
+#include "str_utils.h"
+
 #include <math.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -36,59 +41,6 @@ enum {
     OFF_TRANSLATION = 192,
 };
 
-static uint16_t read_u16(const uint8_t *p) {
-    return (uint16_t)((uint16_t)p[0] | (uint16_t)p[1] << 8);
-}
-
-static uint32_t read_u32(const uint8_t *p) {
-    return (uint32_t)p[0] | (uint32_t)p[1] << 8 |
-           (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
-}
-
-static uint64_t read_u64(const uint8_t *p) {
-    return (uint64_t)read_u32(p) | (uint64_t)read_u32(p + 4) << 32;
-}
-
-static float read_f32(const uint8_t *p) {
-    uint32_t bits = read_u32(p);
-    float value;
-    memcpy(&value, &bits, sizeof(value));
-    return value;
-}
-
-static double read_f64(const uint8_t *p) {
-    uint64_t bits = read_u64(p);
-    double value;
-    memcpy(&value, &bits, sizeof(value));
-    return value;
-}
-
-static uint32_t crc32_bytes(const uint8_t *data, size_t size) {
-    uint32_t crc = UINT32_MAX;
-    for (size_t i = 0; i < size; ++i) {
-        crc ^= data[i];
-        for (unsigned bit = 0; bit < 8; ++bit)
-            crc = (crc >> 1) ^ (UINT32_C(0xedb88320) &
-                                (uint32_t)-(int32_t)(crc & 1u));
-    }
-    return ~crc;
-}
-
-static bool add_size(size_t *total, uint32_t amount) {
-    if (amount > SIZE_MAX - *total) return false;
-    *total += amount;
-    return true;
-}
-
-static char *copy_string(const uint8_t **cursor, uint32_t length) {
-    char *result = malloc((size_t)length + 1u);
-    if (!result) return NULL;
-    memcpy(result, *cursor, length);
-    result[length] = '\0';
-    *cursor += length;
-    return result;
-}
-
 static bool finite_header(const TerrainTileHeader *h) {
     if (!isfinite(h->min_height_m) || !isfinite(h->height_range_m) ||
         h->height_range_m < 0.0f || !isfinite(h->geometric_error_m) ||
@@ -110,72 +62,62 @@ TerrainTileResult terrain_tile_load(const char *path, TerrainTile *out) {
     if (!path || !out) return TERRAIN_TILE_INVALID_ARGUMENT;
 
     TerrainTile tile = {0};
-    FILE *file = fopen(path, "rb");
-    if (!file) return TERRAIN_TILE_IO_ERROR;
-    if (fseek(file, 0, SEEK_END) != 0) {
-        fclose(file);
-        return TERRAIN_TILE_IO_ERROR;
-    }
-    long file_length = ftell(file);
-    if (file_length < 0 || fseek(file, 0, SEEK_SET) != 0) {
-        fclose(file);
-        return TERRAIN_TILE_IO_ERROR;
-    }
-    if ((uint64_t)file_length < TERRAIN_TILE_HEADER_BYTES) {
-        fclose(file);
+    uint8_t *file_data;
+    size_t file_size;
+    FileReadResult file_result = file_read_all(path, &file_data, &file_size);
+    if (file_result == FILE_READ_OUT_OF_MEMORY) return TERRAIN_TILE_OUT_OF_MEMORY;
+    if (file_result != FILE_READ_OK) return TERRAIN_TILE_IO_ERROR;
+    if (file_size < TERRAIN_TILE_HEADER_BYTES) {
+        free(file_data);
         return TERRAIN_TILE_TRUNCATED;
     }
 
-    uint8_t raw_header[TERRAIN_TILE_HEADER_BYTES];
-    if (fread(raw_header, 1, sizeof(raw_header), file) != sizeof(raw_header)) {
-        fclose(file);
-        return TERRAIN_TILE_IO_ERROR;
-    }
-    if (read_u32(raw_header + OFF_MAGIC) != TERRAIN_TILE_MAGIC) {
-        fclose(file);
+    const uint8_t *raw_header = file_data;
+    if (byte_read_u32_le(raw_header + OFF_MAGIC) != TERRAIN_TILE_MAGIC) {
+        free(file_data);
         return TERRAIN_TILE_BAD_MAGIC;
     }
-    if (read_u16(raw_header + OFF_VERSION) != TERRAIN_TILE_VERSION) {
-        fclose(file);
+    if (byte_read_u16_le(raw_header + OFF_VERSION) != TERRAIN_TILE_VERSION) {
+        free(file_data);
         return TERRAIN_TILE_UNSUPPORTED_VERSION;
     }
-    if (read_u32(raw_header + OFF_HEADER_BYTES) != TERRAIN_TILE_HEADER_BYTES) {
-        fclose(file);
+    if (byte_read_u32_le(raw_header + OFF_HEADER_BYTES) != TERRAIN_TILE_HEADER_BYTES) {
+        free(file_data);
         return TERRAIN_TILE_INVALID_FORMAT;
     }
 
     TerrainTileHeader *h = &tile.header;
-    h->flags = read_u16(raw_header + OFF_FLAGS);
-    h->level = read_u32(raw_header + OFF_LEVEL);
-    h->x = read_u32(raw_header + OFF_X);
-    h->y = read_u32(raw_header + OFF_Y);
-    h->parent_level = read_u32(raw_header + OFF_PARENT_LEVEL);
-    h->parent_x = read_u32(raw_header + OFF_PARENT_X);
-    h->parent_y = read_u32(raw_header + OFF_PARENT_Y);
-    h->sample_width = read_u16(raw_header + OFF_SAMPLE_WIDTH);
-    h->sample_height = read_u16(raw_header + OFF_SAMPLE_HEIGHT);
-    h->gutter = read_u16(raw_header + OFF_GUTTER);
-    h->height_encoding = read_u16(raw_header + OFF_HEIGHT_ENCODING);
-    h->min_height_m = read_f32(raw_header + OFF_MIN_HEIGHT);
-    h->height_range_m = read_f32(raw_header + OFF_HEIGHT_RANGE);
-    h->geometric_error_m = read_f32(raw_header + OFF_GEOMETRIC_ERROR);
-    h->valid_sample_count = read_u32(raw_header + OFF_VALID_SAMPLE_COUNT);
-    h->height_bytes = read_u32(raw_header + OFF_HEIGHT_BYTES);
-    h->validity_bytes = read_u32(raw_header + OFF_VALIDITY_BYTES);
-    h->imagery_bytes = read_u32(raw_header + OFF_IMAGERY_BYTES);
-    h->profile_bytes = read_u32(raw_header + OFF_PROFILE_BYTES);
-    h->source_bytes = read_u32(raw_header + OFF_SOURCE_BYTES);
-    h->imagery_uri_bytes = read_u32(raw_header + OFF_IMAGERY_URI_BYTES);
-    h->payload_crc32 = read_u32(raw_header + OFF_PAYLOAD_CRC32);
+    h->flags = byte_read_u16_le(raw_header + OFF_FLAGS);
+    h->level = byte_read_u32_le(raw_header + OFF_LEVEL);
+    h->x = byte_read_u32_le(raw_header + OFF_X);
+    h->y = byte_read_u32_le(raw_header + OFF_Y);
+    h->parent_level = byte_read_u32_le(raw_header + OFF_PARENT_LEVEL);
+    h->parent_x = byte_read_u32_le(raw_header + OFF_PARENT_X);
+    h->parent_y = byte_read_u32_le(raw_header + OFF_PARENT_Y);
+    h->sample_width = byte_read_u16_le(raw_header + OFF_SAMPLE_WIDTH);
+    h->sample_height = byte_read_u16_le(raw_header + OFF_SAMPLE_HEIGHT);
+    h->gutter = byte_read_u16_le(raw_header + OFF_GUTTER);
+    h->height_encoding = byte_read_u16_le(raw_header + OFF_HEIGHT_ENCODING);
+    h->min_height_m = byte_read_f32_le(raw_header + OFF_MIN_HEIGHT);
+    h->height_range_m = byte_read_f32_le(raw_header + OFF_HEIGHT_RANGE);
+    h->geometric_error_m = byte_read_f32_le(raw_header + OFF_GEOMETRIC_ERROR);
+    h->valid_sample_count = byte_read_u32_le(raw_header + OFF_VALID_SAMPLE_COUNT);
+    h->height_bytes = byte_read_u32_le(raw_header + OFF_HEIGHT_BYTES);
+    h->validity_bytes = byte_read_u32_le(raw_header + OFF_VALIDITY_BYTES);
+    h->imagery_bytes = byte_read_u32_le(raw_header + OFF_IMAGERY_BYTES);
+    h->profile_bytes = byte_read_u32_le(raw_header + OFF_PROFILE_BYTES);
+    h->source_bytes = byte_read_u32_le(raw_header + OFF_SOURCE_BYTES);
+    h->imagery_uri_bytes = byte_read_u32_le(raw_header + OFF_IMAGERY_URI_BYTES);
+    h->payload_crc32 = byte_read_u32_le(raw_header + OFF_PAYLOAD_CRC32);
     for (unsigned i = 0; i < 4; ++i)
-        h->extent[i] = read_f64(raw_header + OFF_EXTENT + i * 8u);
+        h->extent[i] = byte_read_f64_le(raw_header + OFF_EXTENT + i * 8u);
     for (unsigned column = 0; column < 3; ++column)
         for (unsigned row = 0; row < 3; ++row)
             h->local_to_world.rotation[column][row] =
-                read_f64(raw_header + OFF_ROTATION + (column * 3u + row) * 8u);
-    h->local_to_world.translation.x = read_f64(raw_header + OFF_TRANSLATION);
-    h->local_to_world.translation.y = read_f64(raw_header + OFF_TRANSLATION + 8);
-    h->local_to_world.translation.z = read_f64(raw_header + OFF_TRANSLATION + 16);
+                byte_read_f64_le(raw_header + OFF_ROTATION + (column * 3u + row) * 8u);
+    h->local_to_world.translation.x = byte_read_f64_le(raw_header + OFF_TRANSLATION);
+    h->local_to_world.translation.y = byte_read_f64_le(raw_header + OFF_TRANSLATION + 8);
+    h->local_to_world.translation.z = byte_read_f64_le(raw_header + OFF_TRANSLATION + 16);
 
     uint64_t sample_count64 = (uint64_t)h->sample_width * h->sample_height;
     uint32_t bytes_per_height = h->height_encoding == TERRAIN_TILE_HEIGHT_R16_UNORM ? 2u :
@@ -200,43 +142,33 @@ TerrainTileResult terrain_tile_load(const char *path, TerrainTile *out) {
         !parent_ok || !finite_header(h) || h->profile_bytes == 0 ||
         ((h->flags & TERRAIN_TILE_HAS_IMAGERY) != 0) !=
             (h->imagery_bytes != 0 || h->imagery_uri_bytes != 0)) {
-        fclose(file);
+        free(file_data);
         return TERRAIN_TILE_INVALID_FORMAT;
     }
 
     size_t payload_size = 0;
-    if (!add_size(&payload_size, h->height_bytes) ||
-        !add_size(&payload_size, h->validity_bytes) ||
-        !add_size(&payload_size, h->imagery_bytes) ||
-        !add_size(&payload_size, h->profile_bytes) ||
-        !add_size(&payload_size, h->source_bytes) ||
-        !add_size(&payload_size, h->imagery_uri_bytes)) {
-        fclose(file);
+    if (!size_add_checked(&payload_size, h->height_bytes) ||
+        !size_add_checked(&payload_size, h->validity_bytes) ||
+        !size_add_checked(&payload_size, h->imagery_bytes) ||
+        !size_add_checked(&payload_size, h->profile_bytes) ||
+        !size_add_checked(&payload_size, h->source_bytes) ||
+        !size_add_checked(&payload_size, h->imagery_uri_bytes)) {
+        free(file_data);
         return TERRAIN_TILE_INVALID_FORMAT;
     }
-    size_t available_payload = (size_t)file_length - TERRAIN_TILE_HEADER_BYTES;
+    size_t available_payload = file_size - TERRAIN_TILE_HEADER_BYTES;
     if (payload_size > available_payload) {
-        fclose(file);
+        free(file_data);
         return TERRAIN_TILE_TRUNCATED;
     }
     if (payload_size < available_payload) {
-        fclose(file);
+        free(file_data);
         return TERRAIN_TILE_INVALID_FORMAT;
     }
 
-    uint8_t *payload = malloc(payload_size ? payload_size : 1u);
-    if (!payload) {
-        fclose(file);
-        return TERRAIN_TILE_OUT_OF_MEMORY;
-    }
-    if (fread(payload, 1, payload_size, file) != payload_size) {
-        free(payload);
-        fclose(file);
-        return TERRAIN_TILE_IO_ERROR;
-    }
-    fclose(file);
-    if (crc32_bytes(payload, payload_size) != h->payload_crc32) {
-        free(payload);
+    const uint8_t *payload = file_data + TERRAIN_TILE_HEADER_BYTES;
+    if (checksum_crc32(payload, payload_size) != h->payload_crc32) {
+        free(file_data);
         return TERRAIN_TILE_CHECKSUM_MISMATCH;
     }
 
@@ -245,7 +177,7 @@ TerrainTileResult terrain_tile_load(const char *path, TerrainTile *out) {
     tile.validity = malloc(h->validity_bytes);
     tile.imagery = h->imagery_bytes ? malloc(h->imagery_bytes) : NULL;
     if (!tile.height_data || !tile.validity || (h->imagery_bytes && !tile.imagery)) {
-        free(payload);
+        free(file_data);
         free(tile.height_data); free(tile.validity); free(tile.imagery);
         return TERRAIN_TILE_OUT_OF_MEMORY;
     }
@@ -255,10 +187,12 @@ TerrainTileResult terrain_tile_load(const char *path, TerrainTile *out) {
         memcpy(tile.imagery, cursor, h->imagery_bytes);
         cursor += h->imagery_bytes;
     }
-    tile.profile = copy_string(&cursor, h->profile_bytes);
-    tile.source = copy_string(&cursor, h->source_bytes);
-    tile.imagery_uri = copy_string(&cursor, h->imagery_uri_bytes);
-    free(payload);
+    tile.profile = str_dup_n((const char *)cursor, h->profile_bytes);
+    cursor += h->profile_bytes;
+    tile.source = str_dup_n((const char *)cursor, h->source_bytes);
+    cursor += h->source_bytes;
+    tile.imagery_uri = str_dup_n((const char *)cursor, h->imagery_uri_bytes);
+    free(file_data);
     if (!tile.profile || !tile.source || !tile.imagery_uri) {
         tile.owns_offline_data = true;
         terrain_tile_unload(&tile);
@@ -322,11 +256,11 @@ float terrain_tile_height(const TerrainTile *tile, uint32_t x, uint32_t y) {
     size_t index = (size_t)y * tile->header.sample_width + x;
     const uint8_t *data = tile->height_data;
     if (tile->header.height_encoding == TERRAIN_TILE_HEIGHT_R16_UNORM) {
-        uint16_t encoded = read_u16(data + index * 2u);
+        uint16_t encoded = byte_read_u16_le(data + index * 2u);
         return tile->header.min_height_m +
                tile->header.height_range_m * ((float)encoded / 65535.0f);
     }
-    return read_f32(data + index * 4u);
+    return byte_read_f32_le(data + index * 4u);
 }
 
 const char *terrain_tile_result_string(TerrainTileResult result) {

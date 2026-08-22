@@ -9,6 +9,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(Vulkan REQUIRED)
 find_package(cglm REQUIRED)
+find_package(ZLIB REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SDL3 REQUIRED IMPORTED_TARGET sdl3)
 
@@ -43,6 +44,18 @@ endforeach()
 
 add_custom_target(shaders ALL DEPENDS ${SHADER_BINARIES})
 
+add_library(core_utils STATIC
+    src/byte_utils.c
+    src/checksum_utils.c
+    src/file_utils.c
+    src/size_utils.c
+    src/str_utils.c)
+target_include_directories(core_utils PUBLIC src)
+target_link_libraries(core_utils PUBLIC ZLIB::ZLIB)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(core_utils PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
 add_executable(terrain_renderer
     src/main.c
     src/input.c
@@ -60,7 +73,8 @@ add_executable(terrain_renderer
     include/stb_image.c)
 add_dependencies(terrain_renderer shaders)
 target_include_directories(terrain_renderer PRIVATE include)
-target_link_libraries(terrain_renderer PRIVATE Vulkan::Vulkan cglm::cglm PkgConfig::SDL3 m)
+target_link_libraries(terrain_renderer PRIVATE
+    core_utils Vulkan::Vulkan cglm::cglm PkgConfig::SDL3 m)
 target_compile_definitions(terrain_renderer PRIVATE
     SHADER_DIR="${SHADER_OUTPUT_DIR}"
     ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets"
@@ -73,6 +87,13 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 if(BUILD_TESTING)
+    add_executable(utils_tests tests/utils_tests.c)
+    target_link_libraries(utils_tests PRIVATE core_utils m)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(utils_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME reusable_utils COMMAND utils_tests)
+
     add_executable(phase2_tests
         tests/phase2_tests.c
         src/camera.c
@@ -90,7 +111,7 @@ if(BUILD_TESTING)
         tests/phase3_tile_loader_tests.c
         src/terrain_tile.c)
     target_include_directories(phase3_tile_loader_tests PRIVATE src)
-    target_link_libraries(phase3_tile_loader_tests PRIVATE cglm::cglm m)
+    target_link_libraries(phase3_tile_loader_tests PRIVATE core_utils cglm::cglm m)
     target_compile_definitions(phase3_tile_loader_tests PRIVATE
         CGLM_FORCE_DEPTH_ZERO_TO_ONE)
     if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")

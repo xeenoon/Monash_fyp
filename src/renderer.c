@@ -1,4 +1,5 @@
 #include "renderer.h"
+#include "file_utils.h"
 #include "vk_common.h"
 
 #include <SDL3/SDL_vulkan.h>
@@ -26,21 +27,6 @@ _Static_assert(sizeof(FrameUniforms) == 608, "FrameUniforms std140 size");
    (16 MiB) plus the terrain mesh in a single batch. */
 #define UPLOAD_STAGING_CAPACITY (32u * 1024u * 1024u)
 #define MAX_TEXTURE_SETS 16
-
-static uint8_t *read_file(const char *path, size_t *size) {
-    FILE *file = fopen(path, "rb");
-    if (!file) { fprintf(stderr, "Could not open %s\n", path); exit(EXIT_FAILURE); }
-    fseek(file, 0, SEEK_END);
-    long length = ftell(file);
-    rewind(file);
-    uint8_t *data = malloc((size_t)length);
-    if (!data || fread(data, 1, (size_t)length, file) != (size_t)length) {
-        fprintf(stderr, "Could not read %s\n", path); exit(EXIT_FAILURE);
-    }
-    fclose(file);
-    *size = (size_t)length;
-    return data;
-}
 
 VkDescriptorSet renderer_allocate_material_set(Renderer *r, VkImageView view, VkSampler sampler) {
     VkDescriptorSetAllocateInfo alloc = { .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
@@ -119,7 +105,13 @@ static VkFormat find_depth_format(VkPhysicalDevice physical_device) {
 
 static VkShaderModule create_shader_module(Renderer *r, const char *path) {
     size_t size;
-    uint8_t *code = read_file(path, &size);
+    uint8_t *code;
+    FileReadResult result = file_read_all(path, &code, &size);
+    if (result != FILE_READ_OK) {
+        fprintf(stderr, "Could not read %s: %s\n", path,
+                file_read_result_string(result));
+        exit(EXIT_FAILURE);
+    }
     VkShaderModuleCreateInfo info = { .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
         .codeSize = size, .pCode = (const uint32_t *)code };
     VkShaderModule module;

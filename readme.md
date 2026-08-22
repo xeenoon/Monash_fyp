@@ -8,9 +8,10 @@ camera-relative large-world coordinates, and infinite reversed-Z depth.
 - A C11 compiler and CMake 3.20+
 - Vulkan loader and development headers
 - SDL 3 development files
+- zlib development files
 - `glslc` (from the Vulkan SDK or shaderc)
 
-On Arch Linux these are provided by `base-devel cmake vulkan-devel sdl3 shaderc`.
+On Arch Linux these are provided by `base-devel cmake vulkan-devel sdl3 shaderc zlib`.
 On Ubuntu/Debian, SDL3 may need to come from a newer release or be built locally.
 
 ## Build and run
