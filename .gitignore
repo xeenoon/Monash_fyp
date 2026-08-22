@@ -1,8 +1,12 @@
 /build/
+/trn/
 /alps-data/
 /inspo/
 /tools/*.txt
 /.claude/
+
+# Python bytecode caches.
+__pycache__/
 
 # Repository-root notes and plans. Keep the public README tracked.
 /*.md

@@ -52,6 +52,7 @@ add_executable(terrain_renderer
     src/gpu_buffer.c
     src/upload.c
     src/mesh.c
+    src/terrain_tile.c
     src/cube.c
     src/terrain.c
     src/texture.c
@@ -83,4 +84,22 @@ if(BUILD_TESTING)
         target_compile_options(phase2_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME phase2_projection_and_precision COMMAND phase2_tests)
+
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_executable(phase3_tile_loader_tests
+        tests/phase3_tile_loader_tests.c
+        src/terrain_tile.c)
+    target_include_directories(phase3_tile_loader_tests PRIVATE src)
+    target_link_libraries(phase3_tile_loader_tests PRIVATE cglm::cglm m)
+    target_compile_definitions(phase3_tile_loader_tests PRIVATE
+        CGLM_FORCE_DEPTH_ZERO_TO_ONE)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(phase3_tile_loader_tests PRIVATE
+            -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME phase3_offline_tile_format
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/phase3_tests.py"
+                --tool "${CMAKE_CURRENT_SOURCE_DIR}/tools/terrain_tiles.py"
+                --loader "$<TARGET_FILE:phase3_tile_loader_tests>")
 endif()
