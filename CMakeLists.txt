@@ -77,6 +77,7 @@ add_executable(terrain_renderer
     src/terrain_quadtree.c
     src/cube.c
     src/terrain_runtime.c
+    src/surface_detail.c
     src/texture.c
     src/renderer.c
     include/stb_image.c)
@@ -147,4 +148,15 @@ if(BUILD_TESTING)
             -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME phase4_global_terrain_quadtree COMMAND phase4_quadtree_tests)
+
+    add_executable(phase5_surface_tests
+        tests/phase5_surface_tests.c
+        src/surface_detail.c)
+    target_include_directories(phase5_surface_tests PRIVATE src)
+    target_link_libraries(phase5_surface_tests PRIVATE m)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(phase5_surface_tests PRIVATE
+            -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME phase5_terrain_surface_quality COMMAND phase5_surface_tests)
 endif()

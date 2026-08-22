@@ -7,6 +7,8 @@ void input_poll(Input *in, SDL_Window *window) {
     in->reload_shaders = false;
     in->toggle_depth_debug = false;
     in->toggle_lod_debug = false;
+    in->cycle_relighting = false;
+    in->cycle_surface_debug = false;
 
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
@@ -19,6 +21,10 @@ void input_poll(Input *in, SDL_Window *window) {
             in->toggle_depth_debug = true;
         if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_F7)
             in->toggle_lod_debug = true;
+        if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_F8)
+            in->cycle_relighting = true;
+        if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_F9)
+            in->cycle_surface_debug = true;
         if (event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) in->resized = true;
     }
 

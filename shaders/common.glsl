@@ -18,7 +18,8 @@ layout(set = 0, binding = 0) uniform FrameUniforms {
     vec4  sun_direction;
     float time;
     float near_plane;
-    float depth_debug;
+    float debug_view;
+    float relight_strength;
 } frame;
 
 /* Infinite reversed-Z helpers. UV follows Vulkan framebuffer orientation, so

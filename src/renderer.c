@@ -20,7 +20,8 @@ _Static_assert(offsetof(FrameUniforms, previous_local_to_camera_relative) == 512
 _Static_assert(offsetof(FrameUniforms, sun_direction) == 576, "FrameUniforms sun offset");
 _Static_assert(offsetof(FrameUniforms, time) == 592, "FrameUniforms time offset");
 _Static_assert(offsetof(FrameUniforms, near_plane) == 596, "FrameUniforms near offset");
-_Static_assert(offsetof(FrameUniforms, depth_debug) == 600, "FrameUniforms depth debug offset");
+_Static_assert(offsetof(FrameUniforms, debug_view) == 600, "FrameUniforms debug view offset");
+_Static_assert(offsetof(FrameUniforms, relight_strength) == 604, "FrameUniforms relight offset");
 _Static_assert(sizeof(FrameUniforms) == 608, "FrameUniforms std140 size");
 _Static_assert(sizeof(DrawPushConstants) == 128, "terrain push constant size");
 
@@ -37,13 +38,16 @@ VkDescriptorSet renderer_allocate_terrain_set(Renderer *r,
         .pSetLayouts = &r->material_set_layout };
     VkDescriptorSet set;
     VK_CHECK(vkAllocateDescriptorSets(r->device, &alloc, &set));
-    VkDescriptorImageInfo images[2] = {
+    VkDescriptorImageInfo images[3] = {
         { .sampler = albedo_sampler, .imageView = albedo_view,
           .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
         { .sampler = elevation_sampler, .imageView = elevation_view,
           .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+        { .sampler = r->terrain_detail_texture.sampler,
+          .imageView = r->terrain_detail_texture.view,
+          .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
     };
-    VkWriteDescriptorSet writes[2] = {
+    VkWriteDescriptorSet writes[3] = {
         { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
           .dstSet = set, .dstBinding = 0, .descriptorCount = 1,
           .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
@@ -52,8 +56,12 @@ VkDescriptorSet renderer_allocate_terrain_set(Renderer *r,
           .dstSet = set, .dstBinding = 1, .descriptorCount = 1,
           .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
           .pImageInfo = &images[1] },
+        { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+          .dstSet = set, .dstBinding = 2, .descriptorCount = 1,
+          .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+          .pImageInfo = &images[2] },
     };
-    vkUpdateDescriptorSets(r->device, 2, writes, 0, NULL);
+    vkUpdateDescriptorSets(r->device, 3, writes, 0, NULL);
     return set;
 }
 
@@ -65,9 +73,8 @@ void renderer_free_material_set(Renderer *r, VkDescriptorSet set) {
     if (r && set) VK_CHECK(vkFreeDescriptorSets(r->device, r->descriptor_pool, 1, &set));
 }
 
-/* Descriptor roles: set 0 = per-frame UBO (vertex+fragment), set 1 = per-material
-   combined image sampler (fragment). A shared pool serves the frame sets, all
-   mesh material sets, and the untextured fallback set. */
+/* Descriptor roles: set 0 = per-frame UBO; set 1 = imagery, elevation, and the
+   shared detail map. A shared pool serves all tile and fallback sets. */
 static void create_descriptors(Renderer *r) {
     VkDescriptorSetLayoutBinding frame_binding = { .binding = 0,
         .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = 1,
@@ -76,20 +83,23 @@ static void create_descriptors(Renderer *r) {
         .bindingCount = 1, .pBindings = &frame_binding };
     VK_CHECK(vkCreateDescriptorSetLayout(r->device, &frame_layout, NULL, &r->frame_set_layout));
 
-    VkDescriptorSetLayoutBinding material_bindings[2] = {
+    VkDescriptorSetLayoutBinding material_bindings[3] = {
         { .binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
           .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT },
         { .binding = 1, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-          .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_VERTEX_BIT },
+          .descriptorCount = 1,
+          .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT },
+        { .binding = 2, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+          .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT },
     };
     VkDescriptorSetLayoutCreateInfo material_layout = { .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        .bindingCount = 2, .pBindings = material_bindings };
+        .bindingCount = 3, .pBindings = material_bindings };
     VK_CHECK(vkCreateDescriptorSetLayout(r->device, &material_layout, NULL, &r->material_set_layout));
 
     VkDescriptorPoolSize pool_sizes[2] = {
         { .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = MAX_FRAMES_IN_FLIGHT },
         { .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-          .descriptorCount = MAX_TEXTURE_SETS * 2u } };
+          .descriptorCount = MAX_TEXTURE_SETS * 3u } };
     VkDescriptorPoolCreateInfo pool = { .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
         .poolSizeCount = 2, .pPoolSizes = pool_sizes,
@@ -114,6 +124,8 @@ static void create_descriptors(Renderer *r) {
     }
 
     texture_create_white(r->device, r->allocator, r->upload, &r->fallback_texture);
+    texture_create_terrain_detail(r->device, r->allocator, r->upload,
+                                  &r->terrain_detail_texture, r->max_anisotropy);
     r->fallback_material_set = renderer_allocate_material_set(r, r->fallback_texture.view,
                                                               r->fallback_texture.sampler);
 }
@@ -541,6 +553,7 @@ void renderer_shutdown(Renderer *r) {
     vkDestroyDescriptorSetLayout(r->device, r->material_set_layout, NULL);
     vkDestroyDescriptorSetLayout(r->device, r->frame_set_layout, NULL);
     texture_destroy(r->device, r->allocator, &r->fallback_texture);
+    texture_destroy(r->device, r->allocator, &r->terrain_detail_texture);
     upload_context_destroy(r->upload);
     gpu_allocator_destroy(r->allocator);
     vkDestroyDevice(r->device, NULL);

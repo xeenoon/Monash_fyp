@@ -1,6 +1,7 @@
 #include "terrain_runtime.h"
 
 #include "str_utils.h"
+#include "surface_detail.h"
 #include "terrain_grid.h"
 #include "terrain_tile.h"
 
@@ -270,8 +271,19 @@ static void build_draws(TerrainRuntime *terrain,
                   &draw->push.elevation_uv);
         raster_uv(tile->base.texture.extent.width, tile->header.gutter,
                   &draw->push.imagery_uv);
-        draw->push.debug = (vec4s){{(float)node->key.level, (float)node->state,
-                                    0.0f, 0.0f}};
+        /* A 4096 m phase is exactly periodic for every power-of-two surface
+           scale used by terrain.frag. Reducing in double on the CPU preserves
+           close-detail continuity at Earth-sized projected coordinates. */
+        const double phase_period_m = 4096.0;
+        draw->push.debug = (vec4s){{
+            (float)node->key.level,
+            surface_detail_phase(tile->header.local_to_world.translation.x,
+                                 phase_period_m),
+            surface_detail_phase(tile->header.local_to_world.translation.y,
+                                 phase_period_m),
+            surface_detail_phase(tile->header.local_to_world.translation.z,
+                                 phase_period_m),
+        }};
     }
 }
 

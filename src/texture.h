@@ -67,6 +67,11 @@ void texture_create_white(VkDevice device, GpuAllocator *allocator,
 void texture_create_elevation(VkDevice device, GpuAllocator *allocator, struct UploadContext *upload,
                               Texture *t, const uint16_t *heights, uint32_t width, uint32_t height);
 
+/* Shared linear RGBA detail map: tangent normal in RG and macro noise in BA. */
+void texture_create_terrain_detail(VkDevice device, GpuAllocator *allocator,
+                                   struct UploadContext *upload, Texture *t,
+                                   float max_anisotropy);
+
 /* HDR (RGBA16_SFLOAT) colour target, usable as colour attachment and sampled. */
 Texture texture_create_hdr_target(VkDevice device, GpuAllocator *allocator,
                                   uint32_t width, uint32_t height);

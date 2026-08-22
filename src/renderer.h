@@ -30,8 +30,8 @@ typedef struct {
     vec4s sun_direction;
     float time;
     float near_plane;
-    float depth_debug;
-    float _pad;
+    float debug_view;
+    float relight_strength;
 } FrameUniforms;
 
 /* Exactly 128 bytes, the Vulkan minimum guaranteed push-constant capacity.
@@ -41,7 +41,7 @@ typedef struct {
     vec4s geometry;      /* tile span X/Z, elevation range, skirt depth */
     vec4s elevation_uv;  /* scale U/V, bias U/V into the guttered raster */
     vec4s imagery_uv;    /* scale U/V, bias U/V into the guttered image  */
-    vec4s debug;         /* LOD, lifecycle state, fallback flag, unused */
+    vec4s debug;         /* LOD and XYZ surface-texture world phase */
 } DrawPushConstants;
 
 typedef struct {
@@ -75,15 +75,15 @@ typedef struct Renderer {
     Texture depth;
 
     /* Descriptor roles. Set 0 is per-frame data (camera/sun/time), set 1 is
-       per-material/tile data (currently the albedo sampler). Sets are stable so
-       later passes can slot shadow maps, atmosphere LUTs, and tile metadata into
-       the same scheme. */
+       per-material/tile data (imagery, elevation, shared surface detail). Sets
+       are stable so later passes can add shadow maps and atmosphere LUTs. */
     VkDescriptorSetLayout frame_set_layout;     /* set 0 */
     VkDescriptorSetLayout material_set_layout;  /* set 1 */
     VkDescriptorPool descriptor_pool;
     GpuBuffer       frame_ubo[MAX_FRAMES_IN_FLIGHT];
     VkDescriptorSet frame_set[MAX_FRAMES_IN_FLIGHT];
     Texture         fallback_texture;
+    Texture         terrain_detail_texture;
     VkDescriptorSet fallback_material_set;
 
     VkRenderPass render_pass;

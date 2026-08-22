@@ -12,6 +12,8 @@ typedef struct {
     bool  reload_shaders;           /* F5 pressed this frame   */
     bool  toggle_depth_debug;       /* F6 pressed this frame   */
     bool  toggle_lod_debug;         /* F7 pressed this frame   */
+    bool  cycle_relighting;         /* F8 pressed this frame   */
+    bool  cycle_surface_debug;      /* F9 pressed this frame   */
 } Input;
 
 /* Pumps SDL events + keyboard/mouse state into `in`. */

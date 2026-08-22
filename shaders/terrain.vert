@@ -10,6 +10,9 @@ layout(location = 3) in float in_untextured;
 
 layout(location = 0) out vec2 texcoord;
 layout(location = 1) out float untextured;
+layout(location = 2) out vec2 tile_uv;
+layout(location = 3) out vec3 local_position;
+layout(location = 4) out vec3 camera_relative_position;
 
 layout(set = 1, binding = 1) uniform sampler2D elevation;
 
@@ -33,4 +36,7 @@ void main() {
     gl_Position = frame.view_projection * camera_relative;
     texcoord = in_texcoord * draw.imagery_uv.xy + draw.imagery_uv.zw;
     untextured = in_untextured;
+    tile_uv = in_texcoord;
+    local_position = local;
+    camera_relative_position = camera_relative.xyz;
 }

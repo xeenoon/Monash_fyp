@@ -12,7 +12,7 @@
 
 int main(void) {
     if (!SDL_Init(SDL_INIT_VIDEO)) { fprintf(stderr, "SDL_Init: %s\n", SDL_GetError()); return EXIT_FAILURE; }
-    SDL_Window *window = SDL_CreateWindow("Vulkan Cube", WINDOW_WIDTH, WINDOW_HEIGHT,
+    SDL_Window *window = SDL_CreateWindow("Terrain Renderer", WINDOW_WIDTH, WINDOW_HEIGHT,
         SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
     if (!window) { fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError()); return EXIT_FAILURE; }
     if (!SDL_SetWindowRelativeMouseMode(window, true))
@@ -45,6 +45,7 @@ int main(void) {
     mat4s previous_view_projection = GLMS_MAT4_IDENTITY_INIT;
     bool history_valid = false;
     unsigned debug_mode = 0;
+    unsigned relight_mode = 1;
     uint64_t terrain_frame = 0;
     uint64_t last_stats_log = 0;
     TerrainRuntimeStats previous_stats = {0};
@@ -57,6 +58,14 @@ int main(void) {
             debug_mode = debug_mode == 1u ? 0u : 1u;
         if (input.toggle_lod_debug)
             debug_mode = debug_mode == 2u ? 0u : 2u;
+        if (input.cycle_relighting) {
+            relight_mode = (relight_mode + 1u) % 3u;
+            const char *names[] = {"unlit map", "subtle relight", "material"};
+            printf("Terrain imagery: %s\n", names[relight_mode]);
+        }
+        if (input.cycle_surface_debug)
+            debug_mode = debug_mode >= 3u && debug_mode < 6u
+                ? debug_mode + 1u : (debug_mode == 6u ? 0u : 3u);
 
         uint64_t ticks = SDL_GetTicksNS();
         float dt = (float)(ticks - previous_ticks) / 1000000000.0f;
@@ -106,7 +115,8 @@ int main(void) {
             .sun_direction = glms_vec4(glms_vec3_normalize((vec3s){{-0.4f, -1.0f, -0.3f}}), 0.0f),
             .time = (float)(ticks - start_ticks) / 1000000000.0f,
             .near_plane = CAMERA_NEAR_PLANE,
-            .depth_debug = (float)debug_mode,
+            .debug_view = (float)debug_mode,
+            .relight_strength = (const float[]){0.0f, 0.35f, 1.0f}[relight_mode],
         };
         renderer_draw_frame(&renderer, &frame, terrain_draws,
                             terrain_draw_count, input.resized);

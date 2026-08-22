@@ -2,7 +2,9 @@
 #include "upload.h"
 #include "vk_common.h"
 #include "stb_image.h"
+#include "surface_detail.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 uint32_t texture_mip_levels(uint32_t width, uint32_t height) {
@@ -109,6 +111,24 @@ void texture_create_elevation(VkDevice device, GpuAllocator *allocator, struct U
     *t = create_sampled(device, allocator, VK_FORMAT_R16_UNORM, width, height, 1,
                         VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, 0.0f);
     upload_pixels(upload, t, heights, 2);
+}
+
+void texture_create_terrain_detail(VkDevice device, GpuAllocator *allocator,
+                                   struct UploadContext *upload, Texture *t,
+                                   float max_anisotropy) {
+    enum { DETAIL_SIZE = 128 };
+    uint8_t *pixels = malloc(DETAIL_SIZE * DETAIL_SIZE * 4u);
+    if (!pixels || !surface_detail_generate_rgba8(pixels, DETAIL_SIZE, DETAIL_SIZE)) {
+        free(pixels);
+        fprintf(stderr, "Could not generate terrain detail texture\n");
+        exit(EXIT_FAILURE);
+    }
+    *t = create_sampled(device, allocator, VK_FORMAT_R8G8B8A8_UNORM,
+                        DETAIL_SIZE, DETAIL_SIZE,
+                        texture_mip_levels(DETAIL_SIZE, DETAIL_SIZE),
+                        VK_SAMPLER_ADDRESS_MODE_REPEAT, max_anisotropy);
+    upload_pixels(upload, t, pixels, 4);
+    free(pixels);
 }
 
 Texture texture_create_hdr_target(VkDevice device, GpuAllocator *allocator,
