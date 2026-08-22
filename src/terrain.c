@@ -5,12 +5,14 @@
 #define GRID_N     TERRAIN_GRID_N
 #define SPACING    TERRAIN_SPACING_M
 #define CELLS      (GRID_N - 1)
-#define TERRAIN_VERTEX_COUNT (CELLS * CELLS * 6)
+#define TERRAIN_VERTEX_COUNT (GRID_N * GRID_N)
+#define TERRAIN_INDEX_COUNT  (CELLS * CELLS * 6)
 
-/* One flat vertex buffer for the (single) terrain instance. Keeping it static
-   mirrors cube.c's static geometry: mesh->vertices can point straight at it and
-   mesh_destroy only has to release the GPU copy. */
-static Vertex TERRAIN_VERTICES[TERRAIN_VERTEX_COUNT];
+/* Static geometry for the (single) terrain instance, mirroring cube.c: the grid
+   is stored as GRID_N x GRID_N unique vertices plus an index buffer that stitches
+   them into two triangles per cell. mesh_upload copies both to the GPU. */
+static Vertex   TERRAIN_VERTICES[TERRAIN_VERTEX_COUNT];
+static uint32_t TERRAIN_INDICES[TERRAIN_INDEX_COUNT];
 
 static float height_at(int i, int j) {
     if (i < 0) i = 0; else if (i >= GRID_N) i = GRID_N - 1;
@@ -35,33 +37,36 @@ Terrain terrain_create(struct Renderer *r) {
         if (TERRAIN_HEIGHTMAP[k] < min_h) min_h = TERRAIN_HEIGHTMAP[k];
     const float half = (GRID_N - 1) * SPACING * 0.5f;
 
-    /* Emit each grid point's position + smooth normal, indexed on the fly. */
-    #define EMIT(dst, gi, gj) do {                                      \
-        Vertex *v = (dst);                                             \
-        v->position[0] = (gi) * SPACING - half;                       \
-        v->position[1] = height_at((gi), (gj)) - min_h;               \
-        v->position[2] = (gj) * SPACING - half;                       \
-        normal_at((gi), (gj), v->normal);                             \
-    } while (0)
-
-    Vertex *out = TERRAIN_VERTICES;
-    for (int j = 0; j < CELLS; ++j) {
-        for (int i = 0; i < CELLS; ++i) {
-            /* Two CCW-from-above triangles per cell (renderer culls back faces,
-               front = CCW): (00,11,10) and (00,01,11). */
-            EMIT(out++, i,     j);
-            EMIT(out++, i + 1, j + 1);
-            EMIT(out++, i + 1, j);
-            EMIT(out++, i,     j);
-            EMIT(out++, i,     j + 1);
-            EMIT(out++, i + 1, j + 1);
+    /* One unique vertex per grid point: position + smooth normal. */
+    for (int j = 0; j < GRID_N; ++j) {
+        for (int i = 0; i < GRID_N; ++i) {
+            Vertex *v = &TERRAIN_VERTICES[j * GRID_N + i];
+            v->position[0] = i * SPACING - half;
+            v->position[1] = height_at(i, j) - min_h;
+            v->position[2] = j * SPACING - half;
+            normal_at(i, j, v->normal);
         }
     }
-    #undef EMIT
+
+    /* Two CCW-from-above triangles per cell (renderer culls back faces,
+       front = CCW): (00,11,10) and (00,01,11). */
+    uint32_t *idx = TERRAIN_INDICES;
+    for (int j = 0; j < CELLS; ++j) {
+        for (int i = 0; i < CELLS; ++i) {
+            uint32_t v00 = (uint32_t)(j * GRID_N + i);
+            uint32_t v10 = v00 + 1;
+            uint32_t v01 = v00 + GRID_N;
+            uint32_t v11 = v01 + 1;
+            *idx++ = v00; *idx++ = v11; *idx++ = v10;
+            *idx++ = v00; *idx++ = v01; *idx++ = v11;
+        }
+    }
 
     Terrain terrain = { .base = {
         .vertices = TERRAIN_VERTICES,
         .vertex_count = (uint32_t)TERRAIN_VERTEX_COUNT,
+        .indices = TERRAIN_INDICES,
+        .index_count = (uint32_t)TERRAIN_INDEX_COUNT,
     }};
     mesh_upload(r, &terrain.base);
     return terrain;

@@ -13,6 +13,14 @@ typedef struct {
     uint32_t        vertex_count;
     VkBuffer        buffer;       /* GPU copy, filled by mesh_upload         */
     VkDeviceMemory  memory;
+
+    /* Optional index buffer. Leave indices=NULL / index_count=0 for a plain
+       non-indexed draw; set both to have mesh_upload build a GPU index buffer
+       and mesh_draw switch to vkCmdDrawIndexed. */
+    const uint32_t *indices;      /* CPU indices (may point at static data)  */
+    uint32_t        index_count;
+    VkBuffer        index_buffer;
+    VkDeviceMemory  index_memory;
 } Mesh;
 
 struct Renderer;
