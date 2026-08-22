@@ -1,3 +1,5 @@
 /build/
 /alps-data/
 /sources.md
+/tools/*.txt
+/.claude/

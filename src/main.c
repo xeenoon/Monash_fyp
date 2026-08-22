@@ -3,9 +3,9 @@
 #include <stdlib.h>
 
 #include "camera.h"
-#include "cube.h"
 #include "input.h"
 #include "renderer.h"
+#include "terrain.h"
 
 #define WINDOW_WIDTH 1280
 #define WINDOW_HEIGHT 720
@@ -20,8 +20,9 @@ int main(void) {
 
     Renderer renderer;
     renderer_init(&renderer, window);
-    Cube cube = cube_create(&renderer);
-    Camera camera = { .position = {{0, 0, 5}}, .yaw = -90.0f, .pitch = 0.0f };
+    Terrain terrain = terrain_create(&renderer);
+    /* Overlook the ~1 km field from above one corner, looking down into it. */
+    Camera camera = { .position = {{-600, 500, -600}}, .yaw = 45.0f, .pitch = -30.0f };
 
     Input input = {0};
     uint64_t previous_ticks = SDL_GetTicksNS();
@@ -41,11 +42,11 @@ int main(void) {
         mat4s view_projection = glms_mat4_mul(
             camera_projection(&camera, renderer_aspect(&renderer)),
             camera_view(&camera));
-        renderer_draw_frame(&renderer, &view_projection, &cube.base, input.resized);
+        renderer_draw_frame(&renderer, &view_projection, &terrain.base, input.resized);
     }
 
     renderer_wait_idle(&renderer);
-    mesh_destroy(&renderer, &cube.base);
+    mesh_destroy(&renderer, &terrain.base);
     renderer_shutdown(&renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();

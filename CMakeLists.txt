@@ -31,6 +31,7 @@ add_executable(vulkan_cube
     src/camera.c
     src/mesh.c
     src/cube.c
+    src/terrain.c
     src/renderer.c)
 add_dependencies(vulkan_cube shaders)
 target_link_libraries(vulkan_cube PRIVATE Vulkan::Vulkan cglm::cglm PkgConfig::SDL3 m)

@@ -17,7 +17,7 @@ mat4s camera_view(const Camera *cam) {
 
 mat4s camera_projection(const Camera *cam, float aspect) {
     (void)cam;
-    mat4s projection = glms_perspective(glm_rad(60.0f), aspect, 0.1f, 100.0f);
+    mat4s projection = glms_perspective(glm_rad(60.0f), aspect, 0.5f, 5000.0f);
     projection.raw[1][1] *= -1.0f; /* Vulkan's framebuffer Y axis points down. */
     return projection;
 }
@@ -35,7 +35,7 @@ void camera_update(Camera *cam, float move_forward, float move_right,
     vec3s movement = glms_vec3_add(glms_vec3_scale(forward, move_forward),
                                    glms_vec3_scale(right, move_right));
     if (glms_vec3_norm2(movement) > 0.0f) {
-        float speed = sprint ? 8.0f : 3.5f;
+        float speed = sprint ? 200.0f : 60.0f;
         vec3s step = glms_vec3_scale(glms_vec3_normalize(movement), speed * dt);
         cam->position = glms_vec3_add(cam->position, step);
     }
