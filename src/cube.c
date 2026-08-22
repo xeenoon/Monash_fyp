@@ -23,6 +23,9 @@ static const Vertex CUBE_VERTICES[] = {
 
 Cube cube_create(struct Renderer *r) {
     Cube cube = { .base = {
+        .local_to_world = {
+            .rotation = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}},
+        },
         .vertices = CUBE_VERTICES,
         .vertex_count = (uint32_t)(sizeof(CUBE_VERTICES) / sizeof(CUBE_VERTICES[0])),
     }};

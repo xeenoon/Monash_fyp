@@ -13,15 +13,25 @@
 
 #define MAX_FRAMES_IN_FLIGHT 1
 
-/* Per-frame shader data (descriptor set 0). Kept in a UBO rather than push
-   constants so it scales to sun/atmosphere/history state later. std140 layout:
-   vec4-align every member and pad the tail. */
+/* Per-frame shader data (descriptor set 0). All matrices operate on small,
+   camera-relative floats. Absolute world positions never cross the CPU/GPU
+   boundary. Current and previous state is present now so motion vectors can be
+   added without changing the coordinate contract later. std140 layout. */
 typedef struct {
+    mat4s projection;
+    mat4s view;
     mat4s view_projection;
-    vec4s camera_position;   /* xyz + pad */
-    vec4s sun_direction;     /* xyz + pad */
+    mat4s inverse_view_projection;
+    mat4s previous_projection;
+    mat4s previous_view;
+    mat4s previous_view_projection;
+    mat4s local_to_camera_relative;
+    mat4s previous_local_to_camera_relative;
+    vec4s sun_direction;
     float time;
-    float _pad[3];
+    float near_plane;
+    float depth_debug;
+    float _pad;
 } FrameUniforms;
 
 typedef struct Renderer {

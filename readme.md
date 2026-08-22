@@ -1,7 +1,7 @@
-# Vulkan cube (C)
+# Vulkan terrain renderer (C)
 
-A deliberately small Vulkan example that renders a depth-tested grey cube and
-provides a free-fly camera.
+A deliberately small Vulkan terrain renderer with a free-fly camera,
+camera-relative large-world coordinates, and infinite reversed-Z depth.
 
 ## Dependencies
 
@@ -26,4 +26,6 @@ cmake --build build
 - Mouse: look around
 - W/A/S/D: move relative to the direction you are looking
 - Left Shift: move faster
+- F6: toggle logarithmic linear-depth debug view
+- F5: reload shaders
 - Escape: quit

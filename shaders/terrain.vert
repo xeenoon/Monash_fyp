@@ -12,7 +12,8 @@ layout(location = 0) out vec2 texcoord;
 layout(location = 1) out float untextured;
 
 void main() {
-    gl_Position = frame.view_projection * vec4(in_position, 1.0);
+    vec4 camera_relative = frame.local_to_camera_relative * vec4(in_position, 1.0);
+    gl_Position = frame.view_projection * camera_relative;
     texcoord = in_texcoord;
     untextured = in_untextured;
 }

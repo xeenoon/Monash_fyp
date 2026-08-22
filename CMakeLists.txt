@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(terrain_renderer C)
 
+include(CTest)
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -44,6 +46,7 @@ add_custom_target(shaders ALL DEPENDS ${SHADER_BINARIES})
 add_executable(terrain_renderer
     src/main.c
     src/input.c
+    src/coordinate.c
     src/camera.c
     src/gpu_memory.c
     src/gpu_buffer.c
@@ -66,4 +69,18 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(terrain_renderer PRIVATE -Wall -Wextra -Wpedantic)
     # Vendored third-party header; not held to our warning bar.
     set_source_files_properties(include/stb_image.c PROPERTIES COMPILE_OPTIONS "-w")
+endif()
+
+if(BUILD_TESTING)
+    add_executable(phase2_tests
+        tests/phase2_tests.c
+        src/camera.c
+        src/coordinate.c)
+    target_include_directories(phase2_tests PRIVATE src)
+    target_link_libraries(phase2_tests PRIVATE cglm::cglm m)
+    target_compile_definitions(phase2_tests PRIVATE CGLM_FORCE_DEPTH_ZERO_TO_ONE)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(phase2_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME phase2_projection_and_precision COMMAND phase2_tests)
 endif()

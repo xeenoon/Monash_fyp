@@ -2,8 +2,25 @@
 #include "vk_common.h"
 
 #include <SDL3/SDL_vulkan.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+
+/* Keep the C UBO byte-for-byte compatible with shaders/common.glsl std140. */
+_Static_assert(offsetof(FrameUniforms, projection) == 0, "FrameUniforms projection offset");
+_Static_assert(offsetof(FrameUniforms, view) == 64, "FrameUniforms view offset");
+_Static_assert(offsetof(FrameUniforms, view_projection) == 128, "FrameUniforms VP offset");
+_Static_assert(offsetof(FrameUniforms, inverse_view_projection) == 192, "FrameUniforms inverse VP offset");
+_Static_assert(offsetof(FrameUniforms, previous_projection) == 256, "FrameUniforms previous projection offset");
+_Static_assert(offsetof(FrameUniforms, previous_view) == 320, "FrameUniforms previous view offset");
+_Static_assert(offsetof(FrameUniforms, previous_view_projection) == 384, "FrameUniforms previous VP offset");
+_Static_assert(offsetof(FrameUniforms, local_to_camera_relative) == 448, "FrameUniforms local transform offset");
+_Static_assert(offsetof(FrameUniforms, previous_local_to_camera_relative) == 512, "FrameUniforms previous local transform offset");
+_Static_assert(offsetof(FrameUniforms, sun_direction) == 576, "FrameUniforms sun offset");
+_Static_assert(offsetof(FrameUniforms, time) == 592, "FrameUniforms time offset");
+_Static_assert(offsetof(FrameUniforms, near_plane) == 596, "FrameUniforms near offset");
+_Static_assert(offsetof(FrameUniforms, depth_debug) == 600, "FrameUniforms depth debug offset");
+_Static_assert(sizeof(FrameUniforms) == 608, "FrameUniforms std140 size");
 
 /* Staging capacity for the upload ring: large enough for the 2048x2048 albedo
    (16 MiB) plus the terrain mesh in a single batch. */
@@ -259,7 +276,8 @@ static void create_pipeline(Renderer *r) {
     VkPipelineMultisampleStateCreateInfo multisampling = { .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
         .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT };
     VkPipelineDepthStencilStateCreateInfo depth = { .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
-        .depthTestEnable = VK_TRUE, .depthWriteEnable = VK_TRUE, .depthCompareOp = VK_COMPARE_OP_LESS };
+        .depthTestEnable = VK_TRUE, .depthWriteEnable = VK_TRUE,
+        .depthCompareOp = VK_COMPARE_OP_GREATER_OR_EQUAL };
     VkPipelineColorBlendAttachmentState blend_attachment = { .colorWriteMask =
         VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT };
     VkPipelineColorBlendStateCreateInfo blending = { .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
@@ -399,7 +417,7 @@ static void record_commands(Renderer *r, uint32_t image_index, const Mesh *mesh)
     VK_CHECK(vkBeginCommandBuffer(command, &begin));
     VkClearValue clear[2] = {
         {.color = {{0.055f, 0.065f, 0.08f, 1.0f}}},
-        {.depthStencil = {1.0f, 0}}
+        {.depthStencil = {0.0f, 0}}
     };
     VkRenderPassBeginInfo render = { .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
         .renderPass = r->render_pass, .framebuffer = r->framebuffers[image_index],

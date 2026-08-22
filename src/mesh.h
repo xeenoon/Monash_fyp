@@ -5,6 +5,7 @@
 
 #include "gpu_buffer.h"
 #include "texture.h"
+#include "coordinate.h"
 
 typedef struct {
     float position[3];
@@ -18,6 +19,10 @@ typedef struct {
    Cube* casts cleanly to Mesh* — the well-defined version of the
    sockaddr / sockaddr_in trick (C11 6.7.2.1p15). */
 typedef struct {
+    /* Geometry is always tile-local float data. This transform is retained in
+       double precision and made camera-relative immediately before drawing. */
+    LocalToWorldTransform local_to_world;
+
     const Vertex   *vertices;     /* CPU geometry (may point at static data) */
     uint32_t        vertex_count;
     GpuBuffer       vertex_buffer;/* device-local GPU copy, via mesh_upload  */

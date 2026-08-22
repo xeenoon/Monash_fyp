@@ -11,14 +11,19 @@ vec3s camera_forward(const Camera *cam) {
 
 mat4s camera_view(const Camera *cam) {
     vec3s forward = camera_forward(cam);
-    vec3s center = glms_vec3_add(cam->position, forward);
-    return glms_lookat(cam->position, center, (vec3s){{0, 1, 0}});
+    return glms_lookat((vec3s){{0, 0, 0}}, forward, (vec3s){{0, 1, 0}});
 }
 
 mat4s camera_projection(const Camera *cam, float aspect) {
     (void)cam;
-    mat4s projection = glms_perspective(glm_rad(60.0f), aspect, 0.5f, 5000.0f);
-    projection.raw[1][1] *= -1.0f; /* Vulkan's framebuffer Y axis points down. */
+    /* For right-handed view space (visible z < 0), this maps the near plane to
+       depth 1 and approaches 0 at infinity: depth = near / -view_z. */
+    const float focal_length = 1.0f / tanf(glm_rad(60.0f) * 0.5f);
+    mat4s projection = GLMS_MAT4_ZERO_INIT;
+    projection.raw[0][0] = focal_length / aspect;
+    projection.raw[1][1] = -focal_length; /* Vulkan framebuffer Y points down. */
+    projection.raw[2][3] = -1.0f;
+    projection.raw[3][2] = CAMERA_NEAR_PLANE;
     return projection;
 }
 
@@ -37,6 +42,8 @@ void camera_update(Camera *cam, float move_forward, float move_right,
     if (glms_vec3_norm2(movement) > 0.0f) {
         float speed = sprint ? 200.0f : 60.0f;
         vec3s step = glms_vec3_scale(glms_vec3_normalize(movement), speed * dt);
-        cam->position = glms_vec3_add(cam->position, step);
+        cam->position.x += (double)step.x;
+        cam->position.y += (double)step.y;
+        cam->position.z += (double)step.z;
     }
 }

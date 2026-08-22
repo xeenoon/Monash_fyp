@@ -136,6 +136,14 @@ Terrain terrain_create(struct Renderer *r) {
     idx[3] = base; idx[4] = base + 2; idx[5] = base + 3;
 
     Terrain terrain = { .base = {
+        /* EPSG:2056 tile centre, expressed in the renderer's right-handed
+           projected world frame: +X east, +Y up, +Z south (-northing).
+           Keeping this regional-scale origin in double precision exercises the
+           same cancellation path used for future ECEF globe tiles. */
+        .local_to_world = {
+            .rotation = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}},
+            .translation = {2647500.0, (double)min_h, -1160500.0},
+        },
         .vertices = TERRAIN_VERTICES,
         .vertex_count = (uint32_t)TERRAIN_VERTEX_COUNT,
         .indices = TERRAIN_INDICES,
