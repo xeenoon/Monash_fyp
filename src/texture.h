@@ -82,6 +82,17 @@ Texture texture_create_hdr_target(VkDevice device, GpuAllocator *allocator,
 Texture texture_create_depth_target(VkDevice device, GpuAllocator *allocator,
                                     VkFormat format, uint32_t width, uint32_t height);
 
+/* Sampleable scene depth for the depth-clamped atmosphere composite. */
+Texture texture_create_sampled_depth_target(VkDevice device, GpuAllocator *allocator,
+                                            VkFormat format, uint32_t width,
+                                            uint32_t height);
+
+/* Linear RGBA16F storage/sampled LUT. Layers > 1 form a 2D-array volume so the
+   same general texture abstraction can hold the aerial-perspective froxels. */
+Texture texture_create_atmosphere_lut(VkDevice device, GpuAllocator *allocator,
+                                     uint32_t width, uint32_t height,
+                                     uint32_t layers);
+
 /* Sampleable depth-array target used by cascaded directional shadows. */
 Texture texture_create_shadow_array(VkDevice device, GpuAllocator *allocator,
                                     VkFormat format, uint32_t resolution,

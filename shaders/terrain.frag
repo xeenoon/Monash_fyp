@@ -2,6 +2,7 @@
 #extension GL_GOOGLE_include_directive : require
 
 #include "common.glsl"
+#include "atmosphere_common.glsl"
 
 layout(location = 0) in vec2 texcoord;
 layout(location = 1) in float untextured;
@@ -13,6 +14,9 @@ layout(location = 0) out vec4 out_color;
 layout(set = 1, binding = 0) uniform sampler2D albedo;
 layout(set = 1, binding = 1) uniform sampler2D elevation;
 layout(set = 1, binding = 2) uniform sampler2D surface_detail;
+layout(set = 2, binding = 0) uniform sampler2D atmosphere_transmittance_lut;
+layout(set = 2, binding = 1) uniform sampler2D atmosphere_multiscattering_lut;
+layout(set = 2, binding = 2) uniform sampler2D atmosphere_skyview_lut;
 
 layout(push_constant) uniform DrawData {
     mat4 local_to_camera_relative;
@@ -316,13 +320,38 @@ vec3 evaluate_terrain_lighting(vec3 base_color, vec3 normal, float roughness,
     vec3 specular = distribution * visibility * fresnel;
     vec3 diffuse = (1.0 - fresnel) * base_color / 3.141592653589793;
 
-    /* Mirrors Wicked ApplyLighting's direct/indirect separation. The temporary
-       hemisphere term is replaced by physical sky irradiance in Phase 7. */
+    /* Port of Wicked lightingHF.hlsli:134-138 (MIT): direct terrain sunlight
+       crosses the same atmosphere as the sun disk and sky. This is evaluated
+       at the actual terrain point, not merely at camera altitude. */
+    vec3 to_sun = normalize(-frame.sun_direction.xyz);
+    vec3 atmosphere_position = atmosphere_position_from_camera_relative(
+        camera_relative_position);
+    vec3 sun_transmittance = atmosphere_transmittance_to_sun(
+        atmosphere_transmittance_lut, atmosphere_position, to_sun);
     vec3 direct = (diffuse + specular) * frame.sun_radiance.rgb *
-                  NoL * shadow_visibility;
-    float hemisphere = mix(0.08, 0.22,
-        clamp(normal.y * 0.5 + 0.5, 0.0, 1.0));
-    vec3 indirect = base_color * (1.0 - fresnel) * hemisphere * occlusion;
+                  sun_transmittance * NoL * shadow_visibility;
+
+    /* The sky-view LUT stores radiance along a ray, not irradiance for a surface
+       normal. The old one-ray shortcut sampled through the planet on cliffs,
+       making shadowed slopes black at sunset. Approximate the upper-hemisphere
+       integral with guaranteed sky-facing horizon and zenith samples, then add
+       Wicked's unit-sun multiple-scattering transfer as the low-frequency fill. */
+    vec3 horizontal = normal - vec3(0.0, normal.y, 0.0);
+    horizontal = length(horizontal) > 1e-5
+        ? normalize(horizontal) : vec3(1.0, 0.0, 0.0);
+    vec3 horizon_direction = normalize(horizontal + vec3(0.0, 0.35, 0.0));
+    vec3 zenith_radiance = textureLod(atmosphere_skyview_lut,
+        atmosphere_skyview_uv(vec3(0.0, 1.0, 0.0), to_sun), 0.0).rgb;
+    vec3 horizon_radiance = textureLod(atmosphere_skyview_lut,
+        atmosphere_skyview_uv(horizon_direction, to_sun), 0.0).rgb;
+    vec3 up = atmosphere_position / length(atmosphere_position);
+    vec3 multiple_scattering = atmosphere_multiple_scattering(
+        atmosphere_multiscattering_lut, atmosphere_position, dot(to_sun, up)) *
+        frame.sun_radiance.rgb;
+    float upward = clamp(normal.y, 0.0, 1.0);
+    vec3 sky_radiance = mix(horizon_radiance * 0.45, zenith_radiance, upward) +
+                        multiple_scattering * 0.25;
+    vec3 indirect = diffuse * sky_radiance * ATM_PI * occlusion;
     return direct + indirect;
 }
 
@@ -418,6 +447,15 @@ void main() {
         map_color, lit_normal, roughness, 1.0, shadow.visibility);
     vec3 color = mix(map_color, relit_color,
                      clamp(frame.relight_strength, 0.0, 1.0));
+
+    /* Subtle relight used to interpolate a fully shadowed lighting result back
+       toward raw imagery, so occlusion looked exactly like "lighting off".
+       Preserve the imagery baseline but apply shadow as a separate modulation.
+       Full material mode already contains the physical direct/indirect split. */
+    float subtle_weight = smoothstep(0.0, 0.45, frame.relight_strength) *
+                          (1.0 - material_strength);
+    float shadow_modulation = mix(0.58, 1.0, shadow.visibility);
+    color *= mix(1.0, shadow_modulation, subtle_weight);
     if (frame.debug_view > 1.5)
         color = mix(color, lod_color(draw.debug.x), 0.72);
     out_color = vec4(display_transform(color), 1.0);

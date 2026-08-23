@@ -194,6 +194,21 @@ def _load_height_grid(path: Path, output_size: int,
     return result, result_valid
 
 
+def _load_natural_mask(path: Path, output_size: int) -> list[bool]:
+    """Load a white=natural, black=infrastructure mask onto height vertices.
+
+    Infrastructure is removed from the mesh, rather than merely painted over:
+    a masked height sample becomes explicit no-data in the `.trn` validity
+    bitset.  This keeps roads, buildings, railways and similar built features
+    out of both geometry and imagery sampling.  The caller is responsible for
+    ensuring the mask has exactly the DEM/imagery extent and CRS.
+    """
+    with Image.open(path) as image:
+        image = image.convert("L").resize((output_size, output_size),
+                                            Image.Resampling.NEAREST)
+        return [value >= 128 for value in image.getdata()]
+
+
 def _linear_channel(channel: Image.Image) -> Image.Image:
     return channel.point(
         lambda value: value / 3294.6 if value <= 10.31475 else
@@ -306,6 +321,10 @@ def build(args: argparse.Namespace) -> None:
     finest_grid_size = segments * (1 << finest) + 1
     heights, valid = _load_height_grid(Path(args.dem), finest_grid_size,
                                        args.nodata)
+    if args.natural_mask:
+        natural = _load_natural_mask(Path(args.natural_mask), finest_grid_size)
+        valid = [height_ok and natural_ok
+                 for height_ok, natural_ok in zip(valid, natural)]
     source_image = Image.open(args.imagery)
     root_extent = tuple(args.extent)
     root_error = args.root_geometric_error
@@ -379,6 +398,7 @@ def build(args: argparse.Namespace) -> None:
         "height_encoding": args.height_encoding,
         "root_geometric_error_m": root_error,
         "source": json.loads(source),
+        "natural_mask": str(args.natural_mask) if args.natural_mask else None,
     }
     (output / "manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -589,6 +609,10 @@ def parser() -> argparse.ArgumentParser:
     build_parser = commands.add_parser("build", help="build a complete XYZ pyramid")
     build_parser.add_argument("--dem", required=True)
     build_parser.add_argument("--imagery", required=True)
+    build_parser.add_argument(
+        "--natural-mask",
+        help="optional aligned white=natural / black=infrastructure raster; "
+             "masked samples become terrain no-data")
     build_parser.add_argument("--output", required=True)
     build_parser.add_argument("--extent", type=float, nargs=4, required=True,
                               metavar=("WEST", "SOUTH", "EAST", "NORTH"))

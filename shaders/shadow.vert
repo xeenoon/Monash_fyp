@@ -20,8 +20,12 @@ layout(push_constant) uniform DrawData {
 void main() {
     vec2 height_uv = in_texcoord * draw.elevation_uv.xy + draw.elevation_uv.zw;
     float height_m = textureLod(elevation, height_uv, 0.0).r * draw.geometry.z;
-    if (in_untextured > 1.5)
-        height_m -= draw.geometry.w;
+    /* Skirts are crack-hiding curtains dropped by geometry.w below the tile edge.
+       They are not real terrain: extruding them here turns each tile boundary into
+       a tall vertical occluder that, at grazing (sunset) sun angles, casts a
+       kilometre-long false shadow with straight tile-aligned edges. Leave the skirt
+       ring coplanar with the surface in the shadow pass so only true terrain casts
+       shadows; the colour pass still extrudes them to hide LOD seams. */
     vec3 local = vec3(in_position.x * draw.geometry.x,
                       height_m,
                       in_position.z * draw.geometry.y);

@@ -152,6 +152,32 @@ Texture texture_create_depth_target(VkDevice device, GpuAllocator *allocator,
     return texture_create(device, allocator, &desc);
 }
 
+Texture texture_create_sampled_depth_target(VkDevice device, GpuAllocator *allocator,
+                                            VkFormat format, uint32_t width,
+                                            uint32_t height) {
+    TextureDesc desc = { .format = format, .width = width, .height = height,
+        .mip_levels = 1,
+        .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                 VK_IMAGE_USAGE_SAMPLED_BIT,
+        .aspect = VK_IMAGE_ASPECT_DEPTH_BIT, .filter = VK_FILTER_NEAREST,
+        .address_mode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+        .create_sampler = true };
+    return texture_create(device, allocator, &desc);
+}
+
+Texture texture_create_atmosphere_lut(VkDevice device, GpuAllocator *allocator,
+                                     uint32_t width, uint32_t height,
+                                     uint32_t layers) {
+    TextureDesc desc = { .format = VK_FORMAT_R16G16B16A16_SFLOAT,
+        .width = width, .height = height, .mip_levels = 1,
+        .array_layers = layers,
+        .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        .aspect = VK_IMAGE_ASPECT_COLOR_BIT, .filter = VK_FILTER_LINEAR,
+        .address_mode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+        .create_sampler = true };
+    return texture_create(device, allocator, &desc);
+}
+
 Texture texture_create_shadow_array(VkDevice device, GpuAllocator *allocator,
                                     VkFormat format, uint32_t resolution,
                                     uint32_t layers) {

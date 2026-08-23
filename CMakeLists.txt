@@ -36,7 +36,9 @@ endif()
 # are picked up automatically via the per-shader depfile below, so editing an
 # include rebuilds every dependent shader.
 foreach(SHADER cube.vert cube.frag terrain.vert terrain.frag shadow.vert
-               fullscreen.vert tonemap.frag)
+               fullscreen.vert tonemap.frag atmosphere_transmittance.comp
+               atmosphere_multiscattering.comp atmosphere_skyview.comp
+               atmosphere_aerial.comp)
     add_custom_command(
         OUTPUT "${SHADER_OUTPUT_DIR}/${SHADER}.spv"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${SHADER_OUTPUT_DIR}"
@@ -80,6 +82,7 @@ add_executable(terrain_renderer
     src/terrain_runtime.c
     src/surface_detail.c
     src/shadow_cascade.c
+    src/atmosphere.c
     src/texture.c
     src/renderer.c
     include/stb_image.c)
@@ -174,4 +177,16 @@ if(BUILD_TESTING)
             -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME phase6_hdr_lighting_and_shadows COMMAND phase6_lighting_tests)
+
+    add_executable(phase7_atmosphere_tests
+        tests/phase7_atmosphere_tests.c
+        src/atmosphere.c)
+    target_include_directories(phase7_atmosphere_tests PRIVATE src)
+    target_link_libraries(phase7_atmosphere_tests PRIVATE m)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(phase7_atmosphere_tests PRIVATE
+            -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME phase7_physical_sky_and_aerial_perspective
+             COMMAND phase7_atmosphere_tests)
 endif()

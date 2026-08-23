@@ -10,6 +10,10 @@ void input_poll(Input *in, SDL_Window *window) {
     in->cycle_relighting = false;
     in->cycle_surface_debug = false;
     in->cycle_shadow_debug = false;
+    in->cycle_atmosphere_debug = false;
+    in->cycle_sun = false;
+    in->previous_atmosphere_slice = false;
+    in->next_atmosphere_slice = false;
 
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
@@ -28,6 +32,14 @@ void input_poll(Input *in, SDL_Window *window) {
             in->cycle_surface_debug = true;
         if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_F10)
             in->cycle_shadow_debug = true;
+        if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_F11)
+            in->cycle_atmosphere_debug = true;
+        if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_F12)
+            in->cycle_sun = true;
+        if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_LEFTBRACKET)
+            in->previous_atmosphere_slice = true;
+        if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_RIGHTBRACKET)
+            in->next_atmosphere_slice = true;
         if (event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) in->resized = true;
     }
 

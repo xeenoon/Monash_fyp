@@ -26,7 +26,14 @@ _Static_assert(offsetof(FrameUniforms, shadow_view_projection) == 608, "FrameUni
 _Static_assert(offsetof(FrameUniforms, shadow_splits) == 864, "FrameUniforms shadow splits offset");
 _Static_assert(offsetof(FrameUniforms, shadow_parameters) == 880, "FrameUniforms shadow parameters offset");
 _Static_assert(offsetof(FrameUniforms, sun_radiance) == 896, "FrameUniforms radiance offset");
-_Static_assert(sizeof(FrameUniforms) == 912, "FrameUniforms std140 size");
+_Static_assert(offsetof(FrameUniforms, atmosphere_radii) == 912, "FrameUniforms atmosphere radii offset");
+_Static_assert(offsetof(FrameUniforms, atmosphere_rayleigh) == 928, "FrameUniforms Rayleigh offset");
+_Static_assert(offsetof(FrameUniforms, atmosphere_mie_scatter) == 944, "FrameUniforms Mie scatter offset");
+_Static_assert(offsetof(FrameUniforms, atmosphere_mie_extinct) == 960, "FrameUniforms Mie extinction offset");
+_Static_assert(offsetof(FrameUniforms, atmosphere_absorption) == 976, "FrameUniforms ozone offset");
+_Static_assert(offsetof(FrameUniforms, atmosphere_ground) == 992, "FrameUniforms atmosphere ground offset");
+_Static_assert(offsetof(FrameUniforms, atmosphere_options) == 1008, "FrameUniforms atmosphere options offset");
+_Static_assert(sizeof(FrameUniforms) == 1024, "FrameUniforms std140 size");
 _Static_assert(sizeof(DrawPushConstants) == 128, "terrain push constant size");
 
 /* Staging capacity for the upload ring: large enough for the 2048x2048 albedo
@@ -77,13 +84,15 @@ void renderer_free_material_set(Renderer *r, VkDescriptorSet set) {
     if (r && set) VK_CHECK(vkFreeDescriptorSets(r->device, r->descriptor_pool, 1, &set));
 }
 
-/* Descriptor roles: set 0 = per-frame UBO; set 1 = imagery, elevation, and the
-   shared detail map. A shared pool serves all tile and fallback sets. */
+/* Descriptor roles: set 0 = per-frame UBO; set 1 = pass-local material/HDR;
+   set 2 = atmosphere LUTs for graphics. Compute sees that same atmosphere set
+   as set 1, avoiding duplicate descriptors. */
 static void create_descriptors(Renderer *r) {
     VkDescriptorSetLayoutBinding frame_bindings[3] = {
         { .binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
           .descriptorCount = 1,
-          .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT },
+          .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT |
+                        VK_SHADER_STAGE_COMPUTE_BIT },
         { .binding = 1, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
           .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT },
         { .binding = 2, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
@@ -106,24 +115,41 @@ static void create_descriptors(Renderer *r) {
         .bindingCount = 3, .pBindings = material_bindings };
     VK_CHECK(vkCreateDescriptorSetLayout(r->device, &material_layout, NULL, &r->material_set_layout));
 
-    VkDescriptorSetLayoutBinding display_binding = { .binding = 0,
-        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-        .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT };
+    VkDescriptorSetLayoutBinding display_bindings[2] = {
+        { .binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+          .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT },
+        { .binding = 1, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+          .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT },
+    };
     VkDescriptorSetLayoutCreateInfo display_layout = {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        .bindingCount = 1, .pBindings = &display_binding };
+        .bindingCount = 2, .pBindings = display_bindings };
     VK_CHECK(vkCreateDescriptorSetLayout(r->device, &display_layout, NULL,
                                          &r->display_set_layout));
 
-    VkDescriptorPoolSize pool_sizes[2] = {
+    VkDescriptorSetLayoutBinding atmosphere_bindings[10];
+    for (uint32_t i = 0; i < 10; ++i) atmosphere_bindings[i] =
+        (VkDescriptorSetLayoutBinding){ .binding = i, .descriptorCount = 1,
+            .descriptorType = i < 5 ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
+                                    : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+            .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT |
+                          (i < 5 ? VK_SHADER_STAGE_FRAGMENT_BIT : 0) };
+    VkDescriptorSetLayoutCreateInfo atmosphere_layout = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .bindingCount = 10, .pBindings = atmosphere_bindings };
+    VK_CHECK(vkCreateDescriptorSetLayout(r->device, &atmosphere_layout, NULL,
+                                         &r->atmosphere_set_layout));
+
+    VkDescriptorPoolSize pool_sizes[3] = {
         { .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = MAX_FRAMES_IN_FLIGHT },
         { .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
           .descriptorCount = MAX_TEXTURE_SETS * 3u +
-                             MAX_FRAMES_IN_FLIGHT * 2u + 1u } };
+                             MAX_FRAMES_IN_FLIGHT * 2u + 8u },
+        { .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = 5u } };
     VkDescriptorPoolCreateInfo pool = { .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
-        .poolSizeCount = 2, .pPoolSizes = pool_sizes,
-        .maxSets = MAX_FRAMES_IN_FLIGHT + MAX_TEXTURE_SETS + 1u };
+        .poolSizeCount = 3, .pPoolSizes = pool_sizes,
+        .maxSets = MAX_FRAMES_IN_FLIGHT + MAX_TEXTURE_SETS + 2u };
     VK_CHECK(vkCreateDescriptorPool(r->device, &pool, NULL, &r->descriptor_pool));
 
     /* One persistently-mapped UBO + set per frame in flight. */
@@ -165,6 +191,35 @@ static void create_descriptors(Renderer *r) {
                                   &r->terrain_detail_texture, r->max_anisotropy);
     r->fallback_material_set = renderer_allocate_material_set(r, r->fallback_texture.view,
                                                               r->fallback_texture.sampler);
+
+    VkDescriptorSetAllocateInfo atmosphere_alloc = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool = r->descriptor_pool, .descriptorSetCount = 1,
+        .pSetLayouts = &r->atmosphere_set_layout };
+    VK_CHECK(vkAllocateDescriptorSets(r->device, &atmosphere_alloc,
+                                      &r->atmosphere_set));
+    Texture *textures[5] = {&r->atmosphere_transmittance,
+        &r->atmosphere_multiscattering, &r->atmosphere_skyview,
+        &r->atmosphere_aerial_scattering, &r->atmosphere_aerial_transmittance};
+    VkDescriptorImageInfo sampled[5], storage[5];
+    VkWriteDescriptorSet atmosphere_writes[10];
+    for (uint32_t i = 0; i < 5; ++i) {
+        sampled[i] = (VkDescriptorImageInfo){ .sampler = textures[i]->sampler,
+            .imageView = textures[i]->view, .imageLayout = VK_IMAGE_LAYOUT_GENERAL };
+        storage[i] = (VkDescriptorImageInfo){ .imageView = textures[i]->view,
+            .imageLayout = VK_IMAGE_LAYOUT_GENERAL };
+        atmosphere_writes[i] = (VkWriteDescriptorSet){
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstSet = r->atmosphere_set, .dstBinding = i, .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .pImageInfo = &sampled[i] };
+        atmosphere_writes[i + 5] = (VkWriteDescriptorSet){
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstSet = r->atmosphere_set, .dstBinding = i + 5,
+            .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+            .pImageInfo = &storage[i] };
+    }
+    vkUpdateDescriptorSets(r->device, 10, atmosphere_writes, 0, NULL);
 }
 
 static VkFormat find_depth_format(VkPhysicalDevice physical_device) {
@@ -173,10 +228,13 @@ static VkFormat find_depth_format(VkPhysicalDevice physical_device) {
     for (size_t i = 0; i < sizeof(candidates)/sizeof(candidates[0]); ++i) {
         VkFormatProperties properties;
         vkGetPhysicalDeviceFormatProperties(physical_device, candidates[i], &properties);
-        if (properties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT)
+        const VkFormatFeatureFlags required =
+            VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT |
+            VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+        if ((properties.optimalTilingFeatures & required) == required)
             return candidates[i];
     }
-    fprintf(stderr, "No supported depth format found\n");
+    fprintf(stderr, "No sampleable depth-attachment format found\n");
     exit(EXIT_FAILURE);
 }
 
@@ -220,6 +278,22 @@ static void create_shadow_texture(Renderer *r) {
         VK_CHECK(vkCreateImageView(r->device, &view, NULL,
                                    &r->shadow_layer_views[layer]));
     }
+}
+
+static void create_atmosphere_textures(Renderer *r) {
+    /* Initial sizes are the proven Unreal demo defaults. The aerial volume is
+       represented as a 32-layer 2D array because Vulkan samples array layers
+       portably and our final pass performs the small z interpolation itself. */
+    r->atmosphere_transmittance = texture_create_atmosphere_lut(
+        r->device, r->allocator, 256, 64, 1);
+    r->atmosphere_multiscattering = texture_create_atmosphere_lut(
+        r->device, r->allocator, 32, 32, 1);
+    r->atmosphere_skyview = texture_create_atmosphere_lut(
+        r->device, r->allocator, 192, 108, 1);
+    r->atmosphere_aerial_scattering = texture_create_atmosphere_lut(
+        r->device, r->allocator, 32, 32, 32);
+    r->atmosphere_aerial_transmittance = texture_create_atmosphere_lut(
+        r->device, r->allocator, 32, 32, 32);
 }
 
 static VkShaderModule create_shader_module(Renderer *r, const char *path) {
@@ -315,7 +389,13 @@ static void create_instance_and_device(Renderer *r) {
         .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, .queueFamilyIndex = families[i],
         .queueCount = 1, .pQueuePriorities = &priority };
     const char *device_extensions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
-    VkPhysicalDeviceFeatures features = { .samplerAnisotropy = supported.samplerAnisotropy };
+    if (!supported.shaderStorageImageExtendedFormats) {
+        fprintf(stderr, "RGBA16F storage images are required for atmosphere LUTs\n");
+        exit(EXIT_FAILURE);
+    }
+    VkPhysicalDeviceFeatures features = {
+        .samplerAnisotropy = supported.samplerAnisotropy,
+        .shaderStorageImageExtendedFormats = VK_TRUE };
     VkDeviceCreateInfo device_info = { .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
         .queueCreateInfoCount = queue_count, .pQueueCreateInfos = queues,
         .enabledExtensionCount = 1, .ppEnabledExtensionNames = device_extensions,
@@ -333,9 +413,10 @@ static void create_scene_render_pass(Renderer *r, VkFormat depth_format) {
           .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
           .finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
         { .format = depth_format, .samples = VK_SAMPLE_COUNT_1_BIT,
-          .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR, .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+          .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR, .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
           .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE, .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-          .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED, .finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL }
+          .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+          .finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL }
     };
     VkAttachmentReference color_ref = {0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
     VkAttachmentReference depth_ref = {1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
@@ -351,9 +432,11 @@ static void create_scene_render_pass(Renderer *r, VkFormat depth_format) {
           .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
                            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT },
         { .srcSubpass = 0, .dstSubpass = VK_SUBPASS_EXTERNAL,
-          .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+          .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                          VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
           .dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-          .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+          .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                           VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
           .dstAccessMask = VK_ACCESS_SHADER_READ_BIT },
     };
     VkRenderPassCreateInfo info = { .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
@@ -428,25 +511,62 @@ static void create_shadow_framebuffers(Renderer *r) {
     }
 }
 
-/* Pipeline layout is stable: set 0 frame data, set 1 tile textures, and one
-   minimum-guaranteed 128-byte push range for per-tile draw data. */
+/* Graphics share set 2 atmosphere resources. Compute uses frame set 0 plus the
+   same atmosphere layout at set 1, matching the compact compute shaders. */
 static void create_pipeline_layout(Renderer *r) {
-    VkDescriptorSetLayout layouts[2] = {r->frame_set_layout, r->material_set_layout};
+    VkDescriptorSetLayout layouts[3] = {r->frame_set_layout,
+        r->material_set_layout, r->atmosphere_set_layout};
     VkPushConstantRange push = { .stageFlags = VK_SHADER_STAGE_VERTEX_BIT |
                                                VK_SHADER_STAGE_FRAGMENT_BIT,
         .offset = 0, .size = sizeof(DrawPushConstants) };
     VkPipelineLayoutCreateInfo layout_info = { .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .setLayoutCount = 2, .pSetLayouts = layouts,
+        .setLayoutCount = 3, .pSetLayouts = layouts,
         .pushConstantRangeCount = 1, .pPushConstantRanges = &push };
     VK_CHECK(vkCreatePipelineLayout(r->device, &layout_info, NULL, &r->pipeline_layout));
 
-    VkDescriptorSetLayout display_layouts[2] = {
-        r->frame_set_layout, r->display_set_layout };
+    VkDescriptorSetLayout display_layouts[3] = {
+        r->frame_set_layout, r->display_set_layout, r->atmosphere_set_layout };
     VkPipelineLayoutCreateInfo display_info = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .setLayoutCount = 2, .pSetLayouts = display_layouts };
+        .setLayoutCount = 3, .pSetLayouts = display_layouts };
     VK_CHECK(vkCreatePipelineLayout(r->device, &display_info, NULL,
                                     &r->display_pipeline_layout));
+
+    VkDescriptorSetLayout compute_layouts[2] = {
+        r->frame_set_layout, r->atmosphere_set_layout };
+    VkPipelineLayoutCreateInfo compute_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .setLayoutCount = 2, .pSetLayouts = compute_layouts };
+    VK_CHECK(vkCreatePipelineLayout(r->device, &compute_info, NULL,
+                                    &r->atmosphere_pipeline_layout));
+}
+
+static VkPipeline create_compute_pipeline(Renderer *r, const char *shader_name) {
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/%s.spv", SHADER_DIR, shader_name);
+    VkShaderModule module = create_shader_module(r, path);
+    VkPipelineShaderStageCreateInfo stage = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .stage = VK_SHADER_STAGE_COMPUTE_BIT, .module = module, .pName = "main" };
+    VkComputePipelineCreateInfo info = {
+        .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+        .stage = stage, .layout = r->atmosphere_pipeline_layout };
+    VkPipeline pipeline;
+    VK_CHECK(vkCreateComputePipelines(r->device, VK_NULL_HANDLE, 1, &info,
+                                      NULL, &pipeline));
+    vkDestroyShaderModule(r->device, module, NULL);
+    return pipeline;
+}
+
+static void create_atmosphere_pipelines(Renderer *r) {
+    r->atmosphere_transmittance_pipeline = create_compute_pipeline(
+        r, "atmosphere_transmittance.comp");
+    r->atmosphere_multiscattering_pipeline = create_compute_pipeline(
+        r, "atmosphere_multiscattering.comp");
+    r->atmosphere_skyview_pipeline = create_compute_pipeline(
+        r, "atmosphere_skyview.comp");
+    r->atmosphere_aerial_pipeline = create_compute_pipeline(
+        r, "atmosphere_aerial.comp");
 }
 
 static void create_terrain_pipeline(Renderer *r) {
@@ -665,22 +785,31 @@ static void create_swapchain(Renderer *r) {
     create_tone_map_pipeline(r);
     r->hdr_color = texture_create_hdr_target(r->device, r->allocator,
         r->swapchain_extent.width, r->swapchain_extent.height);
-    r->depth = texture_create_depth_target(r->device, r->allocator, depth_format,
-                                           r->swapchain_extent.width, r->swapchain_extent.height);
+    r->depth = texture_create_sampled_depth_target(r->device, r->allocator,
+        depth_format, r->swapchain_extent.width, r->swapchain_extent.height);
 
     VkDescriptorSetAllocateInfo set_alloc = {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
         .descriptorPool = r->descriptor_pool, .descriptorSetCount = 1,
         .pSetLayouts = &r->display_set_layout };
     VK_CHECK(vkAllocateDescriptorSets(r->device, &set_alloc, &r->display_set));
-    VkDescriptorImageInfo hdr_info = { .sampler = r->hdr_color.sampler,
-        .imageView = r->hdr_color.view,
-        .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-    VkWriteDescriptorSet hdr_write = { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-        .dstSet = r->display_set, .dstBinding = 0, .descriptorCount = 1,
-        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-        .pImageInfo = &hdr_info };
-    vkUpdateDescriptorSets(r->device, 1, &hdr_write, 0, NULL);
+    VkDescriptorImageInfo display_images[2] = {
+        { .sampler = r->hdr_color.sampler, .imageView = r->hdr_color.view,
+          .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+        { .sampler = r->depth.sampler, .imageView = r->depth.view,
+          .imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL },
+    };
+    VkWriteDescriptorSet display_writes[2] = {
+        { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+          .dstSet = r->display_set, .dstBinding = 0, .descriptorCount = 1,
+          .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+          .pImageInfo = &display_images[0] },
+        { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+          .dstSet = r->display_set, .dstBinding = 1, .descriptorCount = 1,
+          .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+          .pImageInfo = &display_images[1] },
+    };
+    vkUpdateDescriptorSets(r->device, 2, display_writes, 0, NULL);
 
     VkImageView scene_attachments[] = {r->hdr_color.view, r->depth.view};
     VkFramebufferCreateInfo scene_fb = { .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
@@ -730,12 +859,18 @@ static void recreate_swapchain(Renderer *r) {
 
 void renderer_reload_pipeline(Renderer *r) {
     vkDeviceWaitIdle(r->device);
+    vkDestroyPipeline(r->device, r->atmosphere_aerial_pipeline, NULL);
+    vkDestroyPipeline(r->device, r->atmosphere_skyview_pipeline, NULL);
+    vkDestroyPipeline(r->device, r->atmosphere_multiscattering_pipeline, NULL);
+    vkDestroyPipeline(r->device, r->atmosphere_transmittance_pipeline, NULL);
     vkDestroyPipeline(r->device, r->shadow_pipeline, NULL);
     vkDestroyPipeline(r->device, r->tone_map_pipeline, NULL);
     vkDestroyPipeline(r->device, r->terrain_pipeline, NULL);
     create_shadow_pipeline(r);
     create_terrain_pipeline(r);
     create_tone_map_pipeline(r);
+    create_atmosphere_pipelines(r);
+    r->atmosphere_static_ready = false;
     printf("Shaders reloaded\n");
 }
 
@@ -776,12 +911,116 @@ static void bind_draw(Renderer *r, VkCommandBuffer command,
     mesh_draw(command, mesh);
 }
 
+static void atmosphere_image_barrier(VkCommandBuffer command, Texture *texture,
+                                     VkImageLayout old_layout,
+                                     VkPipelineStageFlags source_stage,
+                                     VkAccessFlags source_access,
+                                     VkPipelineStageFlags destination_stage,
+                                     VkAccessFlags destination_access) {
+    VkImageMemoryBarrier barrier = { .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .srcAccessMask = source_access, .dstAccessMask = destination_access,
+        .oldLayout = old_layout, .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image = texture->image,
+        .subresourceRange = {texture->aspect, 0, texture->mip_levels,
+                             0, texture->array_layers} };
+    vkCmdPipelineBarrier(command, source_stage, destination_stage, 0,
+                         0, NULL, 0, NULL, 1, &barrier);
+    texture->layout = VK_IMAGE_LAYOUT_GENERAL;
+}
+
+static void atmosphere_compute_barrier(VkCommandBuffer command, Texture *texture) {
+    atmosphere_image_barrier(command, texture, VK_IMAGE_LAYOUT_GENERAL,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+}
+
+static void record_atmosphere(Renderer *r, VkCommandBuffer command) {
+    bool build_static = !r->atmosphere_static_ready;
+    Texture *all_luts[5] = {&r->atmosphere_transmittance,
+        &r->atmosphere_multiscattering, &r->atmosphere_skyview,
+        &r->atmosphere_aerial_scattering, &r->atmosphere_aerial_transmittance};
+    if (build_static) {
+        for (uint32_t i = 0; i < 5; ++i) {
+            bool first_use = all_luts[i]->layout == VK_IMAGE_LAYOUT_UNDEFINED;
+            atmosphere_image_barrier(command, all_luts[i], all_luts[i]->layout,
+                first_use ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT
+                          : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |
+                            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                first_use ? 0 : VK_ACCESS_SHADER_READ_BIT,
+                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT);
+        }
+    } else {
+        /* Sky view and camera volume are camera/sun dependent. Synchronise last
+           frame's display sampling before overwriting them in-place. */
+        for (uint32_t i = 2; i < 5; ++i)
+            atmosphere_image_barrier(command, all_luts[i], VK_IMAGE_LAYOUT_GENERAL,
+                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
+                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT);
+    }
+
+    VkDescriptorSet compute_sets[2] = {r->frame_set[r->frame], r->atmosphere_set};
+    vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_COMPUTE,
+        r->atmosphere_pipeline_layout, 0, 2, compute_sets, 0, NULL);
+
+    if (build_static) {
+        vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_COMPUTE,
+                          r->atmosphere_transmittance_pipeline);
+        vkCmdDispatch(command, (256u + 7u) / 8u, (64u + 7u) / 8u, 1);
+        atmosphere_compute_barrier(command, &r->atmosphere_transmittance);
+
+        vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_COMPUTE,
+                          r->atmosphere_multiscattering_pipeline);
+        vkCmdDispatch(command, (32u + 7u) / 8u, (32u + 7u) / 8u, 1);
+        atmosphere_compute_barrier(command, &r->atmosphere_multiscattering);
+        r->atmosphere_static_ready = true;
+    }
+
+    vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_COMPUTE,
+                      r->atmosphere_skyview_pipeline);
+    vkCmdDispatch(command, (192u + 7u) / 8u, (108u + 7u) / 8u, 1);
+    atmosphere_compute_barrier(command, &r->atmosphere_skyview);
+
+    vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_COMPUTE,
+                      r->atmosphere_aerial_pipeline);
+    vkCmdDispatch(command, (32u + 3u) / 4u, (32u + 3u) / 4u,
+                  (32u + 3u) / 4u);
+
+    /* Make all camera-dependent writes visible to terrain/display fragments.
+       The two volume targets share one barrier call each for explicitness. */
+    atmosphere_image_barrier(command, &r->atmosphere_skyview,
+        VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        VK_ACCESS_SHADER_READ_BIT);
+    atmosphere_image_barrier(command, &r->atmosphere_aerial_scattering,
+        VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        VK_ACCESS_SHADER_READ_BIT);
+    atmosphere_image_barrier(command, &r->atmosphere_aerial_transmittance,
+        VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        VK_ACCESS_SHADER_READ_BIT);
+    if (build_static) {
+        atmosphere_image_barrier(command, &r->atmosphere_transmittance,
+            VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            VK_ACCESS_SHADER_READ_BIT);
+        atmosphere_image_barrier(command, &r->atmosphere_multiscattering,
+            VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            VK_ACCESS_SHADER_READ_BIT);
+    }
+}
+
 static void record_commands(Renderer *r, uint32_t image_index,
                             const FrameUniforms *frame,
                             const RendererDraw *draws, uint32_t draw_count) {
     VkCommandBuffer command = r->command_buffers[r->frame];
     VkCommandBufferBeginInfo begin = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
     VK_CHECK(vkBeginCommandBuffer(command, &begin));
+
+    record_atmosphere(r, command);
 
     VkClearValue shadow_clear = {.depthStencil = {1.0f, 0}};
     for (uint32_t cascade = 0; cascade < SHADOW_CASCADE_COUNT; ++cascade) {
@@ -822,6 +1061,8 @@ static void record_commands(Renderer *r, uint32_t image_index,
     /* Set 0: per-frame data. Set 1 + push constants: per terrain tile. */
     vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, r->pipeline_layout, 0, 1,
         &r->frame_set[r->frame], 0, NULL);
+    vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS,
+        r->pipeline_layout, 2, 1, &r->atmosphere_set, 0, NULL);
     for (uint32_t i = 0; i < draw_count; ++i)
         bind_draw(r, command, &draws[i], &draws[i].push);
     vkCmdEndRenderPass(command);
@@ -836,9 +1077,10 @@ static void record_commands(Renderer *r, uint32_t image_index,
     vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS,
                       r->tone_map_pipeline);
     set_viewport_scissor(command, r->swapchain_extent);
-    VkDescriptorSet display_sets[2] = {r->frame_set[r->frame], r->display_set};
+    VkDescriptorSet display_sets[3] = {r->frame_set[r->frame], r->display_set,
+                                       r->atmosphere_set};
     vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS,
-        r->display_pipeline_layout, 0, 2, display_sets, 0, NULL);
+        r->display_pipeline_layout, 0, 3, display_sets, 0, NULL);
     vkCmdDraw(command, 3, 1, 0, 0);
     vkCmdEndRenderPass(command);
     VK_CHECK(vkEndCommandBuffer(command));
@@ -886,9 +1128,11 @@ void renderer_init(Renderer *r, SDL_Window *window) {
     r->upload = upload_context_create(r->device, r->allocator, r->graphics_queue,
                                       r->graphics_family, UPLOAD_STAGING_CAPACITY);
     create_shadow_texture(r);
+    create_atmosphere_textures(r);
     create_descriptors(r);
     create_command_and_sync(r);
     create_pipeline_layout(r);
+    create_atmosphere_pipelines(r);
     create_shadow_render_pass(r, r->shadow_map.format);
     create_shadow_framebuffers(r);
     create_shadow_pipeline(r);
@@ -906,10 +1150,15 @@ float renderer_aspect(const Renderer *r) {
 void renderer_shutdown(Renderer *r) {
     vkDeviceWaitIdle(r->device);
     destroy_swapchain(r);
+    vkDestroyPipeline(r->device, r->atmosphere_aerial_pipeline, NULL);
+    vkDestroyPipeline(r->device, r->atmosphere_skyview_pipeline, NULL);
+    vkDestroyPipeline(r->device, r->atmosphere_multiscattering_pipeline, NULL);
+    vkDestroyPipeline(r->device, r->atmosphere_transmittance_pipeline, NULL);
     vkDestroyPipeline(r->device, r->shadow_pipeline, NULL);
     for (uint32_t i = 0; i < SHADOW_CASCADE_COUNT; ++i)
         vkDestroyFramebuffer(r->device, r->shadow_framebuffers[i], NULL);
     vkDestroyRenderPass(r->device, r->shadow_render_pass, NULL);
+    vkDestroyPipelineLayout(r->device, r->atmosphere_pipeline_layout, NULL);
     vkDestroyPipelineLayout(r->device, r->display_pipeline_layout, NULL);
     vkDestroyPipelineLayout(r->device, r->pipeline_layout, NULL);
     for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
@@ -920,11 +1169,17 @@ void renderer_shutdown(Renderer *r) {
     }
     vkDestroyCommandPool(r->device, r->command_pool, NULL);
     vkDestroyDescriptorPool(r->device, r->descriptor_pool, NULL);
+    vkDestroyDescriptorSetLayout(r->device, r->atmosphere_set_layout, NULL);
     vkDestroyDescriptorSetLayout(r->device, r->display_set_layout, NULL);
     vkDestroyDescriptorSetLayout(r->device, r->material_set_layout, NULL);
     vkDestroyDescriptorSetLayout(r->device, r->frame_set_layout, NULL);
     texture_destroy(r->device, r->allocator, &r->fallback_texture);
     texture_destroy(r->device, r->allocator, &r->terrain_detail_texture);
+    texture_destroy(r->device, r->allocator, &r->atmosphere_aerial_transmittance);
+    texture_destroy(r->device, r->allocator, &r->atmosphere_aerial_scattering);
+    texture_destroy(r->device, r->allocator, &r->atmosphere_skyview);
+    texture_destroy(r->device, r->allocator, &r->atmosphere_multiscattering);
+    texture_destroy(r->device, r->allocator, &r->atmosphere_transmittance);
     for (uint32_t i = 0; i < SHADOW_CASCADE_COUNT; ++i)
         vkDestroyImageView(r->device, r->shadow_layer_views[i], NULL);
     vkDestroySampler(r->device, r->shadow_raw_sampler, NULL);

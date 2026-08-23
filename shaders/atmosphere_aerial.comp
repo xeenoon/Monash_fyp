@@ -1,0 +1,32 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+#include "atmosphere_common.glsl"
+
+layout(set = 1, binding = 0) uniform sampler2D transmittance_lut;
+layout(set = 1, binding = 1) uniform sampler2D multiple_lut;
+layout(set = 1, binding = 8, rgba16f) uniform writeonly image2DArray output_scattering;
+layout(set = 1, binding = 9, rgba16f) uniform writeonly image2DArray output_transmittance;
+
+layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
+void main() {
+    ivec3 voxel = ivec3(gl_GlobalInvocationID.xyz);
+    if (any(greaterThanEqual(voxel, ivec3(ATM_AERIAL_SIZE)))) return;
+    vec2 uv = (vec2(voxel.xy) + 0.5) / ATM_AERIAL_SIZE.xy;
+    vec2 clip_xy = uv * 2.0 - 1.0;
+    vec4 ray_h = frame.inverse_view_projection * vec4(clip_xy, 0.0, 1.0);
+    vec3 direction = normalize(ray_h.xyz);
+    vec3 origin = atmosphere_camera_position();
+
+    /* Directly follows Wicked's cameraVolumeLutCS squared froxel distribution;
+       storing RGB transmittance separately preserves atmospheric colour. */
+    float w = (float(voxel.z) + 0.5) / ATM_AERIAL_SIZE.z;
+    float distance_km = w * w * frame.atmosphere_options.x;
+    int sample_count = max(2, min(32, (voxel.z + 1) * 2));
+    AtmosphereIntegral result = integrate_atmosphere(
+        origin, direction, normalize(-frame.sun_direction.xyz),
+        frame.sun_radiance.rgb, distance_km, sample_count, true, true,
+        transmittance_lut, multiple_lut);
+    imageStore(output_scattering, voxel, vec4(result.luminance, 1.0));
+    imageStore(output_transmittance, voxel, vec4(result.transmittance, 1.0));
+}

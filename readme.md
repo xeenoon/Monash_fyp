@@ -51,6 +51,17 @@ in [`docs/phase4_terrain_quadtree.md`](docs/phase4_terrain_quadtree.md).
 Terrain surface normals/detail and the HDR lighting/shadow frame are documented
 in [`docs/phase5_surface_quality.md`](docs/phase5_surface_quality.md) and
 [`docs/phase6_hdr_lighting_shadows.md`](docs/phase6_hdr_lighting_shadows.md).
+The physical sky, atmosphere LUTs, and depth-aware aerial composite are covered
+in [`docs/phase7_physical_sky.md`](docs/phase7_physical_sky.md).
+
+For a large Swiss-Alps source cache, use
+[`tools/download_swiss_alps.py`](tools/download_swiss_alps.py). It obtains 2 m
+swissALTI3D/SWISSIMAGE source COGs; its selection policy, natural-terrain
+limits, and the required conversion to `.trn` are in
+[`docs/swiss_alps_bulk_dataset.md`](docs/swiss_alps_bulk_dataset.md).
+Use [`tools/mask_swiss_infrastructure.py`](tools/mask_swiss_infrastructure.py)
+with official road, rail, building, and optional infrastructure vectors before
+building any natural-only `.trn` dataset.
 
 ## Controls
 
@@ -62,5 +73,8 @@ in [`docs/phase5_surface_quality.md`](docs/phase5_surface_quality.md) and
 - F8: cycle unlit, subtle relight, and full material lighting
 - F9: cycle normal, slope, curvature, and height-gradient views
 - F10: cycle cascade, shadow-coordinate, visibility, bias, and raw-map views
+- F11: cycle atmosphere LUT and aerial-volume debug views
+- `[` / `]`: select the aerial-volume debug slice
+- F12: cycle afternoon, sunset, and high-sun lighting
 - F5: reload shaders
 - Escape: quit

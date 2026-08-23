@@ -24,6 +24,13 @@ layout(set = 0, binding = 0) uniform FrameUniforms {
     vec4  shadow_splits;
     vec4  shadow_parameters;
     vec4  sun_radiance;
+    vec4  atmosphere_radii;       /* bottom/top/camera altitude km/sun radius */
+    vec4  atmosphere_rayleigh;    /* scattering RGB, density exponential scale */
+    vec4  atmosphere_mie_scatter; /* scattering RGB, density exponential scale */
+    vec4  atmosphere_mie_extinct; /* extinction RGB, phase g */
+    vec4  atmosphere_absorption;  /* ozone extinction RGB */
+    vec4  atmosphere_ground;      /* albedo RGB, multiple-scattering factor */
+    vec4  atmosphere_options;     /* aerial max km, debug slice, reserved */
 } frame;
 
 layout(set = 0, binding = 1) uniform sampler2DArrayShadow shadow_map;

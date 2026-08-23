@@ -37,6 +37,13 @@ typedef struct {
     vec4s shadow_splits;
     vec4s shadow_parameters; /* normal bias m, PCF radius px, exposure, depth bias */
     vec4s sun_radiance;
+    vec4s atmosphere_radii;
+    vec4s atmosphere_rayleigh;
+    vec4s atmosphere_mie_scatter;
+    vec4s atmosphere_mie_extinct;
+    vec4s atmosphere_absorption;
+    vec4s atmosphere_ground;
+    vec4s atmosphere_options;
 } FrameUniforms;
 
 /* Exactly 128 bytes, the Vulkan minimum guaranteed push-constant capacity.
@@ -81,12 +88,13 @@ typedef struct Renderer {
     Texture hdr_color;
     VkFramebuffer scene_framebuffer;
 
-    /* Descriptor roles. Set 0 is frame data plus the shared shadow array; the
-       terrain set 1 holds imagery/elevation/detail, while the display set 1
-       holds the HDR scene sampled by the tone-map pass. */
+    /* Descriptor roles. Set 0 is frame data plus the shared shadow array; set
+       1 is terrain material or HDR/depth display input; set 2 supplies shared
+       atmosphere LUTs. Compute aliases the atmosphere layout at set 1. */
     VkDescriptorSetLayout frame_set_layout;     /* set 0 */
     VkDescriptorSetLayout material_set_layout;  /* set 1 */
     VkDescriptorSetLayout display_set_layout;   /* tone-map set 1 */
+    VkDescriptorSetLayout atmosphere_set_layout;/* graphics set 2 / compute set 1 */
     VkDescriptorPool descriptor_pool;
     GpuBuffer       frame_ubo[MAX_FRAMES_IN_FLIGHT];
     VkDescriptorSet frame_set[MAX_FRAMES_IN_FLIGHT];
@@ -94,15 +102,27 @@ typedef struct Renderer {
     Texture         terrain_detail_texture;
     VkDescriptorSet fallback_material_set;
     VkDescriptorSet display_set;
+    VkDescriptorSet atmosphere_set;
 
     VkRenderPass scene_render_pass;
     VkRenderPass display_render_pass;
     VkRenderPass shadow_render_pass;
     VkPipelineLayout pipeline_layout;
     VkPipelineLayout display_pipeline_layout;
+    VkPipelineLayout atmosphere_pipeline_layout;
     VkPipeline terrain_pipeline;
     VkPipeline tone_map_pipeline;
     VkPipeline shadow_pipeline;
+    VkPipeline atmosphere_transmittance_pipeline;
+    VkPipeline atmosphere_multiscattering_pipeline;
+    VkPipeline atmosphere_skyview_pipeline;
+    VkPipeline atmosphere_aerial_pipeline;
+    Texture atmosphere_transmittance;
+    Texture atmosphere_multiscattering;
+    Texture atmosphere_skyview;
+    Texture atmosphere_aerial_scattering;
+    Texture atmosphere_aerial_transmittance;
+    bool atmosphere_static_ready;
     Texture shadow_map;
     VkSampler shadow_raw_sampler;
     VkImageView shadow_layer_views[SHADOW_CASCADE_COUNT];
