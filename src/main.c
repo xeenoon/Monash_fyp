@@ -281,10 +281,12 @@ int main(void)
 		if (input.clear_shader_dump)
 			renderer_clear_shader_dump(SHADER_DUMP_PATH);
 		if (input.dump_shader_data)
-			renderer_dump_shader_data(&renderer, SHADER_DUMP_PATH);
+			renderer_dump_shader_data(&renderer, SHADER_DUMP_PATH, camera.position, camera.yaw,
+									  camera.pitch);
 		if (auto_dump_after && ++rendered_frames >= auto_dump_after)
 		{
-			renderer_dump_shader_data(&renderer, SHADER_DUMP_PATH);
+			renderer_dump_shader_data(&renderer, SHADER_DUMP_PATH, camera.position, camera.yaw,
+									  camera.pitch);
 			running = false;
 		}
 #endif

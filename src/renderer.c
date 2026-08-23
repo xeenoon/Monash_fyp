@@ -1638,7 +1638,8 @@ static bool shader_dump_record_passes(const DumpRecord *rec, const ShaderDumpFil
 	return true;
 }
 
-uint32_t renderer_dump_shader_data(Renderer *r, const char *path)
+uint32_t renderer_dump_shader_data(Renderer *r, const char *path, WorldPosition camera_position,
+								   float camera_yaw, float camera_pitch)
 {
 	/* The dump buffer holds the most recently submitted frame; wait for all GPU
 	   work so the host read below sees complete, coherent records. */
@@ -1666,6 +1667,12 @@ uint32_t renderer_dump_shader_data(Renderer *r, const char *path)
 	fprintf(file, "# dump %s  records=%u  view=%ux%u  layers=%u%s\n", stamp, count,
 			r->swapchain_extent.width, r->swapchain_extent.height, r->shader_dump_layer_budget,
 			truncated ? "  (TRUNCATED: capacity exceeded)" : "");
+	fprintf(file,
+			"# camera pos=%.6f,%.6f,%.6f  yaw=%.3f  pitch=%.3f  "
+			"(replay: TERRAIN_DUMP_POS=\"%.6f %.6f %.6f\" TERRAIN_DUMP_YAW=%.3f "
+			"TERRAIN_DUMP_PITCH=%.3f)\n",
+			camera_position.x, camera_position.y, camera_position.z, camera_yaw, camera_pitch,
+			camera_position.x, camera_position.y, camera_position.z, camera_yaw, camera_pitch);
 	for (size_t i = 0; i < sizeof(SHADER_DUMP_LEGEND) / sizeof(SHADER_DUMP_LEGEND[0]); ++i)
 		fputs(SHADER_DUMP_LEGEND[i], file);
 	fputs("shader,frag_x,frag_y,f0,f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13,f14,f15,f16,f17,f18,"

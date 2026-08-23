@@ -217,11 +217,14 @@ void renderer_reload_pipeline(Renderer *r);
 #ifdef DEBUG_SHADER_DUMP
 /* Wait for the GPU, read back the per-fragment records every instrumented
    shader wrote this frame (only populated when frame.shader_dump.x was set),
-   and append them as CSV (with a timestamped header and per-shader legend) to
-   `path`, creating parent directories as needed. Honours the optional
+   and append them as CSV (with a timestamped header carrying the camera pose,
+   plus a per-shader legend) to `path`, creating parent directories as needed.
+   camera_position/yaw/pitch are recorded verbatim (degrees for yaw/pitch) so a
+   dump can be replayed with TERRAIN_DUMP_POS/_YAW/_PITCH. Honours the optional
    DUMP_SHADER and DUMP_RECT env filters. Returns the number of records
    written after filtering. */
-uint32_t renderer_dump_shader_data(Renderer *r, const char *path);
+uint32_t renderer_dump_shader_data(Renderer *r, const char *path, WorldPosition camera_position,
+								   float camera_yaw, float camera_pitch);
 /* Truncate the dump file at `path` so subsequent dumps start fresh. */
 void renderer_clear_shader_dump(const char *path);
 #endif
