@@ -19,6 +19,8 @@ typedef struct {
     bool  cycle_sun;                /* F12 pressed this frame  */
     bool  previous_atmosphere_slice;
     bool  next_atmosphere_slice;
+    bool  dump_shader_data;         /* X pressed (debug builds) */
+    bool  clear_shader_dump;        /* C pressed (debug builds) */
 } Input;
 
 /* Pumps SDL events + keyboard/mouse state into `in`. */

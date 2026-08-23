@@ -14,6 +14,8 @@ void input_poll(Input *in, SDL_Window *window) {
     in->cycle_sun = false;
     in->previous_atmosphere_slice = false;
     in->next_atmosphere_slice = false;
+    in->dump_shader_data = false;
+    in->clear_shader_dump = false;
 
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
@@ -40,6 +42,11 @@ void input_poll(Input *in, SDL_Window *window) {
             in->previous_atmosphere_slice = true;
         if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_RIGHTBRACKET)
             in->next_atmosphere_slice = true;
+        /* Debug shader dump: X appends the current frame's records, C clears. */
+        if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_X)
+            in->dump_shader_data = true;
+        if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_C)
+            in->clear_shader_dump = true;
         if (event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) in->resized = true;
     }
 

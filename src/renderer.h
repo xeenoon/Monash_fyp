@@ -133,6 +133,13 @@ typedef struct Renderer {
     VkSemaphore render_finished[MAX_FRAMES_IN_FLIGHT];
     VkFence in_flight[MAX_FRAMES_IN_FLIGHT];
     uint32_t frame;
+#ifdef DEBUG_SHADER_DUMP
+    /* Debug-only append buffer: terrain.frag writes one record per shaded
+       terrain fragment (set 0, binding 3). Sized to the swapchain extent and
+       recreated with it. See renderer_dump_shader_data. */
+    GpuBuffer shader_dump_buffer;
+    uint32_t  shader_dump_capacity;
+#endif
 } Renderer;
 
 void  renderer_init(Renderer *r, SDL_Window *window);
@@ -157,3 +164,12 @@ void renderer_free_material_set(Renderer *r, VkDescriptorSet set);
 /* Manual shader reload: rebuild the graphics pipeline from the current .spv on
    disk at a frame boundary. Safe to call from the main loop (e.g. on a keypress). */
 void renderer_reload_pipeline(Renderer *r);
+
+#ifdef DEBUG_SHADER_DUMP
+/* Wait for the GPU, read back the per-fragment records terrain.frag wrote this
+   frame, and append them as CSV (with a timestamped header) to `path`, creating
+   parent directories as needed. Returns the number of records written. */
+uint32_t renderer_dump_shader_data(Renderer *r, const char *path);
+/* Truncate the dump file at `path` so subsequent dumps start fresh. */
+void renderer_clear_shader_dump(const char *path);
+#endif

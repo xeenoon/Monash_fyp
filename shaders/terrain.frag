@@ -28,6 +28,28 @@ layout(push_constant) uniform DrawData {
 
 const float TAU = 6.28318530717958647692;
 
+#ifdef DEBUG_SHADER_DUMP
+/* Debug-only diagnostic sink. Each shaded terrain fragment appends one record so
+   the CPU can compare "where the light should be" (NoL, sun direction) against
+   "where it is" (shadow visibility / cascade). Keep this struct byte-identical to
+   the CPU reader in renderer.c (std430: six 16-byte vec4s = 96 bytes). */
+struct DumpRecord {
+    vec4 frag;    /* frag_coord.xy, distance_m, cascade */
+    vec4 cam_rel; /* camera_relative_position.xyz, NoL */
+    vec4 world;   /* surface_position.xyz, shadow visibility */
+    vec4 normal;  /* geometric_normal.xyz, receiver_bias */
+    vec4 shadow;  /* shadow.coordinate.xyz, lod level */
+    vec4 extra;   /* to_sun.xyz, grazing */
+};
+layout(std430, set = 0, binding = 3) buffer DumpBuffer {
+    uint dump_count;
+    uint dump_capacity;
+    uint dump_pad0;
+    uint dump_pad1;
+    DumpRecord dump_records[];
+};
+#endif
+
 struct HeightSurface {
     vec3 local_normal;
     vec2 gradient;
@@ -369,6 +391,28 @@ void main() {
     float distance_m = length(camera_relative_position);
     ShadowResult shadow = terrain_shadow(camera_relative_position,
                                           geometric_normal);
+
+#ifdef DEBUG_SHADER_DUMP
+    {
+        vec3 to_sun = normalize(-frame.sun_direction.xyz);
+        float NoL = dot(geometric_normal, to_sun);
+        uint index = atomicAdd(dump_count, 1u);
+        if (index < dump_capacity) {
+            DumpRecord rec;
+            rec.frag = vec4(gl_FragCoord.xy, distance_m, float(shadow.cascade));
+            rec.cam_rel = vec4(camera_relative_position, NoL);
+            rec.world = vec4(local_position + draw.debug.yzw, shadow.visibility);
+            rec.normal = vec4(geometric_normal, shadow.receiver_bias);
+            rec.shadow = vec4(shadow.coordinate, draw.debug.x);
+            float stored_depth = shadow.cascade < 4u
+                ? texture(shadow_map_raw,
+                          vec3(shadow.coordinate.xy, float(shadow.cascade))).r
+                : 1.0;
+            rec.extra = vec4(to_sun.xy, stored_depth, 1.0 - max(NoL, 0.0));
+            dump_records[index] = rec;
+        }
+    }
+#endif
 
     if (frame.debug_view > 2.5 && frame.debug_view < 3.5) {
         out_color = vec4(geometric_normal * 0.5 + 0.5, 1.0);

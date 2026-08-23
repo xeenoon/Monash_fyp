@@ -55,6 +55,24 @@ int main(void) {
     uint64_t last_stats_log = 0;
     TerrainRuntimeStats previous_stats = {0};
     bool running = true;
+#ifdef DEBUG_SHADER_DUMP
+    /* Automated capture for offline diagnosis. TERRAIN_DUMP_AFTER=N renders N
+       frames (letting tiles stream in), dumps once, then quits. Optional env:
+       TERRAIN_DUMP_SUN (0/1/2), TERRAIN_DUMP_YAW, TERRAIN_DUMP_PITCH,
+       TERRAIN_DUMP_POS="x y z" (tile-local metres). */
+    const char *auto_after_env = getenv("TERRAIN_DUMP_AFTER");
+    unsigned auto_dump_after = auto_after_env ? (unsigned)atoi(auto_after_env) : 0u;
+    uint64_t rendered_frames = 0;
+    if (getenv("TERRAIN_DUMP_SUN")) sun_mode = (unsigned)atoi(getenv("TERRAIN_DUMP_SUN")) % 3u;
+    if (getenv("TERRAIN_DUMP_YAW")) camera.yaw = (float)atof(getenv("TERRAIN_DUMP_YAW"));
+    if (getenv("TERRAIN_DUMP_PITCH")) camera.pitch = (float)atof(getenv("TERRAIN_DUMP_PITCH"));
+    if (getenv("TERRAIN_DUMP_POS")) {
+        double x = 0, y = 0, z = 0;
+        if (sscanf(getenv("TERRAIN_DUMP_POS"), "%lf %lf %lf", &x, &y, &z) == 3)
+            camera.position = coordinate_local_to_world(&root_transform,
+                (TileLocalPosition){x, y, z});
+    }
+#endif
     while (running) {
         input_poll(&input, window);
         if (input.quit) running = false;
@@ -192,6 +210,16 @@ int main(void) {
             frame.shadow_view_projection[i] = shadow_cascades.view_projection[i];
         renderer_draw_frame(&renderer, &frame, terrain_draws,
                             terrain_draw_count, input.resized);
+#ifdef DEBUG_SHADER_DUMP
+        /* Dump reads the buffer the frame above just populated. Clear first so a
+           same-frame C+X starts a fresh file. */
+        if (input.clear_shader_dump) renderer_clear_shader_dump(SHADER_DUMP_PATH);
+        if (input.dump_shader_data) renderer_dump_shader_data(&renderer, SHADER_DUMP_PATH);
+        if (auto_dump_after && ++rendered_frames >= auto_dump_after) {
+            renderer_dump_shader_data(&renderer, SHADER_DUMP_PATH);
+            running = false;
+        }
+#endif
         terrain_runtime_collect_evictions(terrain);
 
         TerrainRuntimeStats stats = terrain_runtime_stats(terrain);

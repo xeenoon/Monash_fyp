@@ -7,6 +7,31 @@
 #include <stdint.h>
 #include <string.h>
 
+#ifdef DEBUG_SHADER_DUMP
+#include <stdio.h>
+#include <time.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <libgen.h>
+#include <stdlib.h>
+
+/* Layout of the set-0 binding-3 append buffer written by terrain.frag. A 16-byte
+   header (count, capacity, 2x pad) precedes an array of 96-byte records. Kept in
+   sync with struct DumpRecord in shaders/terrain.frag. */
+#define SHADER_DUMP_HEADER_WORDS 4u
+#define SHADER_DUMP_RECORD_FLOATS 24u   /* six vec4s */
+typedef struct {
+    float frag[4];    /* frag_coord.xy, distance_m, cascade */
+    float cam_rel[4]; /* camera_relative_position.xyz, NoL */
+    float world[4];   /* surface_position.xyz, visibility */
+    float normal[4];  /* geometric_normal.xyz, receiver_bias */
+    float shadow[4];  /* shadow.coordinate.xyz, lod level */
+    float extra[4];   /* to_sun.xyz, grazing */
+} ShaderDumpRecord;
+_Static_assert(sizeof(ShaderDumpRecord) == SHADER_DUMP_RECORD_FLOATS * 4u,
+               "ShaderDumpRecord must match std430 DumpRecord");
+#endif
+
 /* Keep the C UBO byte-for-byte compatible with shaders/common.glsl std140. */
 _Static_assert(offsetof(FrameUniforms, projection) == 0, "FrameUniforms projection offset");
 _Static_assert(offsetof(FrameUniforms, view) == 64, "FrameUniforms view offset");
@@ -88,7 +113,7 @@ void renderer_free_material_set(Renderer *r, VkDescriptorSet set) {
    set 2 = atmosphere LUTs for graphics. Compute sees that same atmosphere set
    as set 1, avoiding duplicate descriptors. */
 static void create_descriptors(Renderer *r) {
-    VkDescriptorSetLayoutBinding frame_bindings[3] = {
+    VkDescriptorSetLayoutBinding frame_bindings[4] = {
         { .binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
           .descriptorCount = 1,
           .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT |
@@ -97,9 +122,15 @@ static void create_descriptors(Renderer *r) {
           .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT },
         { .binding = 2, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
           .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT },
+        { .binding = 3, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+          .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT },
     };
+    uint32_t frame_binding_count = 3;
+#ifdef DEBUG_SHADER_DUMP
+    frame_binding_count = 4;
+#endif
     VkDescriptorSetLayoutCreateInfo frame_layout = { .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        .bindingCount = 3, .pBindings = frame_bindings };
+        .bindingCount = frame_binding_count, .pBindings = frame_bindings };
     VK_CHECK(vkCreateDescriptorSetLayout(r->device, &frame_layout, NULL, &r->frame_set_layout));
 
     VkDescriptorSetLayoutBinding material_bindings[3] = {
@@ -140,15 +171,20 @@ static void create_descriptors(Renderer *r) {
     VK_CHECK(vkCreateDescriptorSetLayout(r->device, &atmosphere_layout, NULL,
                                          &r->atmosphere_set_layout));
 
-    VkDescriptorPoolSize pool_sizes[3] = {
+    VkDescriptorPoolSize pool_sizes[4] = {
         { .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = MAX_FRAMES_IN_FLIGHT },
         { .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
           .descriptorCount = MAX_TEXTURE_SETS * 3u +
                              MAX_FRAMES_IN_FLIGHT * 2u + 8u },
-        { .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = 5u } };
+        { .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = 5u },
+        { .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = MAX_FRAMES_IN_FLIGHT } };
+    uint32_t pool_size_count = 3;
+#ifdef DEBUG_SHADER_DUMP
+    pool_size_count = 4;
+#endif
     VkDescriptorPoolCreateInfo pool = { .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
-        .poolSizeCount = 3, .pPoolSizes = pool_sizes,
+        .poolSizeCount = pool_size_count, .pPoolSizes = pool_sizes,
         .maxSets = MAX_FRAMES_IN_FLIGHT + MAX_TEXTURE_SETS + 2u };
     VK_CHECK(vkCreateDescriptorPool(r->device, &pool, NULL, &r->descriptor_pool));
 
@@ -825,9 +861,36 @@ static void create_swapchain(Renderer *r) {
             .width = r->swapchain_extent.width, .height = r->swapchain_extent.height, .layers = 1 };
         VK_CHECK(vkCreateFramebuffer(r->device, &fb, NULL, &r->display_framebuffers[i]));
     }
+
+#ifdef DEBUG_SHADER_DUMP
+    /* One record per screen pixel is the worst case (a fully terrain-covered
+       view). Sized to the extent and recreated with the swapchain on resize. */
+    r->shader_dump_capacity = r->swapchain_extent.width * r->swapchain_extent.height;
+    VkDeviceSize dump_size = SHADER_DUMP_HEADER_WORDS * sizeof(uint32_t) +
+                             (VkDeviceSize)r->shader_dump_capacity * sizeof(ShaderDumpRecord);
+    r->shader_dump_buffer = gpu_buffer_create(r->device, r->allocator, dump_size,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    uint32_t *dump_header = r->shader_dump_buffer.allocation.mapped;
+    dump_header[0] = 0;                        /* count  */
+    dump_header[1] = r->shader_dump_capacity;  /* capacity */
+    dump_header[2] = 0;
+    dump_header[3] = 0;
+    VkDescriptorBufferInfo dump_info = { .buffer = r->shader_dump_buffer.buffer,
+        .offset = 0, .range = dump_size };
+    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+        VkWriteDescriptorSet dump_write = { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstSet = r->frame_set[i], .dstBinding = 3, .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .pBufferInfo = &dump_info };
+        vkUpdateDescriptorSets(r->device, 1, &dump_write, 0, NULL);
+    }
+#endif
 }
 
 static void destroy_swapchain(Renderer *r) {
+#ifdef DEBUG_SHADER_DUMP
+    gpu_buffer_destroy(r->device, r->allocator, &r->shader_dump_buffer);
+#endif
     renderer_free_material_set(r, r->display_set);
     r->display_set = VK_NULL_HANDLE;
     for (uint32_t i = 0; i < r->image_count; ++i)
@@ -873,6 +936,81 @@ void renderer_reload_pipeline(Renderer *r) {
     r->atmosphere_static_ready = false;
     printf("Shaders reloaded\n");
 }
+
+#ifdef DEBUG_SHADER_DUMP
+/* Create every parent directory in `path` (mkdir -p on the dirname). */
+static void ensure_parent_directory(const char *path) {
+    char *copy = strdup(path);
+    if (!copy) return;
+    char *dir = dirname(copy);
+    /* Walk the components so nested paths (debug_dumps/foo) all get created. */
+    char build[1024];
+    size_t len = strlen(dir);
+    if (len == 0 || len >= sizeof(build)) { free(copy); return; }
+    for (size_t i = 0; i <= len; ++i) {
+        if (dir[i] == '/' || dir[i] == '\0') {
+            if (i == 0) { build[0] = '/'; build[1] = '\0'; continue; }
+            memcpy(build, dir, i);
+            build[i] = '\0';
+            mkdir(build, 0755);
+        }
+    }
+    free(copy);
+}
+
+void renderer_clear_shader_dump(const char *path) {
+    ensure_parent_directory(path);
+    FILE *file = fopen(path, "w");
+    if (file) { fclose(file); printf("Cleared shader dump: %s\n", path); }
+    else fprintf(stderr, "Could not clear shader dump %s\n", path);
+}
+
+uint32_t renderer_dump_shader_data(Renderer *r, const char *path) {
+    /* The dump buffer holds the most recently submitted frame; wait for all GPU
+       work so the host read below sees complete, coherent records. */
+    vkDeviceWaitIdle(r->device);
+    const uint32_t *header = r->shader_dump_buffer.allocation.mapped;
+    uint32_t count = header[0];
+    uint32_t capacity = header[1];
+    bool truncated = count > capacity;
+    if (truncated) count = capacity;
+    const ShaderDumpRecord *records = (const ShaderDumpRecord *)(header + SHADER_DUMP_HEADER_WORDS);
+
+    ensure_parent_directory(path);
+    FILE *file = fopen(path, "a");
+    if (!file) { fprintf(stderr, "Could not open shader dump %s\n", path); return 0; }
+
+    time_t now = time(NULL);
+    char stamp[64];
+    strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", localtime(&now));
+    fprintf(file, "# dump %s  records=%u  view=%ux%u%s\n", stamp, count,
+            r->swapchain_extent.width, r->swapchain_extent.height,
+            truncated ? "  (TRUNCATED: capacity exceeded)" : "");
+    fprintf(file, "frag_x,frag_y,distance_m,cascade,"
+                  "cam_x,cam_y,cam_z,NoL,"
+                  "world_x,world_y,world_z,visibility,"
+                  "nrm_x,nrm_y,nrm_z,receiver_bias,"
+                  "shcoord_x,shcoord_y,shcoord_z,lod,"
+                  "tosun_x,tosun_y,stored_depth,grazing\n");
+    for (uint32_t i = 0; i < count; ++i) {
+        const ShaderDumpRecord *rec = &records[i];
+        fprintf(file,
+            "%.1f,%.1f,%.3f,%d,%.3f,%.3f,%.3f,%.4f,"
+            "%.3f,%.3f,%.3f,%.4f,%.4f,%.4f,%.4f,%.4f,"
+            "%.5f,%.5f,%.5f,%d,%.4f,%.4f,%.4f,%.4f\n",
+            rec->frag[0], rec->frag[1], rec->frag[2], (int)rec->frag[3],
+            rec->cam_rel[0], rec->cam_rel[1], rec->cam_rel[2], rec->cam_rel[3],
+            rec->world[0], rec->world[1], rec->world[2], rec->world[3],
+            rec->normal[0], rec->normal[1], rec->normal[2], rec->normal[3],
+            rec->shadow[0], rec->shadow[1], rec->shadow[2], (int)rec->shadow[3],
+            rec->extra[0], rec->extra[1], rec->extra[2], rec->extra[3]);
+    }
+    fclose(file);
+    printf("Wrote %u shader records to %s%s\n", count, path,
+           truncated ? " (truncated)" : "");
+    return count;
+}
+#endif
 
 static void create_command_and_sync(Renderer *r) {
     VkCommandPoolCreateInfo pool = { .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -1046,6 +1184,22 @@ static void record_commands(Renderer *r, uint32_t image_index,
         vkCmdEndRenderPass(command);
     }
 
+#ifdef DEBUG_SHADER_DUMP
+    /* Zero the record counter before the scene pass so the buffer holds exactly
+       this frame's fragments. Queue submits are serialised, so the previous
+       frame's writes are complete before this fill runs. */
+    vkCmdFillBuffer(command, r->shader_dump_buffer.buffer, 0, sizeof(uint32_t), 0);
+    VkBufferMemoryBarrier dump_reset_barrier = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+        .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .buffer = r->shader_dump_buffer.buffer, .offset = 0, .size = VK_WHOLE_SIZE };
+    vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, NULL, 1, &dump_reset_barrier, 0, NULL);
+#endif
+
     VkClearValue scene_clear[2] = {
         {.color = {{0.018f, 0.024f, 0.035f, 1.0f}}},
         {.depthStencil = {0.0f, 0}}
@@ -1066,6 +1220,19 @@ static void record_commands(Renderer *r, uint32_t image_index,
     for (uint32_t i = 0; i < draw_count; ++i)
         bind_draw(r, command, &draws[i], &draws[i].push);
     vkCmdEndRenderPass(command);
+
+#ifdef DEBUG_SHADER_DUMP
+    /* Make the fragment-shader writes visible to a host read after the fence. */
+    VkBufferMemoryBarrier dump_host_barrier = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+        .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .buffer = r->shader_dump_buffer.buffer, .offset = 0, .size = VK_WHOLE_SIZE };
+    vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        VK_PIPELINE_STAGE_HOST_BIT, 0, 0, NULL, 1, &dump_host_barrier, 0, NULL);
+#endif
 
     VkClearValue display_clear = {.color = {{0.0f, 0.0f, 0.0f, 1.0f}}};
     VkRenderPassBeginInfo display = { .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,

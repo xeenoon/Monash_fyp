@@ -3,6 +3,12 @@ project(terrain_renderer C)
 
 include(CTest)
 
+# Debug-only diagnostic: terrain.frag writes a per-fragment record buffer that the
+# 'X' key dumps to a CSV file (cleared with 'C' or a clean build). Off by default;
+# enable with -DDEBUG_SHADER_DUMP=ON. See renderer_dump_shader_data.
+option(DEBUG_SHADER_DUMP "Enable the 'X'-key per-fragment shader data dump" OFF)
+set(SHADER_DUMP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/debug_dumps")
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -29,6 +35,9 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(GLSLC_FLAGS -g -O0)
 else()
     set(GLSLC_FLAGS -O)
+endif()
+if(DEBUG_SHADER_DUMP)
+    list(APPEND GLSLC_FLAGS -DDEBUG_SHADER_DUMP)
 endif()
 
 # Explicit shader permutation list. Add permutations here rather than growing
@@ -95,6 +104,13 @@ target_compile_definitions(terrain_renderer PRIVATE
     ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets"
     TRN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/trn"
     CGLM_FORCE_DEPTH_ZERO_TO_ONE)
+if(DEBUG_SHADER_DUMP)
+    target_compile_definitions(terrain_renderer PRIVATE
+        DEBUG_SHADER_DUMP
+        SHADER_DUMP_PATH="${SHADER_DUMP_DIR}/shader_dump.txt")
+    # A clean build wipes accumulated dumps, as does the in-app 'C' key.
+    set_directory_properties(PROPERTIES ADDITIONAL_CLEAN_FILES "${SHADER_DUMP_DIR}")
+endif()
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(terrain_renderer PRIVATE -Wall -Wextra -Wpedantic)
@@ -139,6 +155,11 @@ if(BUILD_TESTING)
                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/phase3_tests.py"
                 --tool "${CMAKE_CURRENT_SOURCE_DIR}/tools/terrain_tiles.py"
                 --loader "$<TARGET_FILE:phase3_tile_loader_tests>")
+
+    add_test(NAME swiss_infrastructure_masks
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/mask_swiss_infrastructure_tests.py"
+                --tool "${CMAKE_CURRENT_SOURCE_DIR}/tools/mask_swiss_infrastructure.py")
 
     add_executable(phase4_quadtree_tests
         tests/phase4_quadtree_tests.c
