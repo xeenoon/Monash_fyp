@@ -45,7 +45,9 @@ endif()
 # are picked up automatically via the per-shader depfile below, so editing an
 # include rebuilds every dependent shader.
 foreach(SHADER cube.vert cube.frag terrain.vert terrain.frag shadow.vert
-               fullscreen.vert tonemap.frag atmosphere_transmittance.comp
+               fullscreen.vert tonemap.frag atmosphere_composite.frag
+               temporal_resolve.frag luminance_histogram.comp exposure.comp
+               atmosphere_transmittance.comp
                atmosphere_multiscattering.comp atmosphere_skyview.comp
                atmosphere_aerial.comp)
     add_custom_command(
@@ -84,6 +86,7 @@ add_executable(terrain_renderer
     src/gpu_buffer.c
     src/upload.c
     src/mesh.c
+    src/quarry.c
     src/terrain_tile.c
     src/terrain_grid.c
     src/terrain_quadtree.c
@@ -92,6 +95,7 @@ add_executable(terrain_renderer
     src/surface_detail.c
     src/shadow_cascade.c
     src/atmosphere.c
+    src/temporal.c
     src/texture.c
     src/renderer.c
     include/stb_image.c)
@@ -102,6 +106,7 @@ target_link_libraries(terrain_renderer PRIVATE
 target_compile_definitions(terrain_renderer PRIVATE
     SHADER_DIR="${SHADER_OUTPUT_DIR}"
     ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets"
+    QUARRY_DIR="${CMAKE_CURRENT_SOURCE_DIR}/valley-of-the-ancient"
     TRN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/trn"
     CGLM_FORCE_DEPTH_ZERO_TO_ONE)
 if(DEBUG_SHADER_DUMP)
@@ -161,6 +166,11 @@ if(BUILD_TESTING)
                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/mask_swiss_infrastructure_tests.py"
                 --tool "${CMAKE_CURRENT_SOURCE_DIR}/tools/mask_swiss_infrastructure.py")
 
+    add_test(NAME swiss_alps_downloader
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/download_swiss_alps_tests.py"
+                --tool "${CMAKE_CURRENT_SOURCE_DIR}/tools/download_swiss_alps.py")
+
     add_executable(phase4_quadtree_tests
         tests/phase4_quadtree_tests.c
         src/terrain_quadtree.c
@@ -210,4 +220,17 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME phase7_physical_sky_and_aerial_perspective
              COMMAND phase7_atmosphere_tests)
+
+    add_executable(phase8_temporal_tests
+        tests/phase8_temporal_tests.c
+        src/temporal.c)
+    target_include_directories(phase8_temporal_tests PRIVATE src)
+    target_link_libraries(phase8_temporal_tests PRIVATE cglm::cglm m)
+    target_compile_definitions(phase8_temporal_tests PRIVATE
+        CGLM_FORCE_DEPTH_ZERO_TO_ONE)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(phase8_temporal_tests PRIVATE
+            -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME phase8_motion_taa_and_exposure COMMAND phase8_temporal_tests)
 endif()
