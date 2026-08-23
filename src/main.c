@@ -53,6 +53,7 @@ int main(void) {
     unsigned relight_mode = 1;
     unsigned sun_mode = 0;
     unsigned atmosphere_slice = 15;
+    bool use_default_lit = true;
     AtmosphereParameters atmosphere = atmosphere_earth();
     bool running = true;
 #ifdef DEBUG_SHADER_DUMP
@@ -76,6 +77,13 @@ int main(void) {
         input_poll(&input, window);
         unsigned previous_debug_mode = debug_mode;
         if (input.quit) running = false;
+        if (input.toggle_quarry_shading) {
+            use_default_lit = !use_default_lit;
+            printf("Quarry renderer: %s\n", use_default_lit
+                ? "Unreal Default Lit (Phase A)"
+                : "legacy PBR");
+            history_valid = false;
+        }
         if (input.reload_shaders) {
             renderer_reload_pipeline(&renderer);
             history_valid = false;
@@ -140,6 +148,8 @@ int main(void) {
         DrawPushConstants quarry_push = {
             .local_to_camera_relative = coordinate_local_to_camera_relative(
                 &quarry.base.local_to_world, camera.position),
+            .material = {{quarry.metallic_factor,
+                          use_default_lit ? 1.0f : 0.0f, 0.0f, 0.0f}},
             .debug = {{0.0f, 0.0f, 0.0f, 0.0f}},
         };
         RendererDraw quarry_draw = {.mesh = &quarry.base, .push = quarry_push};

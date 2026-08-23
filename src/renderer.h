@@ -62,7 +62,10 @@ typedef struct {
     mat4s local_to_camera_relative;
     vec4s geometry;      /* tile span X/Z, elevation range, skirt depth */
     vec4s elevation_uv;  /* scale U/V, bias U/V into the guttered raster */
-    vec4s imagery_uv;    /* scale U/V, bias U/V into the guttered image  */
+    union {
+        vec4s imagery_uv; /* terrain: scale U/V, bias U/V into imagery */
+        vec4s material;   /* static mesh: metallic factor, shading mode */
+    };
     vec4s debug;         /* LOD and XYZ surface-texture world phase */
 } DrawPushConstants;
 

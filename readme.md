@@ -53,6 +53,8 @@ in [`docs/phase5_surface_quality.md`](docs/phase5_surface_quality.md) and
 [`docs/phase6_hdr_lighting_shadows.md`](docs/phase6_hdr_lighting_shadows.md).
 The physical sky, atmosphere LUTs, and depth-aware aerial composite are covered
 in [`docs/phase7_physical_sky.md`](docs/phase7_physical_sky.md).
+Motion vectors, temporal AA, history invalidation, and adaptive exposure are in
+[`docs/phase8_temporal_aa_exposure.md`](docs/phase8_temporal_aa_exposure.md).
 
 For a large Swiss-Alps source cache, use
 [`tools/download_swiss_alps.py`](tools/download_swiss_alps.py). It obtains 2 m
@@ -68,6 +70,8 @@ building any natural-only `.trn` dataset.
 - Mouse: look around
 - W/A/S/D: move relative to the direction you are looking
 - Left Shift: move faster
+- F3: toggle legacy Quarry PBR and Unreal Default Lit shading
+- F4: cycle TAA history-weight, rejection, motion, and clamp views
 - F6: toggle logarithmic linear-depth debug view
 - F7: toggle quadtree LOD colours
 - F8: cycle unlit, subtle relight, and full material lighting

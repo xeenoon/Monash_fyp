@@ -41,7 +41,7 @@ Atmosphere reference:
 | `atmosphere_multiscattering.comp` | Wicked/Unreal multi-scattering pass | sphere estimator and geometric-series closure; 4x4 directions replace Wicked's 8x8 group reduction |
 | `atmosphere_skyview.comp` | Wicked/Unreal sky-view pass | non-linear view mapping and 30-sample integration |
 | `atmosphere_aerial.comp` | Wicked camera-volume pass | camera-ray froxels, squared depth distribution, depth-limited integration |
-| `shaders/tonemap.frag` | Wicked `GetSunLuminance`, camera-volume sampling, and aerial composite | finite sun disk, depth reconstruction, atmosphere-before-tone-map ordering |
+| `shaders/atmosphere_composite.frag` | Wicked `GetSunLuminance`, camera-volume sampling, and aerial composite | finite sun disk, depth reconstruction, atmosphere-before-tone-map ordering |
 
 Engine-specific bindless resources, cloud/opaque volumetric shadows, weather
 objects, stars, and the high-quality per-pixel fallback were intentionally not

@@ -2,8 +2,10 @@
 /trn/
 /alps-data/
 /inspo/
+/valley-of-the-ancient/
 /tools/*.txt
 /.claude/
+/debug_dumps/
 
 # Python bytecode caches.
 __pycache__/

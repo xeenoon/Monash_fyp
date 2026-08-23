@@ -11,6 +11,9 @@ typedef struct {
     Mesh base;
     Vertex *owned_vertices;
     uint32_t *owned_indices;
+    /* Scalar declared by the GLB material; multiplied by ORM blue in the
+       forward shader instead of treating the texture as metallic by itself. */
+    float metallic_factor;
 } Quarry;
 
 bool quarry_create(struct Renderer *renderer, Quarry *out, const char *directory);

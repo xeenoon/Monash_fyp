@@ -9,6 +9,7 @@
 
 enum { QUARRY_VERTICES = 10801, QUARRY_INDICES = 60003 };
 enum { GLB_HEADER_BYTES = 12, GLB_CHUNK_HEADER_BYTES = 8 };
+static const float QUARRY_METALLIC_FACTOR = 0.0f;
 enum { QUARRY_INDICES_OFFSET = 0, QUARRY_UV_OFFSET = 240012,
        QUARRY_POSITION_OFFSET = 326420, QUARRY_NORMAL_OFFSET = 456032,
        QUARRY_TANGENT_OFFSET = 585644 };
@@ -77,6 +78,7 @@ bool quarry_create(struct Renderer *renderer, Quarry *out, const char *directory
         .indices = out->owned_indices, .index_count = QUARRY_INDICES,
         .texture_path = copy_string(albedo_path), .orm_path = copy_string(orm_path),
         .normal_path = copy_string(normal_path)};
+    out->metallic_factor = QUARRY_METALLIC_FACTOR;
     if (!out->base.texture_path || !out->base.orm_path || !out->base.normal_path) {
         quarry_destroy(renderer, out); return false;
     }

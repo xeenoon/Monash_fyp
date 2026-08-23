@@ -9,6 +9,7 @@ typedef struct {
     bool  sprint;                   /* shift held              */
     bool  quit;                     /* window close / escape   */
     bool  resized;                  /* framebuffer size change */
+    bool  toggle_quarry_shading;    /* F3 pressed this frame   */
     bool  cycle_temporal_debug;     /* F4 pressed this frame   */
     bool  reload_shaders;           /* F5 pressed this frame   */
     bool  toggle_depth_debug;       /* F6 pressed this frame   */
