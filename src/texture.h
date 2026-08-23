@@ -1,8 +1,8 @@
 #pragma once
 
-#include <vulkan/vulkan.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <vulkan/vulkan.h>
 
 #include "gpu_memory.h"
 
@@ -14,18 +14,19 @@ struct UploadContext;
    one texture_destroy. Sampling imagery, single-channel elevation, HDR colour
    targets, and depth targets are all built from the same struct via the helpers
    below. */
-typedef struct {
-    VkImage            image;
-    GpuAllocation      allocation;
-    VkImageView        view;
-    VkSampler          sampler;      /* VK_NULL_HANDLE for non-sampled targets */
-    VkFormat           format;
-    VkExtent2D         extent;
-    uint32_t           mip_levels;
-    uint32_t           array_layers;
-    VkImageUsageFlags  usage;
-    VkImageAspectFlags aspect;
-    VkImageLayout      layout;       /* current layout, updated by uploads     */
+typedef struct
+{
+	VkImage image;
+	GpuAllocation allocation;
+	VkImageView view;
+	VkSampler sampler; /* VK_NULL_HANDLE for non-sampled targets */
+	VkFormat format;
+	VkExtent2D extent;
+	uint32_t mip_levels;
+	uint32_t array_layers;
+	VkImageUsageFlags usage;
+	VkImageAspectFlags aspect;
+	VkImageLayout layout; /* current layout, updated by uploads     */
 } Texture;
 
 /* Sampler + image creation policy. Zeroed fields take sensible defaults:
@@ -33,19 +34,20 @@ typedef struct {
    filter 0 is NEAREST so callers usually set LINEAR, max_anisotropy 0 disables
    anisotropy, and compare_enable creates a depth-comparison sampler using
    compare_op. Set create_sampler=false for render-only attachments. */
-typedef struct {
-    VkFormat             format;
-    uint32_t             width, height;
-    uint32_t             mip_levels;
-    uint32_t             array_layers;
-    VkImageUsageFlags    usage;
-    VkImageAspectFlags   aspect;
-    VkFilter             filter;
-    VkSamplerAddressMode address_mode;
-    float                max_anisotropy;
-    bool                 create_sampler;
-    bool                 compare_enable;
-    VkCompareOp          compare_op;
+typedef struct
+{
+	VkFormat format;
+	uint32_t width, height;
+	uint32_t mip_levels;
+	uint32_t array_layers;
+	VkImageUsageFlags usage;
+	VkImageAspectFlags aspect;
+	VkFilter filter;
+	VkSamplerAddressMode address_mode;
+	float max_anisotropy;
+	bool create_sampler;
+	bool compare_enable;
+	VkCompareOp compare_op;
 } TextureDesc;
 
 /* Create image + view (+ optional sampler). No pixel data; layout is UNDEFINED. */
@@ -58,57 +60,52 @@ uint32_t texture_mip_levels(uint32_t width, uint32_t height);
    upload it through `upload`. `max_anisotropy` is clamped by the caller to the
    device limit (0 disables). */
 void texture_load(VkDevice device, GpuAllocator *allocator, struct UploadContext *upload,
-                  Texture *t, const char *path, float max_anisotropy);
+				  Texture *t, const char *path, float max_anisotropy);
 /* Identical decoding/upload path but a linear UNORM image for data textures
    such as metallic/roughness/AO and tangent-space normals. */
-void texture_load_linear(VkDevice device, GpuAllocator *allocator,
-                         struct UploadContext *upload, Texture *t,
-                         const char *path, float max_anisotropy);
+void texture_load_linear(VkDevice device, GpuAllocator *allocator, struct UploadContext *upload,
+						 Texture *t, const char *path, float max_anisotropy);
 
 /* 1x1 opaque-white sRGB texture used as the fallback for untextured meshes. */
-void texture_create_white(VkDevice device, GpuAllocator *allocator,
-                          struct UploadContext *upload, Texture *t);
+void texture_create_white(VkDevice device, GpuAllocator *allocator, struct UploadContext *upload,
+						  Texture *t);
 
 /* Sampled single-channel R16_UNORM elevation texture, uploaded from `heights`
    (width*height uint16 texels). Address mode clamps to edge; no mips. */
-void texture_create_elevation(VkDevice device, GpuAllocator *allocator, struct UploadContext *upload,
-                              Texture *t, const uint16_t *heights, uint32_t width, uint32_t height);
+void texture_create_elevation(VkDevice device, GpuAllocator *allocator,
+							  struct UploadContext *upload, Texture *t, const uint16_t *heights,
+							  uint32_t width, uint32_t height);
 
 /* Shared linear RGBA detail map: tangent normal in RG and macro noise in BA. */
 void texture_create_terrain_detail(VkDevice device, GpuAllocator *allocator,
-                                   struct UploadContext *upload, Texture *t,
-                                   float max_anisotropy);
+								   struct UploadContext *upload, Texture *t, float max_anisotropy);
 
 /* HDR (RGBA16_SFLOAT) colour target, usable as colour attachment and sampled. */
-Texture texture_create_hdr_target(VkDevice device, GpuAllocator *allocator,
-                                  uint32_t width, uint32_t height);
+Texture texture_create_hdr_target(VkDevice device, GpuAllocator *allocator, uint32_t width,
+								  uint32_t height);
 
 /* Phase-8 full-resolution temporal attachments. Colour/history use RGBA16F;
    motion uses RG16F and history depth uses a colour-sampleable R32F target. */
-Texture texture_create_motion_target(VkDevice device, GpuAllocator *allocator,
-                                     uint32_t width, uint32_t height);
-Texture texture_create_history_depth_target(VkDevice device,
-                                            GpuAllocator *allocator,
-                                            uint32_t width, uint32_t height);
+Texture texture_create_motion_target(VkDevice device, GpuAllocator *allocator, uint32_t width,
+									 uint32_t height);
+Texture texture_create_history_depth_target(VkDevice device, GpuAllocator *allocator,
+											uint32_t width, uint32_t height);
 
 /* Depth target with the given format, usable as depth attachment. */
-Texture texture_create_depth_target(VkDevice device, GpuAllocator *allocator,
-                                    VkFormat format, uint32_t width, uint32_t height);
+Texture texture_create_depth_target(VkDevice device, GpuAllocator *allocator, VkFormat format,
+									uint32_t width, uint32_t height);
 
 /* Sampleable scene depth for the depth-clamped atmosphere composite. */
 Texture texture_create_sampled_depth_target(VkDevice device, GpuAllocator *allocator,
-                                            VkFormat format, uint32_t width,
-                                            uint32_t height);
+											VkFormat format, uint32_t width, uint32_t height);
 
 /* Linear RGBA16F storage/sampled LUT. Layers > 1 form a 2D-array volume so the
    same general texture abstraction can hold the aerial-perspective froxels. */
-Texture texture_create_atmosphere_lut(VkDevice device, GpuAllocator *allocator,
-                                     uint32_t width, uint32_t height,
-                                     uint32_t layers);
+Texture texture_create_atmosphere_lut(VkDevice device, GpuAllocator *allocator, uint32_t width,
+									  uint32_t height, uint32_t layers);
 
 /* Sampleable depth-array target used by cascaded directional shadows. */
-Texture texture_create_shadow_array(VkDevice device, GpuAllocator *allocator,
-                                    VkFormat format, uint32_t resolution,
-                                    uint32_t layers);
+Texture texture_create_shadow_array(VkDevice device, GpuAllocator *allocator, VkFormat format,
+									uint32_t resolution, uint32_t layers);
 
 void texture_destroy(VkDevice device, GpuAllocator *allocator, Texture *t);

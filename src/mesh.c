@@ -7,77 +7,90 @@
 
 /* Create a device-local buffer and stage `src` into it through the renderer's
    reusable upload context. The batch is opened/submitted by the caller. */
-static GpuBuffer device_buffer(struct Renderer *r, VkDeviceSize size,
-                               VkBufferUsageFlags usage, const void *src) {
-    GpuBuffer buffer = gpu_buffer_create(r->device, r->allocator, size,
-        usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    upload_buffer(r->upload, &buffer, 0, src, size);
-    return buffer;
+static GpuBuffer device_buffer(struct Renderer *r, VkDeviceSize size, VkBufferUsageFlags usage,
+							   const void *src)
+{
+	GpuBuffer buffer =
+		gpu_buffer_create(r->device, r->allocator, size, usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+						  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	upload_buffer(r->upload, &buffer, 0, src, size);
+	return buffer;
 }
 
-void mesh_upload(struct Renderer *r, Mesh *mesh) {
-    upload_begin(r->upload);
-    mesh->vertex_buffer = device_buffer(r, sizeof(Vertex) * mesh->vertex_count,
-        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, mesh->vertices);
-    if (mesh->index_count)
-        mesh->index_buffer = device_buffer(r, sizeof(uint32_t) * mesh->index_count,
-            VK_BUFFER_USAGE_INDEX_BUFFER_BIT, mesh->indices);
-    upload_submit(r->upload);
+void mesh_upload(struct Renderer *r, Mesh *mesh)
+{
+	upload_begin(r->upload);
+	mesh->vertex_buffer = device_buffer(r, sizeof(Vertex) * mesh->vertex_count,
+										VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, mesh->vertices);
+	if (mesh->index_count)
+		mesh->index_buffer = device_buffer(r, sizeof(uint32_t) * mesh->index_count,
+										   VK_BUFFER_USAGE_INDEX_BUFFER_BIT, mesh->indices);
+	upload_submit(r->upload);
 
-    if (mesh->texture_path) {
-        texture_load(r->device, r->allocator, r->upload, &mesh->texture,
-                     mesh->texture_path, r->max_anisotropy);
-        if (mesh->orm_path && mesh->normal_path) {
-            texture_load_linear(r->device, r->allocator, r->upload, &mesh->orm,
-                                mesh->orm_path, r->max_anisotropy);
-            texture_load_linear(r->device, r->allocator, r->upload,
-                                &mesh->normal_map, mesh->normal_path,
-                                r->max_anisotropy);
-            mesh->material_set = renderer_allocate_pbr_set(r, &mesh->texture,
-                                                             &mesh->orm,
-                                                             &mesh->normal_map);
-        } else {
-            mesh->material_set = renderer_allocate_material_set(r, mesh->texture.view,
-                                                                 mesh->texture.sampler);
-        }
-    }
+	if (mesh->texture_path)
+	{
+		texture_load(r->device, r->allocator, r->upload, &mesh->texture, mesh->texture_path,
+					 r->max_anisotropy);
+		if (mesh->orm_path && mesh->normal_path)
+		{
+			texture_load_linear(r->device, r->allocator, r->upload, &mesh->orm, mesh->orm_path,
+								r->max_anisotropy);
+			texture_load_linear(r->device, r->allocator, r->upload, &mesh->normal_map,
+								mesh->normal_path, r->max_anisotropy);
+			mesh->material_set =
+				renderer_allocate_pbr_set(r, &mesh->texture, &mesh->orm, &mesh->normal_map);
+		}
+		else
+		{
+			mesh->material_set =
+				renderer_allocate_material_set(r, mesh->texture.view, mesh->texture.sampler);
+		}
+	}
 }
 
-void mesh_destroy(struct Renderer *r, Mesh *mesh) {
-    if (mesh->material_set)
-        renderer_free_material_set(r, mesh->material_set);
-    gpu_buffer_destroy(r->device, r->allocator, &mesh->vertex_buffer);
-    if (mesh->index_count)
-        gpu_buffer_destroy(r->device, r->allocator, &mesh->index_buffer);
-    if (mesh->texture_path)
-        texture_destroy(r->device, r->allocator, &mesh->texture);
-    if (mesh->orm_path) texture_destroy(r->device, r->allocator, &mesh->orm);
-    if (mesh->normal_path) texture_destroy(r->device, r->allocator, &mesh->normal_map);
+void mesh_destroy(struct Renderer *r, Mesh *mesh)
+{
+	if (mesh->material_set)
+		renderer_free_material_set(r, mesh->material_set);
+	gpu_buffer_destroy(r->device, r->allocator, &mesh->vertex_buffer);
+	if (mesh->index_count)
+		gpu_buffer_destroy(r->device, r->allocator, &mesh->index_buffer);
+	if (mesh->texture_path)
+		texture_destroy(r->device, r->allocator, &mesh->texture);
+	if (mesh->orm_path)
+		texture_destroy(r->device, r->allocator, &mesh->orm);
+	if (mesh->normal_path)
+		texture_destroy(r->device, r->allocator, &mesh->normal_map);
 }
 
-void mesh_draw(VkCommandBuffer cmd, const Mesh *mesh) {
-    VkDeviceSize offset = 0;
-    vkCmdBindVertexBuffers(cmd, 0, 1, &mesh->vertex_buffer.buffer, &offset);
-    if (mesh->index_count) {
-        vkCmdBindIndexBuffer(cmd, mesh->index_buffer.buffer, 0, VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(cmd, mesh->index_count, 1, 0, 0, 0);
-    } else {
-        vkCmdDraw(cmd, mesh->vertex_count, 1, 0, 0);
-    }
+void mesh_draw(VkCommandBuffer cmd, const Mesh *mesh)
+{
+	VkDeviceSize offset = 0;
+	vkCmdBindVertexBuffers(cmd, 0, 1, &mesh->vertex_buffer.buffer, &offset);
+	if (mesh->index_count)
+	{
+		vkCmdBindIndexBuffer(cmd, mesh->index_buffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+		vkCmdDrawIndexed(cmd, mesh->index_count, 1, 0, 0, 0);
+	}
+	else
+	{
+		vkCmdDraw(cmd, mesh->vertex_count, 1, 0, 0);
+	}
 }
 
-VkVertexInputBindingDescription mesh_binding_description(void) {
-    return (VkVertexInputBindingDescription){0, sizeof(Vertex), VK_VERTEX_INPUT_RATE_VERTEX};
+VkVertexInputBindingDescription mesh_binding_description(void)
+{
+	return (VkVertexInputBindingDescription){0, sizeof(Vertex), VK_VERTEX_INPUT_RATE_VERTEX};
 }
 
-const VkVertexInputAttributeDescription *mesh_attribute_descriptions(uint32_t *count) {
-    static const VkVertexInputAttributeDescription attributes[5] = {
-        {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, position)},
-        {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, normal)},
-        {2, 0, VK_FORMAT_R32G32_SFLOAT,    offsetof(Vertex, texcoord)},
-        {3, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(Vertex, tangent)},
-        {4, 0, VK_FORMAT_R32_SFLOAT, offsetof(Vertex, untextured)}
-    };
-    *count = 4;
-    return attributes;
+const VkVertexInputAttributeDescription *mesh_attribute_descriptions(uint32_t *count)
+{
+	static const VkVertexInputAttributeDescription attributes[5] = {
+		{0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, position)},
+		{1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, normal)},
+		{2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(Vertex, texcoord)},
+		{3, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(Vertex, tangent)},
+		{4, 0, VK_FORMAT_R32_SFLOAT, offsetof(Vertex, untextured)}};
+	*count = 4;
+	return attributes;
 }
