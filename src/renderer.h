@@ -44,7 +44,17 @@ typedef struct {
     vec4s atmosphere_absorption;
     vec4s atmosphere_ground;
     vec4s atmosphere_options;
+    vec4s temporal_parameters; /* history valid, dt, sRGB swapchain, reserved */
+    vec4s temporal_jitter;     /* current NDC xy, previous NDC xy */
 } FrameUniforms;
+
+typedef struct {
+    float exposure;
+    float average_luminance;
+    uint32_t sample_count;
+    uint32_t padding;
+    uint32_t histogram[256];
+} TemporalExposure;
 
 /* Exactly 128 bytes, the Vulkan minimum guaranteed push-constant capacity.
    This is tile/draw data; camera and lighting remain in the frame UBO. */
@@ -86,32 +96,48 @@ typedef struct Renderer {
     VkFramebuffer *display_framebuffers;
     Texture depth;
     Texture hdr_color;
+    Texture motion;
+    Texture composite_color;
+    Texture taa_history[2];
+    Texture taa_history_depth[2];
     VkFramebuffer scene_framebuffer;
+    VkFramebuffer composite_framebuffer;
+    VkFramebuffer taa_framebuffers[2];
 
     /* Descriptor roles. Set 0 is frame data plus the shared shadow array; set
-       1 is terrain material or HDR/depth display input; set 2 supplies shared
-       atmosphere LUTs. Compute aliases the atmosphere layout at set 1. */
+       1 is terrain material, scene composite input, or temporal history; set 2
+       supplies shared atmosphere LUTs. Compute uses the matching set-1 layout. */
     VkDescriptorSetLayout frame_set_layout;     /* set 0 */
     VkDescriptorSetLayout material_set_layout;  /* set 1 */
     VkDescriptorSetLayout display_set_layout;   /* tone-map set 1 */
+    VkDescriptorSetLayout temporal_set_layout;  /* TAA/exposure set 1 */
     VkDescriptorSetLayout atmosphere_set_layout;/* graphics set 2 / compute set 1 */
     VkDescriptorPool descriptor_pool;
     GpuBuffer       frame_ubo[MAX_FRAMES_IN_FLIGHT];
+    GpuBuffer       exposure_buffer;
     VkDescriptorSet frame_set[MAX_FRAMES_IN_FLIGHT];
     Texture         fallback_texture;
     Texture         terrain_detail_texture;
     VkDescriptorSet fallback_material_set;
     VkDescriptorSet display_set;
+    VkDescriptorSet temporal_set[2];
     VkDescriptorSet atmosphere_set;
 
     VkRenderPass scene_render_pass;
     VkRenderPass display_render_pass;
+    VkRenderPass composite_render_pass;
+    VkRenderPass taa_render_pass;
     VkRenderPass shadow_render_pass;
     VkPipelineLayout pipeline_layout;
     VkPipelineLayout display_pipeline_layout;
+    VkPipelineLayout temporal_pipeline_layout;
     VkPipelineLayout atmosphere_pipeline_layout;
     VkPipeline terrain_pipeline;
     VkPipeline tone_map_pipeline;
+    VkPipeline atmosphere_composite_pipeline;
+    VkPipeline taa_pipeline;
+    VkPipeline luminance_histogram_pipeline;
+    VkPipeline exposure_pipeline;
     VkPipeline shadow_pipeline;
     VkPipeline atmosphere_transmittance_pipeline;
     VkPipeline atmosphere_multiscattering_pipeline;
@@ -133,6 +159,8 @@ typedef struct Renderer {
     VkSemaphore render_finished[MAX_FRAMES_IN_FLIGHT];
     VkFence in_flight[MAX_FRAMES_IN_FLIGHT];
     uint32_t frame;
+    uint32_t history_index;
+    bool temporal_history_valid;
 #ifdef DEBUG_SHADER_DUMP
     /* Debug-only append buffer: terrain.frag writes one record per shaded
        terrain fragment (set 0, binding 3). Sized to the swapchain extent and
@@ -159,6 +187,8 @@ void renderer_draw_frame(Renderer *r, const FrameUniforms *frame,
 /* Allocate a set-1 combined-image-sampler descriptor set bound to view+sampler.
    Meshes call this in mesh_upload to get a material set they can bind. */
 VkDescriptorSet renderer_allocate_material_set(Renderer *r, VkImageView view, VkSampler sampler);
+VkDescriptorSet renderer_allocate_pbr_set(Renderer *r, const Texture *albedo,
+                                          const Texture *orm, const Texture *normal_map);
 VkDescriptorSet renderer_allocate_terrain_set(Renderer *r,
     VkImageView albedo_view, VkSampler albedo_sampler,
     VkImageView elevation_view, VkSampler elevation_sampler);

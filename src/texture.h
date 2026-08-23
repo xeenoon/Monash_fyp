@@ -59,6 +59,11 @@ uint32_t texture_mip_levels(uint32_t width, uint32_t height);
    device limit (0 disables). */
 void texture_load(VkDevice device, GpuAllocator *allocator, struct UploadContext *upload,
                   Texture *t, const char *path, float max_anisotropy);
+/* Identical decoding/upload path but a linear UNORM image for data textures
+   such as metallic/roughness/AO and tangent-space normals. */
+void texture_load_linear(VkDevice device, GpuAllocator *allocator,
+                         struct UploadContext *upload, Texture *t,
+                         const char *path, float max_anisotropy);
 
 /* 1x1 opaque-white sRGB texture used as the fallback for untextured meshes. */
 void texture_create_white(VkDevice device, GpuAllocator *allocator,
@@ -77,6 +82,14 @@ void texture_create_terrain_detail(VkDevice device, GpuAllocator *allocator,
 /* HDR (RGBA16_SFLOAT) colour target, usable as colour attachment and sampled. */
 Texture texture_create_hdr_target(VkDevice device, GpuAllocator *allocator,
                                   uint32_t width, uint32_t height);
+
+/* Phase-8 full-resolution temporal attachments. Colour/history use RGBA16F;
+   motion uses RG16F and history depth uses a colour-sampleable R32F target. */
+Texture texture_create_motion_target(VkDevice device, GpuAllocator *allocator,
+                                     uint32_t width, uint32_t height);
+Texture texture_create_history_depth_target(VkDevice device,
+                                            GpuAllocator *allocator,
+                                            uint32_t width, uint32_t height);
 
 /* Depth target with the given format, usable as depth attachment. */
 Texture texture_create_depth_target(VkDevice device, GpuAllocator *allocator,

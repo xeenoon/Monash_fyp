@@ -14,6 +14,8 @@ typedef struct {
     TerrainTile tile;
     Texture elevation;
     UploadTicket upload;
+    uint64_t last_visible_draw_frame;
+    bool has_visible_history;
 } RuntimeTile;
 
 struct TerrainRuntime {
@@ -253,7 +255,8 @@ static void raster_uv(uint32_t size, uint32_t gutter, vec4s *out) {
 }
 
 static bool fill_draw(TerrainRuntime *terrain, const TerrainQuadtreeView *view,
-                      uint32_t node_index, RendererDraw *draw) {
+                      uint32_t node_index, bool temporal_valid,
+                      RendererDraw *draw) {
     TerrainQuadNode *node = &terrain->tree.nodes[node_index];
     RuntimeTile *runtime_tile = node->payload;
     if (!runtime_tile) return false;
@@ -275,7 +278,8 @@ static bool fill_draw(TerrainRuntime *terrain, const TerrainQuadtreeView *view,
        close-detail continuity at Earth-sized projected coordinates. */
     const double phase_period_m = 4096.0;
     draw->push.debug = (vec4s){{
-        (float)node->key.level,
+        temporal_valid ? (float)node->key.level
+                       : -(float)(node->key.level + 1u),
         surface_detail_phase(tile->header.local_to_world.translation.x,
                              phase_period_m),
         surface_detail_phase(tile->header.local_to_world.translation.y,
@@ -287,16 +291,24 @@ static bool fill_draw(TerrainRuntime *terrain, const TerrainQuadtreeView *view,
 }
 
 static void build_draws(TerrainRuntime *terrain,
-                        const TerrainQuadtreeView *view) {
+                        const TerrainQuadtreeView *view, uint64_t frame) {
     terrain->draw_count = 0;
-    for (uint32_t i = 0; i < terrain->tree.draw_count; ++i)
-        if (fill_draw(terrain, view, terrain->tree.draw_nodes[i],
-                      &terrain->draws[terrain->draw_count]))
+    for (uint32_t i = 0; i < terrain->tree.draw_count; ++i) {
+        uint32_t node_index = terrain->tree.draw_nodes[i];
+        RuntimeTile *tile = terrain->tree.nodes[node_index].payload;
+        bool temporal_valid = tile && tile->has_visible_history &&
+                              tile->last_visible_draw_frame + 1u == frame;
+        if (fill_draw(terrain, view, node_index, temporal_valid,
+                      &terrain->draws[terrain->draw_count])) {
             terrain->draw_count++;
+            tile->last_visible_draw_frame = frame;
+            tile->has_visible_history = true;
+        }
+    }
 
     terrain->shadow_draw_count = 0;
     for (uint32_t i = 0; i < terrain->tree.shadow_count; ++i)
-        if (fill_draw(terrain, view, terrain->tree.shadow_nodes[i],
+        if (fill_draw(terrain, view, terrain->tree.shadow_nodes[i], true,
                       &terrain->shadow_draws[terrain->shadow_draw_count]))
             terrain->shadow_draw_count++;
 }
@@ -400,7 +412,7 @@ void terrain_runtime_update(TerrainRuntime *terrain,
     /* Casters are collected after streaming so newly-resident tiles are included;
        the collection ignores camera orientation to keep shadows view-stable. */
     terrain_quadtree_collect_casters(&terrain->tree, view);
-    build_draws(terrain, view);
+    build_draws(terrain, view, frame);
     terrain_quadtree_schedule_evictions(&terrain->tree);
 }
 

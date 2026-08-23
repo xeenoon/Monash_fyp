@@ -27,7 +27,19 @@ void mesh_upload(struct Renderer *r, Mesh *mesh) {
     if (mesh->texture_path) {
         texture_load(r->device, r->allocator, r->upload, &mesh->texture,
                      mesh->texture_path, r->max_anisotropy);
-        mesh->material_set = renderer_allocate_material_set(r, mesh->texture.view, mesh->texture.sampler);
+        if (mesh->orm_path && mesh->normal_path) {
+            texture_load_linear(r->device, r->allocator, r->upload, &mesh->orm,
+                                mesh->orm_path, r->max_anisotropy);
+            texture_load_linear(r->device, r->allocator, r->upload,
+                                &mesh->normal_map, mesh->normal_path,
+                                r->max_anisotropy);
+            mesh->material_set = renderer_allocate_pbr_set(r, &mesh->texture,
+                                                             &mesh->orm,
+                                                             &mesh->normal_map);
+        } else {
+            mesh->material_set = renderer_allocate_material_set(r, mesh->texture.view,
+                                                                 mesh->texture.sampler);
+        }
     }
 }
 
@@ -39,6 +51,8 @@ void mesh_destroy(struct Renderer *r, Mesh *mesh) {
         gpu_buffer_destroy(r->device, r->allocator, &mesh->index_buffer);
     if (mesh->texture_path)
         texture_destroy(r->device, r->allocator, &mesh->texture);
+    if (mesh->orm_path) texture_destroy(r->device, r->allocator, &mesh->orm);
+    if (mesh->normal_path) texture_destroy(r->device, r->allocator, &mesh->normal_map);
 }
 
 void mesh_draw(VkCommandBuffer cmd, const Mesh *mesh) {
@@ -57,11 +71,12 @@ VkVertexInputBindingDescription mesh_binding_description(void) {
 }
 
 const VkVertexInputAttributeDescription *mesh_attribute_descriptions(uint32_t *count) {
-    static const VkVertexInputAttributeDescription attributes[4] = {
+    static const VkVertexInputAttributeDescription attributes[5] = {
         {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, position)},
         {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, normal)},
         {2, 0, VK_FORMAT_R32G32_SFLOAT,    offsetof(Vertex, texcoord)},
-        {3, 0, VK_FORMAT_R32_SFLOAT,       offsetof(Vertex, untextured)}
+        {3, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(Vertex, tangent)},
+        {4, 0, VK_FORMAT_R32_SFLOAT, offsetof(Vertex, untextured)}
     };
     *count = 4;
     return attributes;

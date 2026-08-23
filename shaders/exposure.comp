@@ -1,0 +1,42 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+#include "common.glsl"
+
+layout(local_size_x = 256) in;
+layout(std430, set = 1, binding = 6) buffer ExposureState {
+    float exposure;
+    float average_luminance;
+    uint sample_count;
+    uint padding;
+    uint bins[256];
+} exposure_state;
+
+shared float weighted_log_luminance[256];
+shared uint histogram_count[256];
+
+void main() {
+    uint index = gl_LocalInvocationIndex;
+    uint count = exposure_state.bins[index];
+    float log_luminance = -12.0 + (float(index) + 0.5) * (28.0 / 256.0);
+    weighted_log_luminance[index] = log_luminance * float(count);
+    histogram_count[index] = count;
+    barrier();
+    for (uint stride = 128u; stride > 0u; stride >>= 1u) {
+        if (index < stride) {
+            weighted_log_luminance[index] += weighted_log_luminance[index + stride];
+            histogram_count[index] += histogram_count[index + stride];
+        }
+        barrier();
+    }
+    if (index == 0u && histogram_count[0] > 0u) {
+        float average = exp2(weighted_log_luminance[0] /
+                             float(histogram_count[0]));
+        float target = clamp(0.18 / max(average, 1e-5), 0.03, 32.0);
+        float speed = target > exposure_state.exposure ? 1.25 : 3.5;
+        float weight = 1.0 - exp(-speed * max(frame.temporal_parameters.y, 0.0));
+        exposure_state.exposure = frame.temporal_parameters.x > 0.5
+            ? mix(exposure_state.exposure, target, weight) : target;
+        exposure_state.average_luminance = average;
+    }
+}

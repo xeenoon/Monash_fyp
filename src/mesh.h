@@ -11,8 +11,9 @@ typedef struct {
     float position[3];
     float normal[3];
     float texcoord[2];
-    /* 0 = sample the material texture, 1 = use the solid shell colour. */
+    /* Retained for the terrain tile builder's skirt markers. */
     float untextured;
+    float tangent[4]; /* xyz tangent, w handedness for tangent-space normals */
 } Vertex;
 
 /* Base "class". Every primitive embeds this as its FIRST member, so a
@@ -39,6 +40,10 @@ typedef struct {
        Leave texture_path NULL to draw untextured (renderer binds a fallback). */
     const char     *texture_path;
     Texture         texture;
+    const char     *orm_path;
+    Texture         orm;
+    const char     *normal_path;
+    Texture         normal_map;
     VkDescriptorSet material_set; /* set 1: combined image sampler           */
 } Mesh;
 

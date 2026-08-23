@@ -1,0 +1,25 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+#include "common.glsl"
+
+layout(local_size_x = 16, local_size_y = 16) in;
+layout(set = 1, binding = 5) uniform sampler2D resolved_hdr;
+layout(std430, set = 1, binding = 6) buffer ExposureState {
+    float exposure;
+    float average_luminance;
+    uint sample_count;
+    uint padding;
+    uint bins[256];
+} exposure_state;
+
+void main() {
+    ivec2 size = textureSize(resolved_hdr, 0);
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(pixel, size))) return;
+    vec3 color = max(texelFetch(resolved_hdr, pixel, 0).rgb, vec3(0.0));
+    float luminance = max(dot(color, vec3(0.2126, 0.7152, 0.0722)), exp2(-12.0));
+    float unit = clamp((log2(luminance) + 12.0) / 28.0, 0.0, 0.999999);
+    atomicAdd(exposure_state.bins[uint(unit * 256.0)], 1u);
+    atomicAdd(exposure_state.sample_count, 1u);
+}

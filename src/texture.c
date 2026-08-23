@@ -85,8 +85,10 @@ static Texture create_sampled(VkDevice device, GpuAllocator *allocator, VkFormat
     return texture_create(device, allocator, &desc);
 }
 
-void texture_load(VkDevice device, GpuAllocator *allocator, struct UploadContext *upload,
-                  Texture *t, const char *path, float max_anisotropy) {
+static void texture_load_format(VkDevice device, GpuAllocator *allocator,
+                                struct UploadContext *upload, Texture *t,
+                                const char *path, float max_anisotropy,
+                                VkFormat format) {
     int width, height, channels;
     stbi_uc *pixels = stbi_load(path, &width, &height, &channels, STBI_rgb_alpha);
     if (!pixels) {
@@ -94,11 +96,24 @@ void texture_load(VkDevice device, GpuAllocator *allocator, struct UploadContext
         exit(EXIT_FAILURE);
     }
     uint32_t mips = texture_mip_levels((uint32_t)width, (uint32_t)height);
-    *t = create_sampled(device, allocator, VK_FORMAT_R8G8B8A8_SRGB,
+    *t = create_sampled(device, allocator, format,
                         (uint32_t)width, (uint32_t)height, mips,
                         VK_SAMPLER_ADDRESS_MODE_REPEAT, max_anisotropy);
     upload_pixels(upload, t, pixels, 4);
     stbi_image_free(pixels);
+}
+
+void texture_load(VkDevice device, GpuAllocator *allocator, struct UploadContext *upload,
+                  Texture *t, const char *path, float max_anisotropy) {
+    texture_load_format(device, allocator, upload, t, path, max_anisotropy,
+                        VK_FORMAT_R8G8B8A8_SRGB);
+}
+
+void texture_load_linear(VkDevice device, GpuAllocator *allocator,
+                         struct UploadContext *upload, Texture *t,
+                         const char *path, float max_anisotropy) {
+    texture_load_format(device, allocator, upload, t, path, max_anisotropy,
+                        VK_FORMAT_R8G8B8A8_UNORM);
 }
 
 void texture_create_white(VkDevice device, GpuAllocator *allocator,
@@ -140,6 +155,31 @@ Texture texture_create_hdr_target(VkDevice device, GpuAllocator *allocator,
         .mip_levels = 1, .aspect = VK_IMAGE_ASPECT_COLOR_BIT,
         .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
         .filter = VK_FILTER_LINEAR, .address_mode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+        .create_sampler = true };
+    return texture_create(device, allocator, &desc);
+}
+
+Texture texture_create_motion_target(VkDevice device, GpuAllocator *allocator,
+                                     uint32_t width, uint32_t height) {
+    TextureDesc desc = { .format = VK_FORMAT_R16G16_SFLOAT,
+        .width = width, .height = height, .mip_levels = 1,
+        .aspect = VK_IMAGE_ASPECT_COLOR_BIT,
+        .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        .filter = VK_FILTER_NEAREST,
+        .address_mode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+        .create_sampler = true };
+    return texture_create(device, allocator, &desc);
+}
+
+Texture texture_create_history_depth_target(VkDevice device,
+                                            GpuAllocator *allocator,
+                                            uint32_t width, uint32_t height) {
+    TextureDesc desc = { .format = VK_FORMAT_R32_SFLOAT,
+        .width = width, .height = height, .mip_levels = 1,
+        .aspect = VK_IMAGE_ASPECT_COLOR_BIT,
+        .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        .filter = VK_FILTER_NEAREST,
+        .address_mode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
         .create_sampler = true };
     return texture_create(device, allocator, &desc);
 }

@@ -31,6 +31,8 @@ layout(set = 0, binding = 0) uniform FrameUniforms {
     vec4  atmosphere_absorption;  /* ozone extinction RGB */
     vec4  atmosphere_ground;      /* albedo RGB, multiple-scattering factor */
     vec4  atmosphere_options;     /* aerial max km, debug slice, reserved */
+    vec4  temporal_parameters;    /* history valid, dt, sRGB swapchain, reserved */
+    vec4  temporal_jitter;        /* current NDC xy, previous NDC xy */
 } frame;
 
 layout(set = 0, binding = 1) uniform sampler2DArrayShadow shadow_map;
@@ -48,12 +50,6 @@ vec3 reconstruct_camera_relative(vec2 uv, float depth) {
     vec4 clip = vec4(uv * 2.0 - 1.0, depth, 1.0);
     vec4 world = frame.inverse_view_projection * clip;
     return world.xyz / world.w;
-}
-
-/* Placeholder display transform. The real tone-map/display conversion arrives
-   in a later phase; kept here so colour handling has one shared home. */
-vec3 display_transform(vec3 color) {
-    return color;
 }
 
 #endif

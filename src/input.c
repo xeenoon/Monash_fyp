@@ -4,6 +4,7 @@ void input_poll(Input *in, SDL_Window *window) {
     (void)window;
     in->quit = false;
     in->resized = false;
+    in->cycle_temporal_debug = false;
     in->reload_shaders = false;
     in->toggle_depth_debug = false;
     in->toggle_lod_debug = false;
@@ -21,6 +22,8 @@ void input_poll(Input *in, SDL_Window *window) {
     while (SDL_PollEvent(&event)) {
         if (event.type == SDL_EVENT_QUIT) in->quit = true;
         if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE) in->quit = true;
+        if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_F4)
+            in->cycle_temporal_debug = true;
         /* Edge-triggered so one press reloads once, not every frame F5 is held. */
         if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_F5)
             in->reload_shaders = true;

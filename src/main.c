@@ -7,7 +7,8 @@
 #include "atmosphere.h"
 #include "input.h"
 #include "renderer.h"
-#include "terrain_runtime.h"
+#include "quarry.h"
+#include "temporal.h"
 
 #define WINDOW_WIDTH 1280
 #define WINDOW_HEIGHT 720
@@ -22,21 +23,18 @@ int main(void) {
 
     Renderer renderer;
     renderer_init(&renderer, window);
-    TerrainRuntime *terrain = terrain_runtime_create(&renderer, TRN_DIR, NULL);
-    if (!terrain) {
-        fprintf(stderr, "Could not create terrain quadtree from %s\n", TRN_DIR);
+    Quarry quarry;
+    if (!quarry_create(&renderer, &quarry, QUARRY_DIR)) {
+        fprintf(stderr, "Could not load quarry sample from %s\n", QUARRY_DIR);
         renderer_shutdown(&renderer);
         SDL_DestroyWindow(window);
         SDL_Quit();
         return EXIT_FAILURE;
     }
-    LocalToWorldTransform root_transform = terrain_runtime_root_transform(terrain);
-    /* Overlook the ~1 km field from above one corner, looking down into it. */
     Camera camera = {
-        .position = coordinate_local_to_world(&root_transform,
-                                               (TileLocalPosition){-600, 500, -600}),
-        .yaw = 45.0f,
-        .pitch = -30.0f,
+        .position = {0.0, 8.0, -25.0},
+        .yaw = 90.0f,
+        .pitch = -3.0f,
     };
 
     Input input = {0};
@@ -45,15 +43,17 @@ int main(void) {
     mat4s previous_projection = GLMS_MAT4_IDENTITY_INIT;
     mat4s previous_view = GLMS_MAT4_IDENTITY_INIT;
     mat4s previous_view_projection = GLMS_MAT4_IDENTITY_INIT;
+    vec2s previous_jitter = {{0.0f, 0.0f}};
+    WorldPosition previous_camera_position = camera.position;
+    float previous_camera_yaw = camera.yaw;
+    float previous_camera_pitch = camera.pitch;
     bool history_valid = false;
+    uint64_t temporal_frame = 0;
     unsigned debug_mode = 0;
     unsigned relight_mode = 1;
     unsigned sun_mode = 0;
     unsigned atmosphere_slice = 15;
     AtmosphereParameters atmosphere = atmosphere_earth();
-    uint64_t terrain_frame = 0;
-    uint64_t last_stats_log = 0;
-    TerrainRuntimeStats previous_stats = {0};
     bool running = true;
 #ifdef DEBUG_SHADER_DUMP
     /* Automated capture for offline diagnosis. TERRAIN_DUMP_AFTER=N renders N
@@ -69,14 +69,26 @@ int main(void) {
     if (getenv("TERRAIN_DUMP_POS")) {
         double x = 0, y = 0, z = 0;
         if (sscanf(getenv("TERRAIN_DUMP_POS"), "%lf %lf %lf", &x, &y, &z) == 3)
-            camera.position = coordinate_local_to_world(&root_transform,
-                (TileLocalPosition){x, y, z});
+            camera.position = (WorldPosition){x, y, z};
     }
 #endif
     while (running) {
         input_poll(&input, window);
+        unsigned previous_debug_mode = debug_mode;
         if (input.quit) running = false;
-        if (input.reload_shaders) renderer_reload_pipeline(&renderer);
+        if (input.reload_shaders) {
+            renderer_reload_pipeline(&renderer);
+            history_valid = false;
+        }
+        if (input.cycle_temporal_debug) {
+            debug_mode = debug_mode >= 17u && debug_mode < 20u
+                ? debug_mode + 1u : (debug_mode == 20u ? 0u : 17u);
+            const char *names[] = {"history weight", "history rejection",
+                                   "motion vectors", "history clamp", "off"};
+            printf("Temporal debug: %s\n",
+                   debug_mode >= 17u ? names[debug_mode - 17u] : names[4]);
+            history_valid = false;
+        }
         if (input.toggle_depth_debug)
             debug_mode = debug_mode == 1u ? 0u : 1u;
         if (input.toggle_lod_debug)
@@ -85,6 +97,7 @@ int main(void) {
             relight_mode = (relight_mode + 1u) % 3u;
             const char *names[] = {"unlit map", "subtle relight", "material"};
             printf("Terrain imagery: %s\n", names[relight_mode]);
+            history_valid = false;
         }
         if (input.cycle_surface_debug)
             debug_mode = debug_mode >= 3u && debug_mode < 6u
@@ -95,6 +108,8 @@ int main(void) {
         if (input.cycle_atmosphere_debug)
             debug_mode = debug_mode >= 12u && debug_mode < 16u
                 ? debug_mode + 1u : (debug_mode == 16u ? 0u : 12u);
+        if (debug_mode != previous_debug_mode)
+            history_valid = false;
         if (input.previous_atmosphere_slice && atmosphere_slice > 0u)
             --atmosphere_slice;
         if (input.next_atmosphere_slice && atmosphere_slice < 31u)
@@ -105,6 +120,7 @@ int main(void) {
             sun_mode = (sun_mode + 1u) % 3u;
             const char *names[] = {"afternoon", "sunset", "high sun"};
             printf("Atmosphere sun: %s\n", names[sun_mode]);
+            history_valid = false;
         }
 
         uint64_t ticks = SDL_GetTicksNS();
@@ -114,35 +130,40 @@ int main(void) {
 
         camera_update(&camera, input.move_forward, input.move_right,
                       input.look_dx, input.look_dy, input.sprint, dt);
+        bool camera_cut = history_valid && temporal_camera_cut(
+            previous_camera_position, camera.position,
+            previous_camera_yaw, camera.yaw,
+            previous_camera_pitch, camera.pitch, 2000.0);
+        bool use_history = history_valid && !input.resized && !camera_cut;
 
         vec3s camera_forward_direction = camera_forward(&camera);
-        TerrainQuadtreeView terrain_view = {
-            .camera_world = camera.position,
-            .forward = {camera_forward_direction.x, camera_forward_direction.y,
-                        camera_forward_direction.z},
-            .up = {0.0, 1.0, 0.0},
-            .vertical_fov_radians = glm_rad(60.0f),
-            .aspect = renderer_aspect(&renderer),
-            .near_plane_m = CAMERA_NEAR_PLANE,
-            .viewport_height_px = renderer.swapchain_extent.height,
+        DrawPushConstants quarry_push = {
+            .local_to_camera_relative = coordinate_local_to_camera_relative(
+                &quarry.base.local_to_world, camera.position),
+            .debug = {{0.0f, 0.0f, 0.0f, 0.0f}},
         };
-        terrain_runtime_update(terrain, &terrain_view, terrain_frame++);
-        uint32_t terrain_draw_count = 0;
-        const RendererDraw *terrain_draws =
-            terrain_runtime_draws(terrain, &terrain_draw_count);
-        uint32_t terrain_shadow_count = 0;
-        const RendererDraw *terrain_shadow_draws =
-            terrain_runtime_shadow_draws(terrain, &terrain_shadow_count);
+        RendererDraw quarry_draw = {.mesh = &quarry.base, .push = quarry_push};
 
-        mat4s projection = camera_projection(&camera, renderer_aspect(&renderer));
+        vec2s jitter = temporal_jitter_ndc(temporal_frame++,
+            renderer.swapchain_extent.width, renderer.swapchain_extent.height);
+        mat4s projection = temporal_jitter_projection(
+            camera_projection(&camera, renderer_aspect(&renderer)), jitter);
         mat4s view = camera_view(&camera);
         mat4s view_projection = glms_mat4_mul(projection, view);
-        if (!history_valid) {
+        if (!use_history) {
             previous_projection = projection;
             previous_view = view;
             previous_view_projection = view_projection;
-            history_valid = true;
+            previous_jitter = jitter;
+            previous_camera_position = camera.position;
         }
+        mat4s current_to_previous_camera = GLMS_MAT4_IDENTITY_INIT;
+        current_to_previous_camera.raw[3][0] =
+            (float)(camera.position.x - previous_camera_position.x);
+        current_to_previous_camera.raw[3][1] =
+            (float)(camera.position.y - previous_camera_position.y);
+        current_to_previous_camera.raw[3][2] =
+            (float)(camera.position.z - previous_camera_position.z);
 
         const vec3s sun_directions[3] = {
             {{-0.4f, -1.0f, -0.3f}},
@@ -171,7 +192,7 @@ int main(void) {
             .previous_view = previous_view,
             .previous_view_projection = previous_view_projection,
             .local_to_camera_relative = GLMS_MAT4_IDENTITY_INIT,
-            .previous_local_to_camera_relative = GLMS_MAT4_IDENTITY_INIT,
+            .previous_local_to_camera_relative = current_to_previous_camera,
             .sun_direction = glms_vec4(sun_direction, 0.0f),
             .time = (float)(ticks - start_ticks) / 1000000000.0f,
             .near_plane = CAMERA_NEAR_PLANE,
@@ -208,11 +229,21 @@ int main(void) {
             .atmosphere_options = (vec4s){{
                 atmosphere.aerial_max_distance_km, (float)atmosphere_slice,
                 0.0f, 0.0f}},
+            .temporal_parameters = (vec4s){{use_history ? 1.0f : 0.0f,
+                                             dt, 0.0f, 0.0f}},
+            .temporal_jitter = (vec4s){{jitter.x, jitter.y,
+                                        previous_jitter.x, previous_jitter.y}},
         };
         for (uint32_t i = 0; i < SHADOW_CASCADE_COUNT; ++i)
             frame.shadow_view_projection[i] = shadow_cascades.view_projection[i];
-        renderer_draw_frame(&renderer, &frame, terrain_draws, terrain_draw_count,
-                            terrain_shadow_draws, terrain_shadow_count,
+#ifdef DEBUG_SHADER_DUMP
+        /* Diagnostic knobs for the bias sweep. shadow_parameters.x is the receiver
+           normal-offset bias (metres); .y is the PCF radius in texels. */
+        if (getenv("TERRAIN_SHADOW_NBIAS"))
+            frame.shadow_parameters.x = (float)atof(getenv("TERRAIN_SHADOW_NBIAS"));
+#endif
+        renderer_draw_frame(&renderer, &frame, &quarry_draw, 1,
+                            &quarry_draw, 1,
                             input.resized);
 #ifdef DEBUG_SHADER_DUMP
         /* Dump reads the buffer the frame above just populated. Clear first so a
@@ -224,28 +255,19 @@ int main(void) {
             running = false;
         }
 #endif
-        terrain_runtime_collect_evictions(terrain);
-
-        TerrainRuntimeStats stats = terrain_runtime_stats(terrain);
-        bool stats_changed = stats.resident_tiles != previous_stats.resident_tiles ||
-                             stats.drawn_tiles != previous_stats.drawn_tiles;
-        if (stats_changed &&
-            (last_stats_log == 0 || ticks - last_stats_log >= UINT64_C(1000000000))) {
-            printf("Terrain: known=%u resident=%u drawn=%u CPU=%.2f MiB GPU=%.2f MiB\n",
-                   stats.known_tiles, stats.resident_tiles, stats.drawn_tiles,
-                   (double)stats.cpu_bytes / (1024.0 * 1024.0),
-                   (double)stats.gpu_bytes / (1024.0 * 1024.0));
-            previous_stats = stats;
-            last_stats_log = ticks;
-        }
 
         previous_projection = projection;
         previous_view = view;
         previous_view_projection = view_projection;
+        previous_jitter = jitter;
+        previous_camera_position = camera.position;
+        previous_camera_yaw = camera.yaw;
+        previous_camera_pitch = camera.pitch;
+        history_valid = true;
     }
 
     renderer_wait_idle(&renderer);
-    terrain_runtime_destroy(terrain);
+    quarry_destroy(&renderer, &quarry);
     renderer_shutdown(&renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();

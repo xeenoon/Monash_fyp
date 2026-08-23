@@ -1,0 +1,85 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+#include "common.glsl"
+#include "atmosphere_common.glsl"
+
+layout(location = 0) in vec2 texcoord;
+layout(location = 0) out vec4 out_color;
+layout(set = 1, binding = 0) uniform sampler2D hdr_scene;
+layout(set = 1, binding = 1) uniform sampler2D scene_depth;
+layout(set = 2, binding = 0) uniform sampler2D atmosphere_transmittance_lut;
+layout(set = 2, binding = 1) uniform sampler2D atmosphere_multiscattering_lut;
+layout(set = 2, binding = 2) uniform sampler2D atmosphere_skyview_lut;
+layout(set = 2, binding = 3) uniform sampler2DArray atmosphere_aerial_scattering;
+layout(set = 2, binding = 4) uniform sampler2DArray atmosphere_aerial_transmittance;
+
+vec3 sky_with_sun(vec3 view_direction) {
+    vec3 to_sun = normalize(-frame.sun_direction.xyz);
+    vec3 sky = textureLod(atmosphere_skyview_lut,
+        atmosphere_skyview_uv(view_direction, to_sun), 0.0).rgb;
+    float outer = cos(frame.atmosphere_radii.w);
+    float inner = outer + (1.0 - outer) * 0.25;
+    float disk = smoothstep(outer, inner, dot(view_direction, to_sun));
+    vec3 transmittance = atmosphere_transmittance_to_sun(
+        atmosphere_transmittance_lut, atmosphere_camera_position(), view_direction);
+    return sky + disk * frame.sun_radiance.rgb * transmittance;
+}
+
+vec3 sample_aerial_volume(sampler2DArray volume, vec2 uv, float w) {
+    float layer = clamp(w * ATM_AERIAL_SIZE.z - 0.5,
+                        0.0, ATM_AERIAL_SIZE.z - 1.0);
+    float lower = floor(layer);
+    float upper = min(lower + 1.0, ATM_AERIAL_SIZE.z - 1.0);
+    return mix(textureLod(volume, vec3(uv, lower), 0.0).rgb,
+               textureLod(volume, vec3(uv, upper), 0.0).rgb, fract(layer));
+}
+
+vec3 debug_atmosphere(float mode) {
+    if (mode < 12.5)
+        return textureLod(atmosphere_transmittance_lut, texcoord, 0.0).rgb;
+    if (mode < 13.5)
+        return textureLod(atmosphere_multiscattering_lut, texcoord, 0.0).rgb;
+    if (mode < 14.5)
+        return textureLod(atmosphere_skyview_lut, texcoord, 0.0).rgb;
+    float layer = clamp(frame.atmosphere_options.y, 0.0, 31.0);
+    if (mode < 15.5)
+        return textureLod(atmosphere_aerial_scattering,
+                          vec3(texcoord, layer), 0.0).rgb;
+    return textureLod(atmosphere_aerial_transmittance,
+                      vec3(texcoord, layer), 0.0).rgb;
+}
+
+void main() {
+    vec3 source = texture(hdr_scene, texcoord).rgb;
+    if (frame.debug_view > 11.5 && frame.debug_view < 16.5) {
+        out_color = vec4(debug_atmosphere(frame.debug_view), 1.0);
+        return;
+    }
+    if (frame.debug_view > 0.5 && frame.debug_view < 11.5) {
+        out_color = vec4(source, 1.0);
+        return;
+    }
+
+    float depth = texture(scene_depth, texcoord).r;
+    vec4 ray_h = frame.inverse_view_projection *
+                 vec4(texcoord * 2.0 - 1.0, 0.0, 1.0);
+    vec3 view_direction = normalize(ray_h.xyz);
+    if (depth <= 1e-8) {
+        out_color = vec4(sky_with_sun(view_direction), 1.0);
+        return;
+    }
+
+    vec3 surface_position = reconstruct_camera_relative(texcoord, depth);
+    float distance_km = length(surface_position) * 0.001;
+    float w = sqrt(clamp(distance_km / frame.atmosphere_options.x, 0.0, 1.0));
+    vec3 scattering = sample_aerial_volume(
+        atmosphere_aerial_scattering, texcoord, w);
+    vec3 transmittance = sample_aerial_volume(
+        atmosphere_aerial_transmittance, texcoord, w);
+    float near_weight = clamp(distance_km /
+        (0.5 * frame.atmosphere_options.x / ATM_AERIAL_SIZE.z), 0.0, 1.0);
+    scattering *= near_weight;
+    transmittance = mix(vec3(1.0), transmittance, near_weight);
+    out_color = vec4(source * transmittance + scattering, 1.0);
+}
