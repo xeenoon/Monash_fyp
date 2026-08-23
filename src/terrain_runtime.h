@@ -35,6 +35,10 @@ void terrain_runtime_update(TerrainRuntime *terrain,
 
 const RendererDraw *terrain_runtime_draws(const TerrainRuntime *terrain,
                                           uint32_t *count);
+/* Shadow-caster draws: the same tiles the shadow pass should render, selected
+   without camera-frustum culling so shadows stay stable as the camera turns. */
+const RendererDraw *terrain_runtime_shadow_draws(const TerrainRuntime *terrain,
+                                                 uint32_t *count);
 LocalToWorldTransform terrain_runtime_root_transform(const TerrainRuntime *terrain);
 TerrainRuntimeStats terrain_runtime_stats(const TerrainRuntime *terrain);
 

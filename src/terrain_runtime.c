@@ -24,6 +24,8 @@ struct TerrainRuntime {
     TerrainGrid grid;
     RendererDraw *draws;
     uint32_t draw_count;
+    RendererDraw *shadow_draws;
+    uint32_t shadow_draw_count;
 };
 
 TerrainRuntimeSettings terrain_runtime_default_settings(void) {
@@ -250,41 +252,53 @@ static void raster_uv(uint32_t size, uint32_t gutter, vec4s *out) {
     out->w = out->z;
 }
 
+static bool fill_draw(TerrainRuntime *terrain, const TerrainQuadtreeView *view,
+                      uint32_t node_index, RendererDraw *draw) {
+    TerrainQuadNode *node = &terrain->tree.nodes[node_index];
+    RuntimeTile *runtime_tile = node->payload;
+    if (!runtime_tile) return false;
+    TerrainTile *tile = &runtime_tile->tile;
+    draw->mesh = &tile->base;
+    draw->push.local_to_camera_relative = coordinate_local_to_camera_relative(
+        &tile->header.local_to_world, view->camera_world);
+    float span_x = (float)(tile->header.extent[2] - tile->header.extent[0]);
+    float span_z = (float)(tile->header.extent[3] - tile->header.extent[1]);
+    draw->push.geometry = (vec4s){{span_x, span_z,
+        tile->header.height_range_m,
+        fmaxf(span_x, span_z) * terrain->settings.skirt_ratio}};
+    raster_uv(tile->header.sample_width, tile->header.gutter,
+              &draw->push.elevation_uv);
+    raster_uv(tile->base.texture.extent.width, tile->header.gutter,
+              &draw->push.imagery_uv);
+    /* A 4096 m phase is exactly periodic for every power-of-two surface
+       scale used by terrain.frag. Reducing in double on the CPU preserves
+       close-detail continuity at Earth-sized projected coordinates. */
+    const double phase_period_m = 4096.0;
+    draw->push.debug = (vec4s){{
+        (float)node->key.level,
+        surface_detail_phase(tile->header.local_to_world.translation.x,
+                             phase_period_m),
+        surface_detail_phase(tile->header.local_to_world.translation.y,
+                             phase_period_m),
+        surface_detail_phase(tile->header.local_to_world.translation.z,
+                             phase_period_m),
+    }};
+    return true;
+}
+
 static void build_draws(TerrainRuntime *terrain,
                         const TerrainQuadtreeView *view) {
     terrain->draw_count = 0;
-    for (uint32_t i = 0; i < terrain->tree.draw_count; ++i) {
-        TerrainQuadNode *node = &terrain->tree.nodes[terrain->tree.draw_nodes[i]];
-        RuntimeTile *runtime_tile = node->payload;
-        if (!runtime_tile) continue;
-        TerrainTile *tile = &runtime_tile->tile;
-        RendererDraw *draw = &terrain->draws[terrain->draw_count++];
-        draw->mesh = &tile->base;
-        draw->push.local_to_camera_relative = coordinate_local_to_camera_relative(
-            &tile->header.local_to_world, view->camera_world);
-        float span_x = (float)(tile->header.extent[2] - tile->header.extent[0]);
-        float span_z = (float)(tile->header.extent[3] - tile->header.extent[1]);
-        draw->push.geometry = (vec4s){{span_x, span_z,
-            tile->header.height_range_m,
-            fmaxf(span_x, span_z) * terrain->settings.skirt_ratio}};
-        raster_uv(tile->header.sample_width, tile->header.gutter,
-                  &draw->push.elevation_uv);
-        raster_uv(tile->base.texture.extent.width, tile->header.gutter,
-                  &draw->push.imagery_uv);
-        /* A 4096 m phase is exactly periodic for every power-of-two surface
-           scale used by terrain.frag. Reducing in double on the CPU preserves
-           close-detail continuity at Earth-sized projected coordinates. */
-        const double phase_period_m = 4096.0;
-        draw->push.debug = (vec4s){{
-            (float)node->key.level,
-            surface_detail_phase(tile->header.local_to_world.translation.x,
-                                 phase_period_m),
-            surface_detail_phase(tile->header.local_to_world.translation.y,
-                                 phase_period_m),
-            surface_detail_phase(tile->header.local_to_world.translation.z,
-                                 phase_period_m),
-        }};
-    }
+    for (uint32_t i = 0; i < terrain->tree.draw_count; ++i)
+        if (fill_draw(terrain, view, terrain->tree.draw_nodes[i],
+                      &terrain->draws[terrain->draw_count]))
+            terrain->draw_count++;
+
+    terrain->shadow_draw_count = 0;
+    for (uint32_t i = 0; i < terrain->tree.shadow_count; ++i)
+        if (fill_draw(terrain, view, terrain->tree.shadow_nodes[i],
+                      &terrain->shadow_draws[terrain->shadow_draw_count]))
+            terrain->shadow_draw_count++;
 }
 
 TerrainRuntime *terrain_runtime_create(Renderer *renderer,
@@ -305,7 +319,10 @@ TerrainRuntime *terrain_runtime_create(Renderer *renderer,
         return NULL;
     }
     terrain->draws = calloc(resolved.quadtree.max_nodes, sizeof(*terrain->draws));
-    if (!terrain->draws || !terrain_quadtree_request_root(&terrain->tree) ||
+    terrain->shadow_draws =
+        calloc(resolved.quadtree.max_nodes, sizeof(*terrain->shadow_draws));
+    if (!terrain->draws || !terrain->shadow_draws ||
+        !terrain_quadtree_request_root(&terrain->tree) ||
         !load_node(terrain, 0)) {
         terrain_runtime_destroy(terrain);
         return NULL;
@@ -356,6 +373,7 @@ void terrain_runtime_destroy(TerrainRuntime *terrain) {
         terrain_grid_destroy(terrain->renderer, &terrain->grid);
     terrain_quadtree_destroy(&terrain->tree);
     free(terrain->draws);
+    free(terrain->shadow_draws);
     free(terrain->dataset_root);
     free(terrain);
 }
@@ -379,6 +397,9 @@ void terrain_runtime_update(TerrainRuntime *terrain,
         if (index == TERRAIN_QUADTREE_INVALID_NODE || !upload_node(terrain, index)) break;
     }
     complete_uploads(terrain);
+    /* Casters are collected after streaming so newly-resident tiles are included;
+       the collection ignores camera orientation to keep shadows view-stable. */
+    terrain_quadtree_collect_casters(&terrain->tree, view);
     build_draws(terrain, view);
     terrain_quadtree_schedule_evictions(&terrain->tree);
 }
@@ -387,6 +408,12 @@ const RendererDraw *terrain_runtime_draws(const TerrainRuntime *terrain,
                                           uint32_t *count) {
     if (count) *count = terrain ? terrain->draw_count : 0;
     return terrain ? terrain->draws : NULL;
+}
+
+const RendererDraw *terrain_runtime_shadow_draws(const TerrainRuntime *terrain,
+                                                 uint32_t *count) {
+    if (count) *count = terrain ? terrain->shadow_draw_count : 0;
+    return terrain ? terrain->shadow_draws : NULL;
 }
 
 LocalToWorldTransform terrain_runtime_root_transform(const TerrainRuntime *terrain) {

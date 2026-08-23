@@ -46,9 +46,11 @@ bool terrain_quadtree_init(TerrainQuadtree *tree,
 
     TerrainQuadNode *nodes = calloc(resolved.max_nodes, sizeof(*nodes));
     uint32_t *draw_nodes = malloc((size_t)resolved.max_nodes * sizeof(*draw_nodes));
-    if (!nodes || !draw_nodes) {
+    uint32_t *shadow_nodes = malloc((size_t)resolved.max_nodes * sizeof(*shadow_nodes));
+    if (!nodes || !draw_nodes || !shadow_nodes) {
         free(nodes);
         free(draw_nodes);
+        free(shadow_nodes);
         return false;
     }
     *tree = (TerrainQuadtree){
@@ -56,6 +58,7 @@ bool terrain_quadtree_init(TerrainQuadtree *tree,
         .nodes = nodes,
         .node_count = 1,
         .draw_nodes = draw_nodes,
+        .shadow_nodes = shadow_nodes,
     };
     tree->nodes[0] = empty_node();
     tree->nodes[0].key = (TerrainTileKey){0, 0, 0};
@@ -66,6 +69,7 @@ void terrain_quadtree_destroy(TerrainQuadtree *tree) {
     if (!tree) return;
     free(tree->nodes);
     free(tree->draw_nodes);
+    free(tree->shadow_nodes);
     *tree = (TerrainQuadtree){0};
 }
 
@@ -336,6 +340,33 @@ void terrain_quadtree_select(TerrainQuadtree *tree,
     for (uint32_t i = 0; i < tree->node_count; ++i)
         tree->nodes[i].visible = false;
     select_node(tree, 0, view);
+}
+
+/* Shadow-caster counterpart of select_node: no frustum test and no tile
+   requests. The split decision uses only the distance-based screen error (a
+   plain threshold, no hysteresis) so the resulting LOD — and thus the caster
+   set — depends on camera position but never on orientation. It refines only
+   into already-resident children, otherwise emits the resident parent. */
+static void collect_node(TerrainQuadtree *tree, uint32_t index,
+                         const TerrainQuadtreeView *view) {
+    TerrainQuadNode *node = &tree->nodes[index];
+    if (node->state != TERRAIN_TILE_RESIDENT) return;
+    double error_px = screen_error(&node->bounds, view);
+    if (error_px > tree->settings.split_threshold_px &&
+        all_children_resident(tree, node)) {
+        for (uint32_t i = 0; i < 4; ++i)
+            collect_node(tree, node->children[i], view);
+        return;
+    }
+    if (tree->shadow_count < tree->settings.max_nodes)
+        tree->shadow_nodes[tree->shadow_count++] = index;
+}
+
+void terrain_quadtree_collect_casters(TerrainQuadtree *tree,
+                                      const TerrainQuadtreeView *view) {
+    if (!tree || !view || !tree->nodes) return;
+    tree->shadow_count = 0;
+    collect_node(tree, 0, view);
 }
 
 static bool node_drawn(const TerrainQuadtree *tree, uint32_t index) {

@@ -148,9 +148,12 @@ void  renderer_wait_idle(Renderer *r);
 float renderer_aspect(const Renderer *r);
 
 /* Acquire, update the frame UBO, record (bind sets + draw mesh), submit, present.
-   Recreates the swapchain on OUT_OF_DATE/SUBOPTIMAL or when `resized`. */
+   Recreates the swapchain on OUT_OF_DATE/SUBOPTIMAL or when `resized`. The shadow
+   pass draws `shadow_draws` (camera-orientation-independent casters); the scene
+   pass draws `draws` (the camera-visible set). */
 void renderer_draw_frame(Renderer *r, const FrameUniforms *frame,
                          const RendererDraw *draws, uint32_t draw_count,
+                         const RendererDraw *shadow_draws, uint32_t shadow_draw_count,
                          bool resized);
 
 /* Allocate a set-1 combined-image-sampler descriptor set bound to view+sampler.

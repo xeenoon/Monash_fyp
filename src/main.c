@@ -130,6 +130,9 @@ int main(void) {
         uint32_t terrain_draw_count = 0;
         const RendererDraw *terrain_draws =
             terrain_runtime_draws(terrain, &terrain_draw_count);
+        uint32_t terrain_shadow_count = 0;
+        const RendererDraw *terrain_shadow_draws =
+            terrain_runtime_shadow_draws(terrain, &terrain_shadow_count);
 
         mat4s projection = camera_projection(&camera, renderer_aspect(&renderer));
         mat4s view = camera_view(&camera);
@@ -208,8 +211,9 @@ int main(void) {
         };
         for (uint32_t i = 0; i < SHADOW_CASCADE_COUNT; ++i)
             frame.shadow_view_projection[i] = shadow_cascades.view_projection[i];
-        renderer_draw_frame(&renderer, &frame, terrain_draws,
-                            terrain_draw_count, input.resized);
+        renderer_draw_frame(&renderer, &frame, terrain_draws, terrain_draw_count,
+                            terrain_shadow_draws, terrain_shadow_count,
+                            input.resized);
 #ifdef DEBUG_SHADER_DUMP
         /* Dump reads the buffer the frame above just populated. Clear first so a
            same-frame C+X starts a fresh file. */

@@ -1153,7 +1153,9 @@ static void record_atmosphere(Renderer *r, VkCommandBuffer command) {
 
 static void record_commands(Renderer *r, uint32_t image_index,
                             const FrameUniforms *frame,
-                            const RendererDraw *draws, uint32_t draw_count) {
+                            const RendererDraw *draws, uint32_t draw_count,
+                            const RendererDraw *shadow_draws,
+                            uint32_t shadow_draw_count) {
     VkCommandBuffer command = r->command_buffers[r->frame];
     VkCommandBufferBeginInfo begin = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
     VK_CHECK(vkBeginCommandBuffer(command, &begin));
@@ -1176,10 +1178,10 @@ static void record_commands(Renderer *r, uint32_t image_index,
         vkCmdSetDepthBias(command, frame->shadow_parameters.w, 0.0f, 1.75f);
         vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS,
             r->pipeline_layout, 0, 1, &r->frame_set[r->frame], 0, NULL);
-        for (uint32_t i = 0; i < draw_count; ++i) {
-            DrawPushConstants push = draws[i].push;
+        for (uint32_t i = 0; i < shadow_draw_count; ++i) {
+            DrawPushConstants push = shadow_draws[i].push;
             push.debug.x = (float)cascade;
-            bind_draw(r, command, &draws[i], &push);
+            bind_draw(r, command, &shadow_draws[i], &push);
         }
         vkCmdEndRenderPass(command);
     }
@@ -1255,6 +1257,7 @@ static void record_commands(Renderer *r, uint32_t image_index,
 
 void renderer_draw_frame(Renderer *r, const FrameUniforms *frame,
                          const RendererDraw *draws, uint32_t draw_count,
+                         const RendererDraw *shadow_draws, uint32_t shadow_draw_count,
                          bool resized) {
     VkFence fence = r->in_flight[r->frame];
     VK_CHECK(vkWaitForFences(r->device, 1, &fence, VK_TRUE, UINT64_MAX));
@@ -1269,7 +1272,8 @@ void renderer_draw_frame(Renderer *r, const FrameUniforms *frame,
     memcpy(r->frame_ubo[r->frame].allocation.mapped, frame, sizeof(*frame));
 
     VK_CHECK(vkResetCommandBuffer(r->command_buffers[r->frame], 0));
-    record_commands(r, image_index, frame, draws, draw_count);
+    record_commands(r, image_index, frame, draws, draw_count,
+                    shadow_draws, shadow_draw_count);
     VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     VkSubmitInfo submit = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
         .waitSemaphoreCount = 1, .pWaitSemaphores = &r->image_available[r->frame],

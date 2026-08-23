@@ -80,6 +80,10 @@ typedef struct {
     uint32_t node_count;
     uint32_t *draw_nodes;
     uint32_t draw_count;
+    /* Shadow casters: the same LOD set as draw_nodes but without camera-frustum
+       culling, so shadows depend only on camera position, never orientation. */
+    uint32_t *shadow_nodes;
+    uint32_t shadow_count;
     uint64_t frame;
     uint64_t cpu_bytes;
     uint64_t gpu_bytes;
@@ -116,6 +120,13 @@ bool terrain_quadtree_cancel(TerrainQuadtree *tree, uint32_t node);
    A parent remains selected until its complete four-child replacement is resident. */
 void terrain_quadtree_select(TerrainQuadtree *tree,
                              const TerrainQuadtreeView *view, uint64_t frame);
+
+/* Fills shadow_nodes with the shadow-caster set: the same distance-based LOD as
+   the last terrain_quadtree_select, but with no frustum culling and no new tile
+   requests, so the caster set (and therefore the shadows) is independent of where
+   the camera looks. Must be called after terrain_quadtree_select. */
+void terrain_quadtree_collect_casters(TerrainQuadtree *tree,
+                                      const TerrainQuadtreeView *view);
 
 /* Marks expired/LRU sibling quads for eviction. The runtime destroys their
    resources only after the renderer's prior-frame fence is known complete. */
