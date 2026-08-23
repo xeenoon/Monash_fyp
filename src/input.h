@@ -10,6 +10,7 @@ typedef struct
 	bool sprint;					/* shift held              */
 	bool quit;						/* window close / escape   */
 	bool resized;					/* framebuffer size change */
+	bool mouse_captured;			/* camera mode vs free cursor (Ctrl toggles) */
 	bool toggle_quarry_shading;		/* F3 pressed this frame   */
 	bool cycle_temporal_debug;		/* F4 pressed this frame   */
 	bool reload_shaders;			/* F5 pressed this frame   */

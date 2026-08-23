@@ -2,6 +2,7 @@
 #extension GL_GOOGLE_include_directive : require
 
 #include "common.glsl"
+#include "shader_dump.glsl"
 
 layout(location = 0) in vec2 texcoord;
 layout(location = 0) out vec4 out_color;
@@ -54,6 +55,7 @@ vec3 srgb_to_linear(vec3 value) {
     return mix(low, high, greaterThan(value, vec3(0.04045)));
 }
 
+/* See SHADER_DUMP_LEGEND["tonemap"] in renderer.c for the f0..f19 layout. */
 void main() {
     vec3 resolved = texture(resolved_hdr, texcoord).rgb;
     bool debug_view = frame.debug_view > 0.5;
@@ -67,4 +69,11 @@ void main() {
     vec3 attachment_value = frame.temporal_parameters.z > 0.5
         ? srgb_to_linear(encoded) : encoded;
     out_color = vec4(attachment_value, 1.0);
+
+    shader_dump(DUMP_SHADER_TONEMAP,
+                vec4(texcoord, exposure_state.exposure, dither),
+                vec4(resolved, exposure_state.average_luminance),
+                vec4(display_linear, debug_view ? 1.0 : 0.0),
+                vec4(encoded, 0.0),
+                vec4(out_color.rgb, 0.0));
 }

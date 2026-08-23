@@ -6,31 +6,65 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include <vulkan/vulkan_core.h>
 
 #ifdef DEBUG_SHADER_DUMP
 #include <libgen.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <time.h>
 
-/* Layout of the set-0 binding-3 append buffer written by terrain.frag. A 16-byte
-   header (count, capacity, 2x pad) precedes an array of 96-byte records. Kept in
-   sync with struct DumpRecord in shaders/terrain.frag. */
+/* Layout of the set-0 binding-3 append buffer every instrumented fragment
+   shader writes to. A 16-byte header (count, capacity, 2x pad) precedes an
+   array of 96-byte records. Kept in sync with struct DumpRecord in
+   shaders/shader_dump.glsl. */
 #define SHADER_DUMP_HEADER_WORDS 4u
 #define SHADER_DUMP_RECORD_FLOATS 24u /* six vec4s */
 typedef struct
 {
-	float frag[4];	  /* frag_coord.xy, distance_m, cascade */
-	float cam_rel[4]; /* camera_relative_position.xyz, NoL */
-	float world[4];	  /* surface_position.xyz, visibility */
-	float normal[4];  /* geometric_normal.xyz, receiver_bias */
-	float shadow[4];  /* shadow.coordinate.xyz, lod level */
-	float extra[4];	  /* to_sun.xyz, grazing */
-} ShaderDumpRecord;
-_Static_assert(sizeof(ShaderDumpRecord) == SHADER_DUMP_RECORD_FLOATS * 4u,
-			   "ShaderDumpRecord must match std430 DumpRecord");
+	float meta[4]; /* shader_id, frag_x, frag_y, reserved */
+	float v0[4], v1[4], v2[4], v3[4], v4[4]; /* 20 generic floats, meaning per shader_id */
+} DumpRecord;
+_Static_assert(sizeof(DumpRecord) == SHADER_DUMP_RECORD_FLOATS * 4u,
+			   "DumpRecord must match std430 DumpRecord in shader_dump.glsl");
+
+/* Kept in sync with the DUMP_SHADER_* constants in shaders/shader_dump.glsl. */
+#define DUMP_SHADER_TERRAIN 0u
+#define DUMP_SHADER_MESH 1u
+#define DUMP_SHADER_CUBE 2u
+#define DUMP_SHADER_ATMOSPHERE_COMPOSITE 3u
+#define DUMP_SHADER_TONEMAP 4u
+#define DUMP_SHADER_TEMPORAL_RESOLVE 5u
+
+static const char *shader_dump_name(uint32_t shader_id)
+{
+	switch (shader_id)
+	{
+	case DUMP_SHADER_TERRAIN:
+		return "terrain";
+	case DUMP_SHADER_MESH:
+		return "mesh";
+	case DUMP_SHADER_CUBE:
+		return "cube";
+	case DUMP_SHADER_ATMOSPHERE_COMPOSITE:
+		return "atmosphere_composite";
+	case DUMP_SHADER_TONEMAP:
+		return "tonemap";
+	case DUMP_SHADER_TEMPORAL_RESOLVE:
+		return "temporal_resolve";
+	default:
+		return "unknown";
+	}
+}
+
+/* Records per screen pixel the dump buffer can hold before truncating (i.e.
+   how many overdrawn/overlapping shader invocations per pixel across every
+   instrumented shader in a frame). 8 at 1280x720 is ~7.4M records, ~700 MB.
+   Override with TERRAIN_DUMP_LAYERS. */
+#define DUMP_LAYER_BUDGET_DEFAULT 8u
 #endif
 
 /* Keep the C UBO byte-for-byte compatible with shaders/common.glsl std140. */
@@ -76,7 +110,9 @@ _Static_assert(offsetof(FrameUniforms, temporal_parameters) == 1024,
 			   "FrameUniforms temporal parameters offset");
 _Static_assert(offsetof(FrameUniforms, temporal_jitter) == 1040,
 			   "FrameUniforms temporal jitter offset");
-_Static_assert(sizeof(FrameUniforms) == 1056, "FrameUniforms std140 size");
+_Static_assert(offsetof(FrameUniforms, shader_dump) == 1056,
+			   "FrameUniforms shader dump offset");
+_Static_assert(sizeof(FrameUniforms) == 1072, "FrameUniforms std140 size");
 _Static_assert(sizeof(DrawPushConstants) == 128, "terrain push constant size");
 _Static_assert(offsetof(TemporalExposure, histogram) == 16,
 			   "TemporalExposure std430 histogram offset");
@@ -601,7 +637,8 @@ static void create_instance_and_device(Renderer *r)
 		exit(EXIT_FAILURE);
 	}
 	VkPhysicalDeviceFeatures features = {.samplerAnisotropy = supported.samplerAnisotropy,
-										 .shaderStorageImageExtendedFormats = VK_TRUE};
+										 .shaderStorageImageExtendedFormats = VK_TRUE,
+										 .fragmentStoresAndAtomics = VK_TRUE};
 	VkDeviceCreateInfo device_info = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
 									  .queueCreateInfoCount = queue_count,
 									  .pQueueCreateInfos = queues,
@@ -903,11 +940,14 @@ static void create_temporal_compute_pipelines(Renderer *r)
 	r->exposure_pipeline = create_temporal_compute_pipeline(r, "exposure.comp");
 }
 
-static void create_terrain_pipeline(Renderer *r)
+/* Terrain and imported static meshes share every graphics-pipeline state except
+   their shaders, so both are built from this one description. */
+static void create_scene_pipeline(Renderer *r, const char *vert_name, const char *frag_name,
+								  VkPipeline *out_pipeline)
 {
 	char vert_path[1024], frag_path[1024];
-	snprintf(vert_path, sizeof(vert_path), "%s/terrain.vert.spv", SHADER_DIR);
-	snprintf(frag_path, sizeof(frag_path), "%s/terrain.frag.spv", SHADER_DIR);
+	snprintf(vert_path, sizeof(vert_path), "%s/%s.spv", SHADER_DIR, vert_name);
+	snprintf(frag_path, sizeof(frag_path), "%s/%s.spv", SHADER_DIR, frag_name);
 	VkShaderModule vert = create_shader_module(r, vert_path);
 	VkShaderModule frag = create_shader_module(r, frag_path);
 	VkPipelineShaderStageCreateInfo stages[2] = {
@@ -979,9 +1019,15 @@ static void create_terrain_pipeline(Renderer *r)
 		.renderPass = r->scene_render_pass,
 		.subpass = 0};
 	VK_CHECK(vkCreateGraphicsPipelines(r->device, VK_NULL_HANDLE, 1, &pipeline_info, NULL,
-									   &r->terrain_pipeline));
+									   out_pipeline));
 	vkDestroyShaderModule(r->device, frag, NULL);
 	vkDestroyShaderModule(r->device, vert, NULL);
+}
+
+static void create_terrain_pipeline(Renderer *r)
+{
+	create_scene_pipeline(r, "terrain.vert", "terrain.frag", &r->terrain_pipeline);
+	create_scene_pipeline(r, "mesh.vert", "mesh.frag", &r->mesh_pipeline);
 }
 
 static void create_shadow_pipeline(Renderer *r)
@@ -1358,11 +1404,21 @@ static void create_swapchain(Renderer *r)
 	}
 
 #ifdef DEBUG_SHADER_DUMP
-	/* One record per screen pixel is the worst case (a fully terrain-covered
-	   view). Sized to the extent and recreated with the swapchain on resize. */
-	r->shader_dump_capacity = r->swapchain_extent.width * r->swapchain_extent.height;
+	/* Capacity covers every instrumented shader's worst-case overdraw for a
+	   whole frame, not just one pass's worth of pixels. Recreated with the
+	   swapchain on resize. */
+	r->shader_dump_layer_budget = DUMP_LAYER_BUDGET_DEFAULT;
+	const char *layer_budget_env = getenv("TERRAIN_DUMP_LAYERS");
+	if (layer_budget_env)
+	{
+		int parsed = atoi(layer_budget_env);
+		if (parsed > 0)
+			r->shader_dump_layer_budget = (uint32_t)parsed;
+	}
+	r->shader_dump_capacity =
+		r->swapchain_extent.width * r->swapchain_extent.height * r->shader_dump_layer_budget;
 	VkDeviceSize dump_size = SHADER_DUMP_HEADER_WORDS * sizeof(uint32_t) +
-							 (VkDeviceSize)r->shader_dump_capacity * sizeof(ShaderDumpRecord);
+							 (VkDeviceSize)r->shader_dump_capacity * sizeof(DumpRecord);
 	r->shader_dump_buffer = gpu_buffer_create(
 		r->device, r->allocator, dump_size,
 		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -1418,6 +1474,7 @@ static void destroy_swapchain(Renderer *r)
 	vkDestroyPipeline(r->device, r->tone_map_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->taa_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->atmosphere_composite_pipeline, NULL);
+	vkDestroyPipeline(r->device, r->mesh_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->terrain_pipeline, NULL);
 	vkDestroyRenderPass(r->device, r->display_render_pass, NULL);
 	vkDestroyRenderPass(r->device, r->taa_render_pass, NULL);
@@ -1459,6 +1516,7 @@ void renderer_reload_pipeline(Renderer *r)
 	vkDestroyPipeline(r->device, r->tone_map_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->taa_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->atmosphere_composite_pipeline, NULL);
+	vkDestroyPipeline(r->device, r->mesh_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->terrain_pipeline, NULL);
 	create_shadow_pipeline(r);
 	create_terrain_pipeline(r);
@@ -1517,6 +1575,69 @@ void renderer_clear_shader_dump(const char *path)
 		fprintf(stderr, "Could not clear shader dump %s\n", path);
 }
 
+/* Per-shader documentation for the 20 generic f0..f19 columns. Keep in sync
+   with the shader_dump() call in each instrumented .frag file. */
+static const char *const SHADER_DUMP_LEGEND[] = {
+	"# legend: terrain/mesh f0-1=uv f2=roughness f3=NoL f4-6=base_color f7=visibility "
+	"f8-10=N f11=metallic f12-14=cam_rel_pos f15=default_lit f16-18=out_color f19=_\n",
+	"# legend: cube f0-2=normal f3=diffuse f4=lighting f5-7=out_color f8-19=_\n",
+	"# legend: atmosphere_composite f0-1=texcoord f2=depth f3=branch(1=lut,2=pass,3=sky,4=aerial) "
+	"f4-6=out_color f7=_ f8-10=view_dir f11=distance_km f12-14=scattering f15=near_weight "
+	"f16-18=transmittance f19=w\n",
+	"# legend: tonemap f0-1=texcoord f2=exposure f3=dither f4-6=resolved f7=avg_luminance "
+	"f8-10=display_linear f11=debug_view f12-14=encoded f15=_ f16-18=out_color f19=_\n",
+	"# legend: temporal_resolve f0-1=texcoord f2=depth f3=valid f4-5=velocity f6=motion_px "
+	"f7=current_weight f8-10=current f11=_ f12-14=history f15=_ f16-18=resolved f19=_\n",
+};
+
+/* Optional CPU-side output filters, applied only at write time (the GPU always
+   dumps everything). DUMP_SHADER=<name> keeps only that shader's records;
+   DUMP_RECT=x0,y0,x1,y1 keeps only records inside that (inclusive) frag-coord
+   rectangle. Both are re-read on every call so they can change between dumps. */
+typedef struct
+{
+	bool has_shader;
+	uint32_t shader_id;
+	bool has_rect;
+	float rect[4];
+} ShaderDumpFilter;
+
+static ShaderDumpFilter shader_dump_read_filters(void)
+{
+	ShaderDumpFilter filter = {0};
+	const char *shader_env = getenv("DUMP_SHADER");
+	if (shader_env)
+	{
+		for (uint32_t id = 0; id <= DUMP_SHADER_TEMPORAL_RESOLVE; ++id)
+		{
+			if (strcasecmp(shader_env, shader_dump_name(id)) == 0)
+			{
+				filter.has_shader = true;
+				filter.shader_id = id;
+				break;
+			}
+		}
+		if (!filter.has_shader)
+			fprintf(stderr, "DUMP_SHADER=%s does not match a known shader; ignoring\n", shader_env);
+	}
+	const char *rect_env = getenv("DUMP_RECT");
+	if (rect_env && sscanf(rect_env, "%f,%f,%f,%f", &filter.rect[0], &filter.rect[1],
+						   &filter.rect[2], &filter.rect[3]) == 4)
+		filter.has_rect = true;
+	return filter;
+}
+
+static bool shader_dump_record_passes(const DumpRecord *rec, const ShaderDumpFilter *filter)
+{
+	if (filter->has_shader && (uint32_t)rec->meta[0] != filter->shader_id)
+		return false;
+	if (filter->has_rect &&
+		(rec->meta[1] < filter->rect[0] || rec->meta[1] > filter->rect[2] ||
+		 rec->meta[2] < filter->rect[1] || rec->meta[2] > filter->rect[3]))
+		return false;
+	return true;
+}
+
 uint32_t renderer_dump_shader_data(Renderer *r, const char *path)
 {
 	/* The dump buffer holds the most recently submitted frame; wait for all GPU
@@ -1528,7 +1649,8 @@ uint32_t renderer_dump_shader_data(Renderer *r, const char *path)
 	bool truncated = count > capacity;
 	if (truncated)
 		count = capacity;
-	const ShaderDumpRecord *records = (const ShaderDumpRecord *)(header + SHADER_DUMP_HEADER_WORDS);
+	const DumpRecord *records = (const DumpRecord *)(header + SHADER_DUMP_HEADER_WORDS);
+	ShaderDumpFilter filter = shader_dump_read_filters();
 
 	ensure_parent_directory(path);
 	FILE *file = fopen(path, "a");
@@ -1541,30 +1663,33 @@ uint32_t renderer_dump_shader_data(Renderer *r, const char *path)
 	time_t now = time(NULL);
 	char stamp[64];
 	strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", localtime(&now));
-	fprintf(file, "# dump %s  records=%u  view=%ux%u%s\n", stamp, count, r->swapchain_extent.width,
-			r->swapchain_extent.height, truncated ? "  (TRUNCATED: capacity exceeded)" : "");
-	fprintf(file, "frag_x,frag_y,distance_m,cascade,"
-				  "cam_x,cam_y,cam_z,NoL,"
-				  "world_x,world_y,world_z,visibility,"
-				  "nrm_x,nrm_y,nrm_z,receiver_bias,"
-				  "shcoord_x,shcoord_y,shcoord_z,lod,"
-				  "tosun_x,stored_depth,texel_world,grazing\n");
+	fprintf(file, "# dump %s  records=%u  view=%ux%u  layers=%u%s\n", stamp, count,
+			r->swapchain_extent.width, r->swapchain_extent.height, r->shader_dump_layer_budget,
+			truncated ? "  (TRUNCATED: capacity exceeded)" : "");
+	for (size_t i = 0; i < sizeof(SHADER_DUMP_LEGEND) / sizeof(SHADER_DUMP_LEGEND[0]); ++i)
+		fputs(SHADER_DUMP_LEGEND[i], file);
+	fputs("shader,frag_x,frag_y,f0,f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13,f14,f15,f16,f17,f18,"
+		  "f19\n",
+		  file);
+	uint32_t written = 0;
 	for (uint32_t i = 0; i < count; ++i)
 	{
-		const ShaderDumpRecord *rec = &records[i];
+		const DumpRecord *rec = &records[i];
+		if (!shader_dump_record_passes(rec, &filter))
+			continue;
 		fprintf(file,
-				"%.1f,%.1f,%.3f,%d,%.3f,%.3f,%.3f,%.4f,"
-				"%.3f,%.3f,%.3f,%.4f,%.4f,%.4f,%.4f,%.4f,"
-				"%.5f,%.5f,%.5f,%d,%.4f,%.4f,%.4f,%.4f\n",
-				rec->frag[0], rec->frag[1], rec->frag[2], (int)rec->frag[3], rec->cam_rel[0],
-				rec->cam_rel[1], rec->cam_rel[2], rec->cam_rel[3], rec->world[0], rec->world[1],
-				rec->world[2], rec->world[3], rec->normal[0], rec->normal[1], rec->normal[2],
-				rec->normal[3], rec->shadow[0], rec->shadow[1], rec->shadow[2], (int)rec->shadow[3],
-				rec->extra[0], rec->extra[1], rec->extra[2], rec->extra[3]);
+				"%s,%.1f,%.1f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,"
+				"%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f\n",
+				shader_dump_name((uint32_t)rec->meta[0]), rec->meta[1], rec->meta[2], rec->v0[0],
+				rec->v0[1], rec->v0[2], rec->v0[3], rec->v1[0], rec->v1[1], rec->v1[2], rec->v1[3],
+				rec->v2[0], rec->v2[1], rec->v2[2], rec->v2[3], rec->v3[0], rec->v3[1], rec->v3[2],
+				rec->v3[3], rec->v4[0], rec->v4[1], rec->v4[2], rec->v4[3]);
+		++written;
 	}
 	fclose(file);
-	printf("Wrote %u shader records to %s%s\n", count, path, truncated ? " (truncated)" : "");
-	return count;
+	printf("Wrote %u of %u shader records to %s%s\n", written, count, path,
+		   truncated ? " (truncated)" : "");
+	return written;
 }
 #endif
 
@@ -1783,15 +1908,25 @@ static void record_commands(Renderer *r, uint32_t image_index, const FrameUnifor
 								   .clearValueCount = 3,
 								   .pClearValues = scene_clear};
 	vkCmdBeginRenderPass(command, &scene, VK_SUBPASS_CONTENTS_INLINE);
-	vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, r->terrain_pipeline);
 	set_viewport_scissor(command, r->swapchain_extent);
-	/* Set 0: per-frame data. Set 1 + push constants: per terrain tile. */
+	/* Set 0: per-frame data. Set 1 + push constants: per terrain tile / mesh.
+	   Both pipelines share this layout, so the frame and atmosphere sets bind
+	   once regardless of which pipeline each draw selects. */
 	vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, r->pipeline_layout, 0, 1,
 							&r->frame_set[r->frame], 0, NULL);
 	vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, r->pipeline_layout, 2, 1,
 							&r->atmosphere_set, 0, NULL);
+	VkPipeline bound_pipeline = VK_NULL_HANDLE;
 	for (uint32_t i = 0; i < draw_count; ++i)
+	{
+		VkPipeline wanted = draws[i].static_mesh ? r->mesh_pipeline : r->terrain_pipeline;
+		if (wanted != bound_pipeline)
+		{
+			vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, wanted);
+			bound_pipeline = wanted;
+		}
 		bind_draw(r, command, &draws[i], &draws[i].push);
+	}
 	vkCmdEndRenderPass(command);
 
 #ifdef DEBUG_SHADER_DUMP

@@ -72,6 +72,9 @@ float shadow_visibility(vec3 position, vec3 N) {
     return texture(shadow_map, vec4(coord.xy, float(cascade), coord.z));
 }
 
+/* Static-mesh shading: photogrammetry albedo/ORM/normal sampled directly
+   through the asset's own unwrapped UVs. Lighting matches the terrain forward
+   pass so the two stay visually consistent. */
 void main() {
     vec3 base_color = texture(albedo_map, uv).rgb;
     vec3 orm = texture(orm_map, uv).rgb;
@@ -116,8 +119,6 @@ void main() {
     float visibility = shadow_visibility(camera_relative_position, N);
     vec3 direct = (bxdf.diffuse + bxdf.specular) *
                   frame.sun_radiance.rgb * NoL * visibility;
-    /* Retain the pre-IBL hemispheric approximation. AO remains restricted to
-       this indirect diffuse term and never darkens sun or specular lighting. */
     vec3 ambient = indirect_diffuse *
                    (0.045 + 0.10 * max(N.y, 0.0)) * orm.r;
     out_color = vec4(direct + ambient, 1.0);
@@ -125,8 +126,8 @@ void main() {
     vec2 previous_uv = previous_clip.xy / previous_clip.w * 0.5 + 0.5;
     out_motion = previous_uv - current_uv;
 
-    /* See SHADER_DUMP_LEGEND["terrain"] in renderer.c for the f0..f19 layout. */
-    shader_dump(DUMP_SHADER_TERRAIN,
+    /* See SHADER_DUMP_LEGEND["terrain/mesh"] in renderer.c for the f0..f19 layout. */
+    shader_dump(DUMP_SHADER_MESH,
                 vec4(uv, roughness, NoL),
                 vec4(base_color, visibility),
                 vec4(N, metallic),

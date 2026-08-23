@@ -1,8 +1,23 @@
 #include "input.h"
 
+#include <stdio.h>
+
+static void set_mouse_capture(Input *in, SDL_Window *window, bool captured)
+{
+	if (SDL_SetWindowRelativeMouseMode(window, captured))
+	{
+		in->mouse_captured = captured;
+		if (captured)
+			SDL_HideCursor();
+		else
+			SDL_ShowCursor();
+	}
+	else
+		fprintf(stderr, "Could not change relative mouse mode: %s\n", SDL_GetError());
+}
+
 void input_poll(Input *in, SDL_Window *window)
 {
-	(void)window;
 	in->quit = false;
 	in->resized = false;
 	in->toggle_quarry_shading = false;
@@ -59,17 +74,30 @@ void input_poll(Input *in, SDL_Window *window)
 			in->dump_shader_data = true;
 		if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_C)
 			in->clear_shader_dump = true;
+		if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
+			(event.key.key == SDLK_LCTRL || event.key.key == SDLK_RCTRL))
+			set_mouse_capture(in, window, !in->mouse_captured);
 		if (event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED)
 			in->resized = true;
 	}
 
 	float mouse_x = 0.0f, mouse_y = 0.0f;
 	SDL_GetRelativeMouseState(&mouse_x, &mouse_y);
-	in->look_dx = mouse_x;
-	in->look_dy = mouse_y;
+	in->look_dx = in->mouse_captured ? mouse_x : 0.0f;
+	in->look_dy = in->mouse_captured ? mouse_y : 0.0f;
 
 	const bool *keys = SDL_GetKeyboardState(NULL);
-	in->move_forward = (keys[SDL_SCANCODE_W] ? 1.0f : 0.0f) - (keys[SDL_SCANCODE_S] ? 1.0f : 0.0f);
-	in->move_right = (keys[SDL_SCANCODE_D] ? 1.0f : 0.0f) - (keys[SDL_SCANCODE_A] ? 1.0f : 0.0f);
-	in->sprint = keys[SDL_SCANCODE_LSHIFT];
+	if (in->mouse_captured)
+	{
+		in->move_forward =
+			(keys[SDL_SCANCODE_W] ? 1.0f : 0.0f) - (keys[SDL_SCANCODE_S] ? 1.0f : 0.0f);
+		in->move_right = (keys[SDL_SCANCODE_D] ? 1.0f : 0.0f) - (keys[SDL_SCANCODE_A] ? 1.0f : 0.0f);
+		in->sprint = keys[SDL_SCANCODE_LSHIFT];
+	}
+	else
+	{
+		in->move_forward = 0.0f;
+		in->move_right = 0.0f;
+		in->sprint = false;
+	}
 }

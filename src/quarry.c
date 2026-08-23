@@ -108,6 +108,40 @@ bool quarry_create(struct Renderer *renderer, Quarry *out, const char *directory
 	}
 	memcpy(out->owned_indices, data + QUARRY_INDICES_OFFSET, QUARRY_INDICES * sizeof(uint32_t));
 	free(file);
+
+	/* Verbose parse dump for cross-checking against an independent glTF reader.
+	   QUARRY_DUMP=<path> writes every vertex and index exactly as uploaded to the
+	   GPU, so any divergence in UVs, positions, or winding is diffable offline. */
+	const char *dump_path = getenv("QUARRY_DUMP");
+	if (dump_path)
+	{
+		FILE *dump = fopen(dump_path, "w");
+		if (dump)
+		{
+			float uv_min[2] = {1e30f, 1e30f}, uv_max[2] = {-1e30f, -1e30f};
+			fprintf(dump, "# vertices=%u indices=%u\n", QUARRY_VERTICES, QUARRY_INDICES);
+			fprintf(dump, "V i u v px py pz nx ny nz tx ty tz tw\n");
+			for (uint32_t i = 0; i < QUARRY_VERTICES; ++i)
+			{
+				const Vertex *v = &out->owned_vertices[i];
+				for (uint32_t c = 0; c < 2; ++c)
+				{
+					uv_min[c] = v->texcoord[c] < uv_min[c] ? v->texcoord[c] : uv_min[c];
+					uv_max[c] = v->texcoord[c] > uv_max[c] ? v->texcoord[c] : uv_max[c];
+				}
+				fprintf(dump, "V %u %.8g %.8g %.8g %.8g %.8g %.8g %.8g %.8g %.8g %.8g %.8g %.8g\n", i,
+						v->texcoord[0], v->texcoord[1], v->position[0], v->position[1],
+						v->position[2], v->normal[0], v->normal[1], v->normal[2], v->tangent[0],
+						v->tangent[1], v->tangent[2], v->tangent[3]);
+			}
+			for (uint32_t i = 0; i < QUARRY_INDICES; ++i)
+				fprintf(dump, "I %u %u\n", i, out->owned_indices[i]);
+			fclose(dump);
+			fprintf(stderr, "quarry: dumped parse to %s (uv range [%.6g,%.6g]x[%.6g,%.6g])\n",
+					dump_path, uv_min[0], uv_max[0], uv_min[1], uv_max[1]);
+		}
+	}
+
 	out->base = (Mesh){.local_to_world = coordinate_identity_transform((WorldPosition){0}),
 					   .vertices = out->owned_vertices,
 					   .vertex_count = QUARRY_VERTICES,

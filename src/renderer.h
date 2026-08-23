@@ -47,6 +47,7 @@ typedef struct
 	vec4s atmosphere_options;
 	vec4s temporal_parameters; /* history valid, dt, sRGB swapchain, reserved */
 	vec4s temporal_jitter;	   /* current NDC xy, previous NDC xy */
+	vec4s shader_dump;		   /* dump enabled (x), reserved */
 } FrameUniforms;
 
 typedef struct
@@ -77,6 +78,9 @@ typedef struct
 {
 	const Mesh *mesh;
 	DrawPushConstants push;
+	/* Route through the triplanar static-mesh pipeline instead of the terrain
+	   pipeline. Terrain tiles leave this false; imported meshes set it. */
+	bool static_mesh;
 } RendererDraw;
 
 typedef struct Renderer
@@ -142,6 +146,7 @@ typedef struct Renderer
 	VkPipelineLayout temporal_pipeline_layout;
 	VkPipelineLayout atmosphere_pipeline_layout;
 	VkPipeline terrain_pipeline;
+	VkPipeline mesh_pipeline; /* triplanar static-mesh pipeline (imported assets) */
 	VkPipeline tone_map_pipeline;
 	VkPipeline atmosphere_composite_pipeline;
 	VkPipeline taa_pipeline;
@@ -171,11 +176,14 @@ typedef struct Renderer
 	uint32_t history_index;
 	bool temporal_history_valid;
 #ifdef DEBUG_SHADER_DUMP
-	/* Debug-only append buffer: terrain.frag writes one record per shaded
-	   terrain fragment (set 0, binding 3). Sized to the swapchain extent and
-	   recreated with it. See renderer_dump_shader_data. */
+	/* Debug-only append buffer (set 0, binding 3): every instrumented fragment
+	   shader appends one labelled record per invocation when frame.shader_dump.x
+	   is set. Sized to swapchain_extent * shader_dump_layer_budget so overdraw
+	   across all shaders in a frame fits; recreated with the swapchain. See
+	   renderer_dump_shader_data. */
 	GpuBuffer shader_dump_buffer;
 	uint32_t shader_dump_capacity;
+	uint32_t shader_dump_layer_budget;
 #endif
 } Renderer;
 
@@ -207,9 +215,12 @@ void renderer_free_material_set(Renderer *r, VkDescriptorSet set);
 void renderer_reload_pipeline(Renderer *r);
 
 #ifdef DEBUG_SHADER_DUMP
-/* Wait for the GPU, read back the per-fragment records terrain.frag wrote this
-   frame, and append them as CSV (with a timestamped header) to `path`, creating
-   parent directories as needed. Returns the number of records written. */
+/* Wait for the GPU, read back the per-fragment records every instrumented
+   shader wrote this frame (only populated when frame.shader_dump.x was set),
+   and append them as CSV (with a timestamped header and per-shader legend) to
+   `path`, creating parent directories as needed. Honours the optional
+   DUMP_SHADER and DUMP_RECT env filters. Returns the number of records
+   written after filtering. */
 uint32_t renderer_dump_shader_data(Renderer *r, const char *path);
 /* Truncate the dump file at `path` so subsequent dumps start fresh. */
 void renderer_clear_shader_dump(const char *path);

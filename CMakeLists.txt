@@ -3,9 +3,10 @@ project(terrain_renderer C)
 
 include(CTest)
 
-# Debug-only diagnostic: terrain.frag writes a per-fragment record buffer that the
-# 'X' key dumps to a CSV file (cleared with 'C' or a clean build). Off by default;
-# enable with -DDEBUG_SHADER_DUMP=ON. See renderer_dump_shader_data.
+# Debug-only diagnostic: every instrumented fragment shader (see shaders/shader_dump.glsl)
+# writes a per-fragment record buffer that the 'X' key dumps to a CSV file (cleared
+# with 'C' or a clean build). Off by default; enable with -DDEBUG_SHADER_DUMP=ON.
+# See renderer_dump_shader_data.
 option(DEBUG_SHADER_DUMP "Enable the 'X'-key per-fragment shader data dump" OFF)
 set(SHADER_DUMP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/debug_dumps")
 
@@ -44,7 +45,7 @@ endif()
 # nested #ifdef combinations with no inventory. Shared includes (common.glsl)
 # are picked up automatically via the per-shader depfile below, so editing an
 # include rebuilds every dependent shader.
-foreach(SHADER cube.vert cube.frag terrain.vert terrain.frag shadow.vert
+foreach(SHADER cube.vert cube.frag terrain.vert terrain.frag mesh.vert mesh.frag shadow.vert
                fullscreen.vert tonemap.frag atmosphere_composite.frag
                temporal_resolve.frag luminance_histogram.comp exposure.comp
                atmosphere_transmittance.comp

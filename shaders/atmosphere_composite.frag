@@ -3,6 +3,7 @@
 
 #include "common.glsl"
 #include "atmosphere_common.glsl"
+#include "shader_dump.glsl"
 
 layout(location = 0) in vec2 texcoord;
 layout(location = 0) out vec4 out_color;
@@ -50,14 +51,24 @@ vec3 debug_atmosphere(float mode) {
                       vec3(texcoord, layer), 0.0).rgb;
 }
 
+/* See SHADER_DUMP_LEGEND["atmosphere_composite"] in renderer.c for the f0..f19
+   layout; f3 (branch) identifies which of the four exits below produced the
+   record: 1=LUT debug view, 2=debug passthrough, 3=sky (no depth), 4=aerial
+   perspective composite. */
 void main() {
     vec3 source = texture(hdr_scene, texcoord).rgb;
     if (frame.debug_view > 11.5 && frame.debug_view < 16.5) {
         out_color = vec4(debug_atmosphere(frame.debug_view), 1.0);
+        shader_dump(DUMP_SHADER_ATMOSPHERE_COMPOSITE,
+                    vec4(texcoord, 0.0, 1.0), vec4(out_color.rgb, 0.0),
+                    vec4(0.0), vec4(0.0), vec4(0.0));
         return;
     }
     if (frame.debug_view > 0.5 && frame.debug_view < 11.5) {
         out_color = vec4(source, 1.0);
+        shader_dump(DUMP_SHADER_ATMOSPHERE_COMPOSITE,
+                    vec4(texcoord, 0.0, 2.0), vec4(out_color.rgb, 0.0),
+                    vec4(0.0), vec4(0.0), vec4(0.0));
         return;
     }
 
@@ -67,6 +78,9 @@ void main() {
     vec3 view_direction = normalize(ray_h.xyz);
     if (depth <= 1e-8) {
         out_color = vec4(sky_with_sun(view_direction), 1.0);
+        shader_dump(DUMP_SHADER_ATMOSPHERE_COMPOSITE,
+                    vec4(texcoord, depth, 3.0), vec4(out_color.rgb, 0.0),
+                    vec4(view_direction, 0.0), vec4(0.0), vec4(0.0));
         return;
     }
 
@@ -82,4 +96,8 @@ void main() {
     scattering *= near_weight;
     transmittance = mix(vec3(1.0), transmittance, near_weight);
     out_color = vec4(source * transmittance + scattering, 1.0);
+    shader_dump(DUMP_SHADER_ATMOSPHERE_COMPOSITE,
+                vec4(texcoord, depth, 4.0), vec4(out_color.rgb, 0.0),
+                vec4(view_direction, distance_km), vec4(scattering, near_weight),
+                vec4(transmittance, w));
 }

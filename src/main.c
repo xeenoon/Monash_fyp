@@ -47,7 +47,7 @@ int main(void)
 		.pitch = -3.0f,
 	};
 
-	Input input = {0};
+	Input input = {.mouse_captured = true};
 	uint64_t start_ticks = SDL_GetTicksNS();
 	uint64_t previous_ticks = start_ticks;
 	mat4s previous_projection = GLMS_MAT4_IDENTITY_INIT;
@@ -90,6 +90,14 @@ int main(void)
 	while (running)
 	{
 		input_poll(&input, window);
+#ifdef DEBUG_SHADER_DUMP
+		/* Input is polled before the draw, so whether this frame should dump is
+		   known in time to flip frame.shader_dump.x before renderer_draw_frame.
+		   Predicts the same "last countdown frame" the post-draw auto-dump check
+		   below fires on, since rendered_frames is unchanged in between. */
+		bool dump_this_frame =
+			input.dump_shader_data || (auto_dump_after && rendered_frames + 1 >= auto_dump_after);
+#endif
 		unsigned previous_debug_mode = debug_mode;
 		if (input.quit)
 			running = false;
@@ -171,7 +179,8 @@ int main(void)
 			.material = {{quarry.metallic_factor, use_default_lit ? 1.0f : 0.0f, 0.0f, 0.0f}},
 			.debug = {{0.0f, 0.0f, 0.0f, 0.0f}},
 		};
-		RendererDraw quarry_draw = {.mesh = &quarry.base, .push = quarry_push};
+		RendererDraw quarry_draw = {
+			.mesh = &quarry.base, .push = quarry_push, .static_mesh = true};
 
 		vec2s jitter = temporal_jitter_ndc(temporal_frame++, renderer.swapchain_extent.width,
 										   renderer.swapchain_extent.height);
@@ -253,6 +262,9 @@ int main(void)
 				(vec4s){{atmosphere.aerial_max_distance_km, (float)atmosphere_slice, 0.0f, 0.0f}},
 			.temporal_parameters = (vec4s){{use_history ? 1.0f : 0.0f, dt, 0.0f, 0.0f}},
 			.temporal_jitter = (vec4s){{jitter.x, jitter.y, previous_jitter.x, previous_jitter.y}},
+#ifdef DEBUG_SHADER_DUMP
+			.shader_dump = (vec4s){{dump_this_frame ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f}},
+#endif
 		};
 		for (uint32_t i = 0; i < SHADOW_CASCADE_COUNT; ++i)
 			frame.shadow_view_projection[i] = shadow_cascades.view_projection[i];

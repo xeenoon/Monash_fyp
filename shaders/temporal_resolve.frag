@@ -2,6 +2,7 @@
 #extension GL_GOOGLE_include_directive : require
 
 #include "common.glsl"
+#include "shader_dump.glsl"
 
 layout(location = 0) in vec2 texcoord;
 layout(location = 0) out vec4 out_history;
@@ -107,4 +108,14 @@ void main() {
 
     bool temporal_debug = frame.debug_view > 16.5 && frame.debug_view < 20.5;
     out_history = vec4(temporal_debug ? resolved : hdr_expand(resolved), 1.0);
+
+    /* See SHADER_DUMP_LEGEND["temporal_resolve"] in renderer.c for the f0..f19
+       layout. `history` here is post neighbourhood-clamp; `resolved` is the
+       final blended value before hdr_expand. */
+    shader_dump(DUMP_SHADER_TEMPORAL_RESOLVE,
+                vec4(texcoord, depth, valid ? 1.0 : 0.0),
+                vec4(velocity, motion_pixels, current_weight),
+                vec4(current, 0.0),
+                vec4(history, 0.0),
+                vec4(resolved, 0.0));
 }
