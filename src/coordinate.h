@@ -38,6 +38,10 @@ typedef struct
 } LocalToWorldTransform;
 
 LocalToWorldTransform coordinate_identity_transform(WorldPosition translation);
+/* Rotation about +Y (radians), right-handed: +Z rotates toward +X as the angle
+   increases. Used to orient imported assets (e.g. picking which mesh face
+   faces the camera) without touching their baked vertex data. */
+LocalToWorldTransform coordinate_rotation_y(double radians, WorldPosition translation);
 
 /* The world-space subtraction is deliberately performed before the result is
    narrowed to float. Never replace this with two float casts and a GPU-side

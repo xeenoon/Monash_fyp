@@ -1,11 +1,25 @@
 #include "coordinate.h"
 
+#include <math.h>
+
 LocalToWorldTransform coordinate_identity_transform(WorldPosition translation)
 {
 	LocalToWorldTransform transform = {.translation = translation};
 	transform.rotation[0][0] = 1.0;
 	transform.rotation[1][1] = 1.0;
 	transform.rotation[2][2] = 1.0;
+	return transform;
+}
+
+LocalToWorldTransform coordinate_rotation_y(double radians, WorldPosition translation)
+{
+	LocalToWorldTransform transform = {.translation = translation};
+	double c = cos(radians), s = sin(radians);
+	transform.rotation[0][0] = c;
+	transform.rotation[0][2] = -s;
+	transform.rotation[1][1] = 1.0;
+	transform.rotation[2][0] = s;
+	transform.rotation[2][2] = c;
 	return transform;
 }
 

@@ -12,6 +12,13 @@ enum
 	QUARRY_VERTICES = 10801,
 	QUARRY_INDICES = 60003
 };
+/* The scanned asset's best-reconstructed ("hero") face looks toward the mesh's
+   own +Z; every other face is a rougher/smeared part of the photogrammetry
+   scan (confirmed by offline per-face albedo renders, see debug_dumps
+   analysis). The default camera looks toward +Z, so it sees whichever mesh
+   face points toward -Z; rotate that hero face to -Z with a 180-degree turn
+   about Y so the opening view matches the asset's store preview. */
+static const double QUARRY_HERO_YAW_DEGREES = 180.0;
 enum
 {
 	GLB_HEADER_BYTES = 12,
@@ -142,7 +149,8 @@ bool quarry_create(struct Renderer *renderer, Quarry *out, const char *directory
 		}
 	}
 
-	out->base = (Mesh){.local_to_world = coordinate_identity_transform((WorldPosition){0}),
+	out->base = (Mesh){.local_to_world = coordinate_rotation_y(
+							glm_rad((float)QUARRY_HERO_YAW_DEGREES), (WorldPosition){0}),
 					   .vertices = out->owned_vertices,
 					   .vertex_count = QUARRY_VERTICES,
 					   .indices = out->owned_indices,
