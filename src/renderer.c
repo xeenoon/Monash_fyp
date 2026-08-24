@@ -124,7 +124,8 @@ _Static_assert(offsetof(FrameUniforms, temporal_parameters) == 1072,
 _Static_assert(offsetof(FrameUniforms, temporal_jitter) == 1088,
 			   "FrameUniforms temporal jitter offset");
 _Static_assert(offsetof(FrameUniforms, shader_dump) == 1104, "FrameUniforms shader dump offset");
-_Static_assert(sizeof(FrameUniforms) == 1120, "FrameUniforms std140 size");
+_Static_assert(offsetof(FrameUniforms, material_detail_settings) == 1120, "FrameUniforms material detail offset");
+_Static_assert(sizeof(FrameUniforms) == 1136, "FrameUniforms std140 size");
 _Static_assert(sizeof(DrawPushConstants) == 128, "terrain push constant size");
 _Static_assert(offsetof(TemporalExposure, histogram) == 16,
 			   "TemporalExposure std430 histogram offset");
@@ -1989,7 +1990,7 @@ static const char *const SHADER_DUMP_LEGEND[] = {
 	"f16-18=final_specular f19=roughness\n",
 	"# legend: material_detail f0=authored_roughness f1=effective_roughness f2=curvature_floor f3=normal_variance "
 	"f4=AO_sample f5=AO_visibility f6=cavity_sample f7=cavity_strength f8=cavity_visibility "
-	"f9=curvature_strength f10=real_cavity_bound f11=phase_D_active f12-19=_\n",
+	"f9=curvature_strength f10=cavity_descriptor_bound f11=phase_D_active f12-19=_\n",
 };
 
 /* Optional CPU-side output filters, applied only at write time (the GPU always

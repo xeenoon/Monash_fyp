@@ -67,6 +67,8 @@ typedef struct
 	vec4s temporal_parameters; /* history valid, dt, sRGB swapchain, reserved */
 	vec4s temporal_jitter;	   /* current NDC xy, previous NDC xy */
 	vec4s shader_dump;		   /* dump enabled (x), reserved */
+	/* D1 curvature response: scale, bias, exponent, reserved. */
+	vec4s material_detail_settings;
 } FrameUniforms;
 
 typedef struct

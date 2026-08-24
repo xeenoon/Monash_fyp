@@ -11,6 +11,7 @@ int main(void)
     float a = .55f, low = static_material_curvature_floor(.01f, .2f);
     float high = static_material_curvature_floor(.04f, .2f);
     assert(isfinite(low) && low >= 0.f && low <= 1.f && high >= low);
+    assert(fabsf(static_material_curvature_floor(.04f, 1.f) - .342f) < .01f);
     assert(static_material_effective_roughness(a, low) >= a);
     assert(static_material_effective_roughness(a, 1.f) == 1.f);
     assert(static_material_visibility(.2f, 0.f) == 1.f);

@@ -170,8 +170,7 @@ bool quarry_create(struct Renderer *renderer, Quarry *out, const char *directory
 	{
 		texture_load_linear(renderer->device, renderer->allocator, renderer->upload, &out->cavity,
 							cavity_path, renderer->max_anisotropy);
-		renderer_free_material_set(renderer, out->base.material_set);
-		out->base.material_set = renderer_allocate_pbr5_set(renderer, &out->base.texture, &out->base.orm,
+		out->cavity_material_set = renderer_allocate_pbr5_set(renderer, &out->base.texture, &out->base.orm,
 			&out->base.normal_map, &out->base.orm, &out->cavity);
 		out->cavity_available = true;
 		fprintf(stdout, "Quarry cavity: %s\n", cavity_path);
@@ -187,6 +186,8 @@ void quarry_destroy(struct Renderer *renderer, Quarry *quarry)
 	if (renderer)
 	{
 		mesh_destroy(renderer, &quarry->base);
+		if (quarry->cavity_material_set)
+			renderer_free_material_set(renderer, quarry->cavity_material_set);
 		if (quarry->cavity.image)
 			texture_destroy(renderer->device, renderer->allocator, &quarry->cavity);
 	}

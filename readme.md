@@ -75,7 +75,8 @@ building any natural-only `.trn` dataset.
 - F6: toggle logarithmic linear-depth debug view
 - F7: toggle quadtree LOD colours
 - F8: cycle unlit, subtle relight, and full material lighting
-- F9: cycle normal, slope, curvature, and height-gradient views
+- F9: cycle static-mesh mapped normal, authored roughness, curvature roughness,
+  and effective roughness (R=authored, G=effective, B=curvature floor)
 - F10: cycle cascade, shadow-coordinate, visibility, bias, and raw-map views
 
 - F11: cycle atmosphere LUT and aerial-volume debug views

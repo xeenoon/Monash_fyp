@@ -9,5 +9,8 @@
     {"path":"coastal_cliff_01/textures/coastal_cliff_01_arm_4k.jpg", "url":"https://dl.polyhaven.org/file/ph-assets/Models/jpg/4k/coastal_cliff_01/coastal_cliff_01_arm_4k.jpg", "algorithm":"md5", "checksum":"b92548e874e430a44cf9dc0c40c941a8"},
     {"path":"coastal_cliff_01/textures/coastal_cliff_01_nor_gl_4k.jpg", "url":"https://dl.polyhaven.org/file/ph-assets/Models/jpg/4k/coastal_cliff_01/coastal_cliff_01_nor_gl_4k.jpg", "algorithm":"md5", "checksum":"e962b55e2917e36969889f6d265ec688"},
     {"path":"quarry_01_4k.hdr", "url":"https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/quarry_01_4k.hdr", "algorithm":"md5", "checksum":"a5396f4e17c350511cb6545503a68fea"}
+    ,{"path":"blue_metal_plate/blue_metal_plate_diff_4k.jpg", "url":"https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/blue_metal_plate/blue_metal_plate_diff_4k.jpg", "algorithm":"md5", "checksum":"50d428a4c90d0c1a158e7b9d6521d624"}
+    ,{"path":"blue_metal_plate/blue_metal_plate_nor_gl_4k.png", "url":"https://dl.polyhaven.org/file/ph-assets/Textures/png/4k/blue_metal_plate/blue_metal_plate_nor_gl_4k.png", "algorithm":"md5", "checksum":"5af4a9f6cc10bfac9ddb6083a7c8b6fe"}
+    ,{"path":"blue_metal_plate/blue_metal_plate_arm_4k.png", "url":"https://dl.polyhaven.org/file/ph-assets/Textures/png/4k/blue_metal_plate/blue_metal_plate_arm_4k.png", "algorithm":"md5", "checksum":"7d0f0667ec14adb7ebb79fc2443aa959"}
   ]
 }

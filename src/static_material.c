@@ -14,7 +14,8 @@ float static_material_curvature_floor(float variance, float curvature_strength)
 {
     if (!isfinite(variance) || !isfinite(curvature_strength) || variance <= 0.f || curvature_strength <= 0.f)
         return 0.f;
-    return clamp01(sqrtf(variance) * curvature_strength);
+    /* CPU mirror of material_detail.glsl's initial Unreal defaults. */
+    return clamp01(powf(variance, .333f) * curvature_strength);
 }
 float static_material_effective_roughness(float authored, float curvature_floor)
 { return fmaxf(authored, clamp01(curvature_floor)); }

@@ -159,7 +159,9 @@ void main() {
     if (frame.debug_view > 2.5 && frame.debug_view < 3.5) { out_color = vec4(N * .5 + .5, 1); return; }
     if (frame.debug_view > 3.5 && frame.debug_view < 4.5) { out_color = vec4(vec3(authored_roughness), 1); return; }
     if (frame.debug_view > 4.5 && frame.debug_view < 5.5) { out_color = vec4(vec3(curvature_floor), 1); return; }
-    if (frame.debug_view > 5.5 && frame.debug_view < 6.5) { out_color = vec4(roughness, ao * cavity_visibility, 0, 1); return; }
+    /* Effective material-detail diagnostic: authored (R), effective (G),
+       curvature floor (B).  Green therefore appears only where D raises it. */
+    if (frame.debug_view > 5.5 && frame.debug_view < 6.5) { out_color = vec4(authored_roughness, roughness, curvature_floor, 1); return; }
     out_color = vec4(direct + ambient + specular_ibl, 1.0);
     vec2 current_uv = current_clip.xy / current_clip.w * 0.5 + 0.5;
     vec2 previous_uv = previous_clip.xy / previous_clip.w * 0.5 + 0.5;
@@ -183,7 +185,7 @@ void main() {
     shader_dump(DUMP_SHADER_MATERIAL_DETAIL,
                 vec4(authored_roughness, roughness, curvature_floor, normal_variance),
                 vec4(texture(occlusion_map, uv).r, ao, cavity_sample, draw.debug.x),
-                vec4(cavity_visibility, draw.debug.w, draw.debug.x > 0.0 ? 1.0 : 0.0,
+                vec4(cavity_visibility, draw.debug.w, draw.debug.y > 0.5 ? 1.0 : 0.0,
                      draw.debug.w > 0.0 ? 1.0 : 0.0),
                 vec4(0.0), vec4(0.0));
 }

@@ -16,6 +16,7 @@ typedef struct
 	   forward shader instead of treating the texture as metallic by itself. */
 	float metallic_factor;
 	Texture cavity;
+	VkDescriptorSet cavity_material_set; /* base set remains the neutral C binding */
 	bool cavity_available;
 } Quarry;
 
