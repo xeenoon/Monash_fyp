@@ -14,6 +14,11 @@
 
 #define MAX_FRAMES_IN_FLIGHT 1
 
+/* B2 specular IBL cube: mip count for a 128x128 face (128->64->...->1). Mip 0
+   is the mirror copy of the equirect; mips 1..ENV_CUBE_MIPS-1 are the GGX
+   prefilter, increasing roughness. See environment_prefilter() in renderer.c. */
+#define ENV_CUBE_MIPS 8u
+
 /* Per-frame shader data (descriptor set 0). All matrices operate on small,
    camera-relative floats. Absolute world positions never cross the CPU/GPU
    boundary. Current and previous state is present now so motion vectors can be
@@ -59,14 +64,18 @@ typedef struct
 	uint32_t histogram[256];
 } TemporalExposure;
 
-/* Diffuse sky IBL (set 0, binding 4). Independent of FrameUniforms -- its own
-   std140 contract, updated once at load (unlike the per-frame UBO). Mirrored
-   byte-for-byte by the EnvironmentUniforms block in common.glsl. */
+/* Diffuse + specular sky IBL (set 0, bindings 4-5). Independent of
+   FrameUniforms -- its own std140 contract, updated once at load (unlike the
+   per-frame UBO). Mirrored byte-for-byte by the EnvironmentUniforms block in
+   common.glsl. The specular cube itself is bound separately at binding 5 (a
+   sampler, not part of this UBO); env_params.z just tells the shader its max
+   mip index. */
 typedef struct
 {
 	vec4s sh[9];	   /* 3rd-order SH, RGB in .xyz; cosine-lobe + 1/pi baked in
 						  (see EnvironmentSH in environment.h) */
-	vec4s env_params; /* x: enabled, y: diffuse intensity, z/w: reserved */
+	vec4s env_params; /* x: enabled, y: intensity (diffuse+specular), z:
+						  specular cube max mip index, w: reserved */
 } EnvironmentUniforms;
 
 /* Exactly 128 bytes, the Vulkan minimum guaranteed push-constant capacity.
@@ -139,6 +148,11 @@ typedef struct Renderer
 	GpuBuffer frame_ubo[MAX_FRAMES_IN_FLIGHT];
 	GpuBuffer exposure_buffer;
 	GpuBuffer environment_ubo; /* diffuse sky IBL SH-9, set 0 binding 4; see environment.c */
+	Texture environment_cube; /* B2 specular IBL cube, set 0 binding 5 */
+	/* Transient B2 prefilter input: the equirect HDR uploaded as a GPU texture
+	   by create_environment, consumed and destroyed by environment_prefilter
+	   once the compute pipelines exist. Zeroed (unused) after init. */
+	Texture environment_equirect;
 	VkDescriptorSet frame_set[MAX_FRAMES_IN_FLIGHT];
 	Texture fallback_texture;
 	Texture terrain_detail_texture;
@@ -174,6 +188,13 @@ typedef struct Renderer
 	Texture atmosphere_aerial_scattering;
 	Texture atmosphere_aerial_transmittance;
 	bool atmosphere_static_ready;
+	/* B2 specular IBL prefilter: init-time-only compute pipeline and
+	   descriptor state. environment_to_cube/prefilter run once in
+	   environment_prefilter() (renderer.c); nothing here is touched per frame. */
+	VkDescriptorSetLayout environment_prefilter_set_layout;
+	VkPipelineLayout environment_pipeline_layout;
+	VkPipeline environment_to_cube_pipeline;
+	VkPipeline environment_prefilter_pipeline;
 	Texture shadow_map;
 	VkSampler shadow_raw_sampler;
 	VkImageView shadow_layer_views[SHADOW_CASCADE_COUNT];

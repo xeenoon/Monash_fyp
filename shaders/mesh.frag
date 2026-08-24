@@ -103,16 +103,18 @@ void main() {
     float roughness = clamp(orm.g, 0.045, 1.0);
     float metallic;
     vec3 indirect_diffuse;
+    vec3 F0;
     UeDefaultLit bxdf;
     if (default_lit) {
         metallic = clamp(orm.b * draw.material_factors.x, 0.0, 1.0);
-        vec3 F0 = mix(vec3(0.04), base_color, metallic);
+        F0 = mix(vec3(0.04), base_color, metallic);
         vec3 diffuse_color = base_color * (1.0 - metallic);
         bxdf = ue_default_lit_bxdf(
             diffuse_color, F0, roughness, N, V, L);
         indirect_diffuse = diffuse_color;
     } else {
         metallic = orm.b;
+        F0 = mix(vec3(0.04), base_color, metallic);
         bxdf = legacy_quarry_bxdf(
             base_color, metallic, roughness, N, V, L);
         indirect_diffuse = base_color;
@@ -125,12 +127,27 @@ void main() {
        off (material_factors.z), so the render is byte-identical to pre-
        Phase-B in either case. AO (orm.r) applies only here, never to direct
        or specular. */
-    bool ibl_enabled = env.env_params.x > 0.5 && draw.material_factors.z > 0.5;
-    vec3 irradiance = ibl_enabled
+    bool diffuse_ibl_enabled = env.env_params.x > 0.5 && draw.material_factors.z > 0.5;
+    vec3 irradiance = diffuse_ibl_enabled
         ? environment_irradiance(N) * env.env_params.y
         : vec3(0.045 + 0.10 * max(N.y, 0.0));
     vec3 ambient = indirect_diffuse * irradiance * orm.r;
-    out_color = vec4(direct + ambient, 1.0);
+    /* Sky specular IBL (Phase B2). Its own F3 step (material_factors.w),
+       one past diffuse-only, so B1 and B2 can be compared independently.
+       Reuses the analytic split-sum energy terms already computed for the
+       direct BRDF instead of a baked LUT. AO (orm.r) must NOT scale
+       specular, unlike ambient above. */
+    bool specular_ibl_enabled = env.env_params.x > 0.5 && draw.material_factors.w > 0.5;
+    vec3 specular_ibl = vec3(0.0);
+    if (specular_ibl_enabled) {
+        float NoV = clamp(dot(N, V), 0.0, 1.0);
+        vec3 R = reflect(-V, N);
+        float mip = roughness * env.env_params.z;
+        vec3 prefiltered = textureLod(env_specular, R, mip).rgb * env.env_params.y;
+        UeBxdfEnergyTerms energy = ue_compute_ggx_spec_energy_terms(roughness, NoV, F0);
+        specular_ibl = prefiltered * energy.specular_energy;
+    }
+    out_color = vec4(direct + ambient + specular_ibl, 1.0);
     vec2 current_uv = current_clip.xy / current_clip.w * 0.5 + 0.5;
     vec2 previous_uv = previous_clip.xy / previous_clip.w * 0.5 + 0.5;
     out_motion = previous_uv - current_uv;

@@ -44,8 +44,15 @@ layout(set = 0, binding = 2) uniform sampler2DArray shadow_map_raw;
    per frame (see environment.c). */
 layout(set = 0, binding = 4) uniform EnvironmentUniforms {
     vec4 sh[9];       /* 3rd-order SH, RGB in .xyz; cosine-lobe + 1/pi baked in */
-    vec4 env_params;  /* x: enabled, y: diffuse intensity, z/w: reserved */
+    vec4 env_params;  /* x: enabled, y: diffuse intensity, z: specular cube max
+                          mip index, w: reserved */
 } env;
+
+/* Specular sky IBL (set 0, binding 5, B2): GGX-prefiltered environment cube,
+   mip 0 = mirror (roughness 0) through mip env_params.z = fully rough. Built
+   once at init by environment_prefilter() (renderer.c); absent-able like the
+   diffuse term, gated by env_params.x. */
+layout(set = 0, binding = 5) uniform samplerCube env_specular;
 
 /* 3rd-order real-SH reconstruction of the diffuse (Lambertian) response to the
    environment along N. The basis below must match environment_project_sh9's

@@ -18,16 +18,18 @@ typedef struct
 	float coeffs[9][3];
 } EnvironmentSH;
 
-/* Decode a Radiance .hdr equirectangular environment (RGB, via stbi_loadf).
-   *pixels is allocated by stb_image; free with environment_free_hdr. Returns
-   false (leaving *pixels, *width, *height untouched) if `path` is missing or
-   fails to decode -- the caller falls back to the hemispheric ambient term,
-   per the "absent-able without changing draw submission" invariant. */
+/* Decode a Radiance .hdr equirectangular environment as RGBA (via stbi_loadf,
+   alpha forced to 1) so the same buffer uploads directly to a 4-component GPU
+   format for the B2 specular prefilter with no repacking. *pixels is
+   allocated by stb_image; free with environment_free_hdr. Returns false
+   (leaving *pixels, *width, *height untouched) if `path` is missing or fails
+   to decode -- the caller falls back to the hemispheric ambient term, per the
+   "absent-able without changing draw submission" invariant. */
 bool environment_load_hdr(const char *path, float **pixels, int *width, int *height);
 void environment_free_hdr(float *pixels);
 
-/* Solid-angle-weighted projection of an equirectangular HDR image (RGB,
+/* Solid-angle-weighted projection of an equirectangular HDR image (RGBA,
    row-major, `width`x`height`, u in [0,1) -> longitude, v=0 at +Y/up -> v=1 at
-   -Y/down) onto 3rd-order SH. Pure function, no I/O -- unit-testable
-   independent of environment_load_hdr. */
+   -Y/down; alpha ignored) onto 3rd-order SH. Pure function, no I/O --
+   unit-testable independent of environment_load_hdr. */
 void environment_project_sh9(const float *pixels, int width, int height, EnvironmentSH *out);

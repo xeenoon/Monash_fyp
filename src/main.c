@@ -64,8 +64,9 @@ int main(void)
 	unsigned sun_mode = 0;
 	unsigned atmosphere_slice = 15;
 	/* F3 cycles: 0 = legacy PBR, no IBL ("nothing") -> 1 = Unreal Default Lit,
-	   no IBL ("metallic shader") -> 2 = Default Lit + Phase B diffuse sky IBL
-	   -> back to 0. */
+	   no IBL ("metallic shader") -> 2 = Default Lit + Phase B1 diffuse sky IBL
+	   -> 3 = Default Lit + Phase B1 diffuse + Phase B2 specular sky IBL ->
+	   back to 0. */
 	unsigned quarry_shading_mode = 1;
 	AtmosphereParameters atmosphere = atmosphere_earth();
 	bool running = true;
@@ -106,9 +107,10 @@ int main(void)
 			running = false;
 		if (input.toggle_quarry_shading)
 		{
-			quarry_shading_mode = (quarry_shading_mode + 1) % 3u;
+			quarry_shading_mode = (quarry_shading_mode + 1) % 4u;
 			const char *names[] = {"nothing (legacy PBR)", "metallic shader (Unreal Default Lit)",
-								   "metallic shader + Phase B sky IBL"};
+								   "metallic shader + Phase B1 diffuse sky IBL",
+								   "metallic shader + Phase B1+B2 diffuse+specular sky IBL"};
 			printf("Quarry renderer: %s\n", names[quarry_shading_mode]);
 			history_valid = false;
 		}
@@ -178,12 +180,13 @@ int main(void)
 
 		vec3s camera_forward_direction = camera_forward(&camera);
 		bool default_lit = quarry_shading_mode != 0u;
-		bool ibl_enabled = quarry_shading_mode == 2u;
+		bool diffuse_ibl_enabled = quarry_shading_mode >= 2u;
+		bool specular_ibl_enabled = quarry_shading_mode >= 3u;
 		DrawPushConstants quarry_push = {
 			.local_to_camera_relative =
 				coordinate_local_to_camera_relative(&quarry.base.local_to_world, camera.position),
 			.material = {{quarry.metallic_factor, default_lit ? 1.0f : 0.0f,
-						 ibl_enabled ? 1.0f : 0.0f, 0.0f}},
+						 diffuse_ibl_enabled ? 1.0f : 0.0f, specular_ibl_enabled ? 1.0f : 0.0f}},
 			.debug = {{0.0f, 0.0f, 0.0f, 0.0f}},
 		};
 		RendererDraw quarry_draw = {

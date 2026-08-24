@@ -50,7 +50,8 @@ foreach(SHADER cube.vert cube.frag terrain.vert terrain.frag mesh.vert mesh.frag
                temporal_resolve.frag luminance_histogram.comp exposure.comp
                atmosphere_transmittance.comp
                atmosphere_multiscattering.comp atmosphere_skyview.comp
-               atmosphere_aerial.comp)
+               atmosphere_aerial.comp
+               environment_equirect_to_cube.comp environment_prefilter.comp)
     add_custom_command(
         OUTPUT "${SHADER_OUTPUT_DIR}/${SHADER}.spv"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${SHADER_OUTPUT_DIR}"

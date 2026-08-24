@@ -34,8 +34,8 @@ static void uniform_environment_yields_flat_irradiance(void)
 {
 	const int width = 32, height = 16;
 	const float value = 0.6f;
-	float *pixels = malloc((size_t)width * (size_t)height * 3 * sizeof(float));
-	for (int i = 0; i < width * height * 3; ++i)
+	float *pixels = malloc((size_t)width * (size_t)height * 4 * sizeof(float));
+	for (int i = 0; i < width * height * 4; ++i)
 		pixels[i] = value;
 
 	EnvironmentSH sh;
@@ -59,7 +59,7 @@ static void uniform_environment_yields_flat_irradiance(void)
 static void bright_direction_peaks_reconstruction_along_it(void)
 {
 	const int width = 128, height = 64;
-	float *pixels = calloc((size_t)width * (size_t)height * 3, sizeof(float));
+	float *pixels = calloc((size_t)width * (size_t)height * 4, sizeof(float));
 
 	/* A small bright patch centred where the projection's own convention
 	   places +Z (u=0.25 -> phi=pi/2, v=0.5 -> theta=pi/2): x=sin(theta)cos(phi)=0,
@@ -69,8 +69,9 @@ static void bright_direction_peaks_reconstruction_along_it(void)
 		for (int dx = -1; dx <= 1; ++dx)
 		{
 			int x = cx + dx, y = cy + dy;
-			size_t idx = ((size_t)y * (size_t)width + (size_t)x) * 3;
+			size_t idx = ((size_t)y * (size_t)width + (size_t)x) * 4;
 			pixels[idx + 0] = pixels[idx + 1] = pixels[idx + 2] = 500.0f;
+			pixels[idx + 3] = 1.0f;
 		}
 
 	EnvironmentSH sh;

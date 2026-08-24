@@ -48,6 +48,9 @@ typedef struct
 	bool create_sampler;
 	bool compare_enable;
 	VkCompareOp compare_op;
+	/* Cube-compatible image with a VK_IMAGE_VIEW_TYPE_CUBE sampled view.
+	   Forces array_layers to 6 regardless of the field above. */
+	bool cube;
 } TextureDesc;
 
 /* Create image + view (+ optional sampler). No pixel data; layout is UNDEFINED. */
@@ -107,5 +110,24 @@ Texture texture_create_atmosphere_lut(VkDevice device, GpuAllocator *allocator, 
 /* Sampleable depth-array target used by cascaded directional shadows. */
 Texture texture_create_shadow_array(VkDevice device, GpuAllocator *allocator, VkFormat format,
 									uint32_t resolution, uint32_t layers);
+
+/* RGBA16F cube with a full mip chain, storage + sampled usage, seamless
+   (clamp-to-edge) filtering. Compute fills mip 0 (equirect->cube) and prefilters
+   mips 1..N as increasing roughness (see environment.c / renderer.c B2). */
+Texture texture_create_environment_cube(VkDevice device, GpuAllocator *allocator,
+										uint32_t face_size);
+
+/* A cube's sampled view cannot be bound as a storage image. This is a
+   VK_IMAGE_VIEW_TYPE_2D_ARRAY (6 layers) view of exactly one mip level, usable
+   as a compute storage-image target when writing that mip's six faces. Caller
+   owns and destroys the returned view (not tracked by the Texture). */
+VkImageView texture_create_storage_mip_view(VkDevice device, const Texture *t, uint32_t mip);
+
+/* A VK_IMAGE_VIEW_TYPE_CUBE view restricted to [base_mip, base_mip+mip_count).
+   Used to sample a specific mip range (e.g. only the freshly-written mip 0)
+   while other mips of the same image are still being written. Caller owns and
+   destroys the returned view. */
+VkImageView texture_create_cube_view(VkDevice device, const Texture *t, uint32_t base_mip,
+									 uint32_t mip_count);
 
 void texture_destroy(VkDevice device, GpuAllocator *allocator, Texture *t);

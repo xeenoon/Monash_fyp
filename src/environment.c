@@ -7,7 +7,7 @@
 bool environment_load_hdr(const char *path, float **pixels, int *width, int *height)
 {
 	int channels = 0;
-	float *data = stbi_loadf(path, width, height, &channels, 3);
+	float *data = stbi_loadf(path, width, height, &channels, 4);
 	if (!data)
 		return false;
 	*pixels = data;
@@ -53,7 +53,7 @@ void environment_project_sh9(const float *pixels, int width, int height, Environ
 				1.092548 * x * z,
 				0.546274 * (x * x - y * y),
 			};
-			const float *texel = &pixels[((size_t)j * (size_t)width + (size_t)i) * 3];
+			const float *texel = &pixels[((size_t)j * (size_t)width + (size_t)i) * 4];
 			for (int c = 0; c < 3; ++c)
 			{
 				double L = texel[c] * domega;

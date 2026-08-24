@@ -127,6 +127,9 @@ _Static_assert(sizeof(EnvironmentUniforms) == 160, "EnvironmentUniforms std140 s
    (16 MiB) plus the terrain mesh in a single batch. */
 #define UPLOAD_STAGING_CAPACITY (32u * 1024u * 1024u)
 #define MAX_TEXTURE_SETS 256
+/* B2 specular IBL cube face size; ENV_CUBE_MIPS (renderer.h) must match
+   texture_mip_levels(ENV_FACE_SIZE, ENV_FACE_SIZE). */
+#define ENV_FACE_SIZE 128u
 
 VkDescriptorSet renderer_allocate_terrain_set(Renderer *r, VkImageView albedo_view,
 											  VkSampler albedo_sampler, VkImageView elevation_view,
@@ -219,29 +222,63 @@ void renderer_free_material_set(Renderer *r, VkDescriptorSet set)
    binds r->environment_ubo at set 0 binding 4. Absent-able: if ENV_HDR_PATH
    doesn't decode, env_params.x stays 0 and the shader falls back to the
    original hemispheric-ambient constant -- draw submission is unchanged
-   either way (Phase B architecture invariant #5, unrealplan.md). */
+   either way (Phase B architecture invariant #5, unrealplan.md).
+
+   Also stages the B2 specular prefilter's inputs: the equirect HDR uploaded
+   as r->environment_equirect (a 1x1 black texel when absent), and the empty
+   r->environment_cube it will be baked into. Both must exist before
+   create_descriptors binds environment_cube at set 0 binding 5 -- the actual
+   prefilter compute runs later, in environment_prefilter(), once the compute
+   pipelines it needs exist. */
 static void create_environment(Renderer *r)
 {
 	EnvironmentUniforms uniforms = {0};
 	float *pixels = NULL;
 	int width = 0, height = 0;
-	if (environment_load_hdr(ENV_HDR_PATH, &pixels, &width, &height))
+	bool loaded = environment_load_hdr(ENV_HDR_PATH, &pixels, &width, &height);
+	if (loaded)
 	{
 		EnvironmentSH sh;
 		environment_project_sh9(pixels, width, height, &sh);
-		environment_free_hdr(pixels);
 		for (uint32_t i = 0; i < 9; ++i)
 			uniforms.sh[i] = (vec4s){{sh.coeffs[i][0], sh.coeffs[i][1], sh.coeffs[i][2], 0.0f}};
-		uniforms.env_params = (vec4s){{1.0f, 0.3f, 0.0f, 0.0f}};
 		printf("Environment: loaded IBL from %dx%d %s\n", width, height, ENV_HDR_PATH);
 	}
 	else
 		printf("Environment: no HDR at %s, using hemispheric ambient fallback\n", ENV_HDR_PATH);
+	uniforms.env_params =
+		(vec4s){{loaded ? 1.0f : 0.0f, 0.3f, (float)(ENV_CUBE_MIPS - 1u), 0.0f}};
 
 	r->environment_ubo = gpu_buffer_create(
 		r->device, r->allocator, sizeof(EnvironmentUniforms), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
 		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 	memcpy(r->environment_ubo.allocation.mapped, &uniforms, sizeof(uniforms));
+
+	const float black_pixel[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+	uint32_t equirect_width = loaded ? (uint32_t)width : 1u;
+	uint32_t equirect_height = loaded ? (uint32_t)height : 1u;
+	const float *equirect_pixels = loaded ? pixels : black_pixel;
+	TextureDesc equirect_desc = {.format = VK_FORMAT_R32G32B32A32_SFLOAT,
+								 .width = equirect_width,
+								 .height = equirect_height,
+								 .mip_levels = 1,
+								 .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+								 .aspect = VK_IMAGE_ASPECT_COLOR_BIT,
+								 .filter = VK_FILTER_LINEAR,
+								 .address_mode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+								 .create_sampler = true};
+	r->environment_equirect = texture_create(r->device, r->allocator, &equirect_desc);
+	upload_begin(r->upload);
+	upload_image(r->upload, r->environment_equirect.image, r->environment_equirect.format,
+				equirect_width, equirect_height, 1, VK_IMAGE_ASPECT_COLOR_BIT,
+				VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, equirect_pixels,
+				(VkDeviceSize)equirect_width * equirect_height * 4u * sizeof(float));
+	upload_submit(r->upload);
+	r->environment_equirect.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+	if (loaded)
+		environment_free_hdr(pixels);
+
+	r->environment_cube = texture_create_environment_cube(r->device, r->allocator, ENV_FACE_SIZE);
 }
 
 /* Descriptor roles: set 0 = per-frame UBO; set 1 = pass-local material/HDR;
@@ -249,11 +286,11 @@ static void create_environment(Renderer *r)
    as set 1, avoiding duplicate descriptors. */
 static void create_descriptors(Renderer *r)
 {
-	/* Binding 4 (environment UBO) is unconditional; binding 3 (debug dump SSBO)
-	   stays conditional and must stay last in this array so the non-debug
-	   build's frame_binding_count == 4 slice excludes it. Non-contiguous
-	   binding numbers are legal in Vulkan. */
-	VkDescriptorSetLayoutBinding frame_bindings[5] = {
+	/* Bindings 4 (environment UBO) and 5 (specular IBL cube, B2) are
+	   unconditional; binding 3 (debug dump SSBO) stays conditional and must
+	   stay last in this array so the non-debug build's frame_binding_count ==
+	   5 slice excludes it. Non-contiguous binding numbers are legal in Vulkan. */
+	VkDescriptorSetLayoutBinding frame_bindings[6] = {
 		{.binding = 0,
 		 .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
 		 .descriptorCount = 1,
@@ -271,14 +308,18 @@ static void create_descriptors(Renderer *r)
 		 .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
 		 .descriptorCount = 1,
 		 .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+		{.binding = 5,
+		 .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+		 .descriptorCount = 1,
+		 .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
 		{.binding = 3,
 		 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 		 .descriptorCount = 1,
 		 .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
 	};
-	uint32_t frame_binding_count = 4;
+	uint32_t frame_binding_count = 5;
 #ifdef DEBUG_SHADER_DUMP
-	frame_binding_count = 5;
+	frame_binding_count = 6;
 #endif
 	VkDescriptorSetLayoutCreateInfo frame_layout = {
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
@@ -353,19 +394,24 @@ static void create_descriptors(Renderer *r)
 	VK_CHECK(vkCreateDescriptorSetLayout(r->device, &atmosphere_layout, NULL,
 										 &r->atmosphere_set_layout));
 
+	/* +ENV_CUBE_MIPS combined-image-sampler/storage-image/set slots below are
+	   the one-shot B2 prefilter descriptor sets (one per output cube mip: b0
+	   samples the equirect or cube mip 0, b1 is that mip's storage view). */
 	VkDescriptorPoolSize pool_sizes[4] = {
 		{.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
 		 .descriptorCount = MAX_FRAMES_IN_FLIGHT * 2u /* frame UBO + environment UBO */},
 		{.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-		 .descriptorCount = MAX_TEXTURE_SETS * 3u + MAX_FRAMES_IN_FLIGHT * 2u + 20u},
-		{.type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = 5u},
+		 .descriptorCount =
+			 MAX_TEXTURE_SETS * 3u + MAX_FRAMES_IN_FLIGHT * 2u + 20u + ENV_CUBE_MIPS},
+		{.type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = 5u + ENV_CUBE_MIPS},
 		{.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = MAX_FRAMES_IN_FLIGHT + 2u}};
 	uint32_t pool_size_count = 4;
-	VkDescriptorPoolCreateInfo pool = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-									   .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
-									   .poolSizeCount = pool_size_count,
-									   .pPoolSizes = pool_sizes,
-									   .maxSets = MAX_FRAMES_IN_FLIGHT + MAX_TEXTURE_SETS + 4u};
+	VkDescriptorPoolCreateInfo pool = {
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+		.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
+		.poolSizeCount = pool_size_count,
+		.pPoolSizes = pool_sizes,
+		.maxSets = MAX_FRAMES_IN_FLIGHT + MAX_TEXTURE_SETS + 4u + ENV_CUBE_MIPS};
 	VK_CHECK(vkCreateDescriptorPool(r->device, &pool, NULL, &r->descriptor_pool));
 
 	/* One persistently-mapped UBO + set per frame in flight. */
@@ -384,6 +430,10 @@ static void create_descriptors(Renderer *r)
 			.buffer = r->frame_ubo[i].buffer, .offset = 0, .range = sizeof(FrameUniforms)};
 		VkDescriptorBufferInfo env_info = {
 			.buffer = r->environment_ubo.buffer, .offset = 0, .range = sizeof(EnvironmentUniforms)};
+		VkDescriptorImageInfo env_cube_info = {
+			.sampler = r->environment_cube.sampler,
+			.imageView = r->environment_cube.view,
+			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
 		VkDescriptorImageInfo shadow_images[2] = {
 			{.sampler = r->shadow_map.sampler,
 			 .imageView = r->shadow_map.view,
@@ -392,7 +442,7 @@ static void create_descriptors(Renderer *r)
 			 .imageView = r->shadow_map.view,
 			 .imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL},
 		};
-		VkWriteDescriptorSet writes[4] = {
+		VkWriteDescriptorSet writes[5] = {
 			{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 			 .dstSet = r->frame_set[i],
 			 .dstBinding = 0,
@@ -417,8 +467,14 @@ static void create_descriptors(Renderer *r)
 			 .descriptorCount = 1,
 			 .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
 			 .pBufferInfo = &env_info},
+			{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			 .dstSet = r->frame_set[i],
+			 .dstBinding = 5,
+			 .descriptorCount = 1,
+			 .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			 .pImageInfo = &env_cube_info},
 		};
-		vkUpdateDescriptorSets(r->device, 4, writes, 0, NULL);
+		vkUpdateDescriptorSets(r->device, 5, writes, 0, NULL);
 	}
 
 	texture_create_white(r->device, r->allocator, r->upload, &r->fallback_texture);
@@ -991,6 +1047,237 @@ static void create_temporal_compute_pipelines(Renderer *r)
 	r->luminance_histogram_pipeline =
 		create_temporal_compute_pipeline(r, "luminance_histogram.comp");
 	r->exposure_pipeline = create_temporal_compute_pipeline(r, "exposure.comp");
+}
+
+/* Push constants shared by both B2 prefilter compute shaders (see
+   shaders/environment_equirect_to_cube.comp / environment_prefilter.comp).
+   roughness is unused by the equirect-to-cube pass. */
+typedef struct
+{
+	float roughness;
+	float face_size;
+} EnvironmentPrefilterPush;
+
+/* Like atmosphere_image_barrier, but scoped to [base_mip, base_mip+mip_count)
+   of a cube (6 layers) instead of the whole image, and with an explicit
+   `new_layout` instead of always GENERAL -- the B2 prefilter has mip 0 and
+   mips 1..N-1 in different layouts at the same point in the command buffer
+   (mip 0 finishes and becomes readable while the rest are still being
+   written), which a single whole-image barrier can't express. Does not touch
+   texture->layout; the caller sets it once every mip has converged. */
+static void environment_mip_barrier(VkCommandBuffer command, Texture *texture, uint32_t base_mip,
+									uint32_t mip_count, VkImageLayout old_layout,
+									VkImageLayout new_layout, VkPipelineStageFlags source_stage,
+									VkAccessFlags source_access,
+									VkPipelineStageFlags destination_stage,
+									VkAccessFlags destination_access)
+{
+	VkImageMemoryBarrier barrier = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+		.srcAccessMask = source_access,
+		.dstAccessMask = destination_access,
+		.oldLayout = old_layout,
+		.newLayout = new_layout,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.image = texture->image,
+		.subresourceRange = {texture->aspect, base_mip, mip_count, 0, texture->array_layers}};
+	vkCmdPipelineBarrier(command, source_stage, destination_stage, 0, 0, NULL, 0, NULL, 1,
+						 &barrier);
+}
+
+/* Standalone descriptor/pipeline layout for the B2 specular prefilter: it
+   needs neither the per-frame UBO nor the atmosphere LUTs, just one sampled
+   input and one storage-image output per dispatch (see environment_prefilter
+   below). Built once at init and torn down with the renderer, unlike the
+   compute shaders' resources which are freed right after use. */
+static void create_environment_prefilter_pipelines(Renderer *r)
+{
+	VkDescriptorSetLayoutBinding bindings[2] = {
+		{.binding = 0,
+		 .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+		 .descriptorCount = 1,
+		 .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT},
+		{.binding = 1,
+		 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+		 .descriptorCount = 1,
+		 .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT},
+	};
+	VkDescriptorSetLayoutCreateInfo layout_info = {
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+		.bindingCount = 2,
+		.pBindings = bindings};
+	VK_CHECK(vkCreateDescriptorSetLayout(r->device, &layout_info, NULL,
+										 &r->environment_prefilter_set_layout));
+
+	VkPushConstantRange push = {.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+								.offset = 0,
+								.size = sizeof(EnvironmentPrefilterPush)};
+	VkPipelineLayoutCreateInfo pipeline_layout_info = {
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+		.setLayoutCount = 1,
+		.pSetLayouts = &r->environment_prefilter_set_layout,
+		.pushConstantRangeCount = 1,
+		.pPushConstantRanges = &push};
+	VK_CHECK(vkCreatePipelineLayout(r->device, &pipeline_layout_info, NULL,
+									&r->environment_pipeline_layout));
+
+	VkShaderModule to_cube_module =
+		create_shader_module(r, SHADER_DIR "/environment_equirect_to_cube.comp.spv");
+	VkShaderModule prefilter_module =
+		create_shader_module(r, SHADER_DIR "/environment_prefilter.comp.spv");
+	VkComputePipelineCreateInfo infos[2] = {
+		{.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+		 .stage = {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+				   .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+				   .module = to_cube_module,
+				   .pName = "main"},
+		 .layout = r->environment_pipeline_layout},
+		{.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+		 .stage = {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+				   .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+				   .module = prefilter_module,
+				   .pName = "main"},
+		 .layout = r->environment_pipeline_layout},
+	};
+	VkPipeline pipelines[2];
+	VK_CHECK(vkCreateComputePipelines(r->device, VK_NULL_HANDLE, 2, infos, NULL, pipelines));
+	r->environment_to_cube_pipeline = pipelines[0];
+	r->environment_prefilter_pipeline = pipelines[1];
+	vkDestroyShaderModule(r->device, to_cube_module, NULL);
+	vkDestroyShaderModule(r->device, prefilter_module, NULL);
+}
+
+/* One-shot init-time compute submission (its own command buffer + fence, like
+   upload.c) that bakes r->environment_equirect into r->environment_cube: mip 0
+   is a direct equirect->cube resample, mips 1..ENV_CUBE_MIPS-1 are the GGX
+   prefilter at increasing roughness. Not part of the per-frame render graph --
+   runs once between create_environment_prefilter_pipelines and the first
+   frame. Destroys the transient equirect texture and mip views when done;
+   r->environment_cube and its pipelines/layout persist for the renderer's
+   lifetime. */
+static void environment_prefilter(Renderer *r)
+{
+	/* Guarantee the equirect upload (create_environment) is fully visible on
+	   the host before this queue submission touches it -- simpler than
+	   reasoning about cross-submission barrier stage scopes for a one-shot
+	   init step that is not on any hot path. */
+	upload_wait_idle(r->upload);
+
+	VkImageView mip_views[ENV_CUBE_MIPS];
+	VkDescriptorSet sets[ENV_CUBE_MIPS];
+	for (uint32_t mip = 0; mip < ENV_CUBE_MIPS; ++mip)
+		mip_views[mip] = texture_create_storage_mip_view(r->device, &r->environment_cube, mip);
+	VkImageView cube_mip0_view = texture_create_cube_view(r->device, &r->environment_cube, 0, 1);
+
+	VkDescriptorSetLayout set_layouts[ENV_CUBE_MIPS];
+	for (uint32_t mip = 0; mip < ENV_CUBE_MIPS; ++mip)
+		set_layouts[mip] = r->environment_prefilter_set_layout;
+	VkDescriptorSetAllocateInfo alloc = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+										 .descriptorPool = r->descriptor_pool,
+										 .descriptorSetCount = ENV_CUBE_MIPS,
+										 .pSetLayouts = set_layouts};
+	VK_CHECK(vkAllocateDescriptorSets(r->device, &alloc, sets));
+
+	VkDescriptorImageInfo sampled[ENV_CUBE_MIPS], storage[ENV_CUBE_MIPS];
+	VkWriteDescriptorSet writes[ENV_CUBE_MIPS * 2];
+	for (uint32_t mip = 0; mip < ENV_CUBE_MIPS; ++mip)
+	{
+		sampled[mip] = (VkDescriptorImageInfo){
+			.sampler = mip == 0 ? r->environment_equirect.sampler : r->environment_cube.sampler,
+			.imageView = mip == 0 ? r->environment_equirect.view : cube_mip0_view,
+			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+		storage[mip] = (VkDescriptorImageInfo){.imageView = mip_views[mip],
+											   .imageLayout = VK_IMAGE_LAYOUT_GENERAL};
+		writes[mip * 2] = (VkWriteDescriptorSet){.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+												 .dstSet = sets[mip],
+												 .dstBinding = 0,
+												 .descriptorCount = 1,
+												 .descriptorType =
+													 VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+												 .pImageInfo = &sampled[mip]};
+		writes[mip * 2 + 1] = (VkWriteDescriptorSet){.sType =
+														 VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+													 .dstSet = sets[mip],
+													 .dstBinding = 1,
+													 .descriptorCount = 1,
+													 .descriptorType =
+														 VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+													 .pImageInfo = &storage[mip]};
+	}
+	vkUpdateDescriptorSets(r->device, ENV_CUBE_MIPS * 2, writes, 0, NULL);
+
+	VkCommandBufferAllocateInfo cmd_alloc = {.sType =
+												 VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+											 .commandPool = r->command_pool,
+											 .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+											 .commandBufferCount = 1};
+	VkCommandBuffer command;
+	VK_CHECK(vkAllocateCommandBuffers(r->device, &cmd_alloc, &command));
+	VkCommandBufferBeginInfo begin = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+									  .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
+	VK_CHECK(vkBeginCommandBuffer(command, &begin));
+
+	environment_mip_barrier(command, &r->environment_cube, 0, ENV_CUBE_MIPS,
+							VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
+							VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, 0,
+							VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT);
+
+	EnvironmentPrefilterPush push = {.roughness = 0.0f, .face_size = (float)ENV_FACE_SIZE};
+	vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_COMPUTE, r->environment_to_cube_pipeline);
+	vkCmdPushConstants(command, r->environment_pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
+					   sizeof(push), &push);
+	vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_COMPUTE, r->environment_pipeline_layout,
+							0, 1, &sets[0], 0, NULL);
+	uint32_t groups0 = (ENV_FACE_SIZE + 7u) / 8u;
+	vkCmdDispatch(command, groups0, groups0, 6);
+
+	environment_mip_barrier(command, &r->environment_cube, 0, 1, VK_IMAGE_LAYOUT_GENERAL,
+							VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+							VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+							VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+
+	vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_COMPUTE, r->environment_prefilter_pipeline);
+	for (uint32_t mip = 1; mip < ENV_CUBE_MIPS; ++mip)
+	{
+		uint32_t face_size = ENV_FACE_SIZE >> mip;
+		EnvironmentPrefilterPush mip_push = {.roughness = (float)mip / (float)(ENV_CUBE_MIPS - 1u),
+											 .face_size = (float)face_size};
+		vkCmdPushConstants(command, r->environment_pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
+						   sizeof(mip_push), &mip_push);
+		vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_COMPUTE,
+								r->environment_pipeline_layout, 0, 1, &sets[mip], 0, NULL);
+		uint32_t groups = (face_size + 7u) / 8u;
+		vkCmdDispatch(command, groups, groups, 6);
+	}
+
+	environment_mip_barrier(command, &r->environment_cube, 0, 1,
+							VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+							VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+							VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT,
+							VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+	environment_mip_barrier(command, &r->environment_cube, 1, ENV_CUBE_MIPS - 1,
+							VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+							VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT,
+							VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+	r->environment_cube.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+	VK_CHECK(vkEndCommandBuffer(command));
+	VkFenceCreateInfo fence_info = {.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+	VkFence fence;
+	VK_CHECK(vkCreateFence(r->device, &fence_info, NULL, &fence));
+	VkSubmitInfo submit = {
+		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .commandBufferCount = 1, .pCommandBuffers = &command};
+	VK_CHECK(vkQueueSubmit(r->graphics_queue, 1, &submit, fence));
+	VK_CHECK(vkWaitForFences(r->device, 1, &fence, VK_TRUE, UINT64_MAX));
+
+	vkDestroyFence(r->device, fence, NULL);
+	vkFreeCommandBuffers(r->device, r->command_pool, 1, &command);
+	VK_CHECK(vkFreeDescriptorSets(r->device, r->descriptor_pool, ENV_CUBE_MIPS, sets));
+	vkDestroyImageView(r->device, cube_mip0_view, NULL);
+	for (uint32_t mip = 0; mip < ENV_CUBE_MIPS; ++mip)
+		vkDestroyImageView(r->device, mip_views[mip], NULL);
+	texture_destroy(r->device, r->allocator, &r->environment_equirect);
 }
 
 /* Terrain and imported static meshes share every graphics-pipeline state except
@@ -2167,6 +2454,8 @@ void renderer_init(Renderer *r, SDL_Window *window)
 	create_pipeline_layout(r);
 	create_atmosphere_pipelines(r);
 	create_temporal_compute_pipelines(r);
+	create_environment_prefilter_pipelines(r);
+	environment_prefilter(r);
 	create_shadow_render_pass(r, r->shadow_map.format);
 	create_shadow_framebuffers(r);
 	create_shadow_pipeline(r);
@@ -2187,6 +2476,10 @@ void renderer_shutdown(Renderer *r)
 {
 	vkDeviceWaitIdle(r->device);
 	destroy_swapchain(r);
+	vkDestroyPipeline(r->device, r->environment_prefilter_pipeline, NULL);
+	vkDestroyPipeline(r->device, r->environment_to_cube_pipeline, NULL);
+	vkDestroyPipelineLayout(r->device, r->environment_pipeline_layout, NULL);
+	vkDestroyDescriptorSetLayout(r->device, r->environment_prefilter_set_layout, NULL);
 	vkDestroyPipeline(r->device, r->exposure_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->luminance_histogram_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->atmosphere_aerial_pipeline, NULL);
@@ -2219,6 +2512,7 @@ void renderer_shutdown(Renderer *r)
 	vkDestroyDescriptorSetLayout(r->device, r->frame_set_layout, NULL);
 	texture_destroy(r->device, r->allocator, &r->fallback_texture);
 	texture_destroy(r->device, r->allocator, &r->terrain_detail_texture);
+	texture_destroy(r->device, r->allocator, &r->environment_cube);
 	texture_destroy(r->device, r->allocator, &r->atmosphere_aerial_transmittance);
 	texture_destroy(r->device, r->allocator, &r->atmosphere_aerial_scattering);
 	texture_destroy(r->device, r->allocator, &r->atmosphere_skyview);

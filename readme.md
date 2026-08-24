@@ -70,7 +70,7 @@ building any natural-only `.trn` dataset.
 - Mouse: look around
 - W/A/S/D: move relative to the direction you are looking
 - Left Shift: move faster
-- F3: cycle Quarry shading — legacy PBR, Unreal Default Lit, Default Lit + Phase B sky IBL
+- F3: cycle Quarry shading — legacy PBR, Unreal Default Lit, Default Lit + Phase B1 diffuse sky IBL, Default Lit + Phase B1+B2 diffuse+specular sky IBL
 - F4: cycle TAA history-weight, rejection, motion, and clamp views
 - F6: toggle logarithmic linear-depth debug view
 - F7: toggle quadtree LOD colours

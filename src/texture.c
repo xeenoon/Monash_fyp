@@ -21,7 +21,7 @@ uint32_t texture_mip_levels(uint32_t width, uint32_t height)
 
 Texture texture_create(VkDevice device, GpuAllocator *allocator, const TextureDesc *desc)
 {
-	uint32_t layers = desc->array_layers ? desc->array_layers : 1;
+	uint32_t layers = desc->cube ? 6u : (desc->array_layers ? desc->array_layers : 1);
 	uint32_t mips =
 		desc->mip_levels ? desc->mip_levels : texture_mip_levels(desc->width, desc->height);
 	VkImageAspectFlags aspect = desc->aspect ? desc->aspect : VK_IMAGE_ASPECT_COLOR_BIT;
@@ -35,6 +35,7 @@ Texture texture_create(VkDevice device, GpuAllocator *allocator, const TextureDe
 				 .layout = VK_IMAGE_LAYOUT_UNDEFINED};
 
 	VkImageCreateInfo image_info = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+									.flags = desc->cube ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0,
 									.imageType = VK_IMAGE_TYPE_2D,
 									.format = desc->format,
 									.extent = {desc->width, desc->height, 1},
@@ -55,8 +56,9 @@ Texture texture_create(VkDevice device, GpuAllocator *allocator, const TextureDe
 
 	VkImageViewCreateInfo view = {.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
 								  .image = t.image,
-								  .viewType = layers > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY
-														 : VK_IMAGE_VIEW_TYPE_2D,
+								  .viewType = desc->cube ? VK_IMAGE_VIEW_TYPE_CUBE
+										  : layers > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY
+													   : VK_IMAGE_VIEW_TYPE_2D,
 								  .format = desc->format,
 								  .subresourceRange = {aspect, 0, mips, 0, layers}};
 	VK_CHECK(vkCreateImageView(device, &view, NULL, &t.view));
@@ -293,6 +295,47 @@ Texture texture_create_shadow_array(VkDevice device, GpuAllocator *allocator, Vk
 						.compare_enable = true,
 						.compare_op = VK_COMPARE_OP_LESS_OR_EQUAL};
 	return texture_create(device, allocator, &desc);
+}
+
+Texture texture_create_environment_cube(VkDevice device, GpuAllocator *allocator,
+										uint32_t face_size)
+{
+	TextureDesc desc = {.format = VK_FORMAT_R16G16B16A16_SFLOAT,
+						.width = face_size,
+						.height = face_size,
+						.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+						.aspect = VK_IMAGE_ASPECT_COLOR_BIT,
+						.filter = VK_FILTER_LINEAR,
+						.address_mode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+						.create_sampler = true,
+						.cube = true};
+	return texture_create(device, allocator, &desc);
+}
+
+VkImageView texture_create_storage_mip_view(VkDevice device, const Texture *t, uint32_t mip)
+{
+	VkImageViewCreateInfo view = {.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+								  .image = t->image,
+								  .viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY,
+								  .format = t->format,
+								  .subresourceRange = {t->aspect, mip, 1, 0, t->array_layers}};
+	VkImageView view_handle;
+	VK_CHECK(vkCreateImageView(device, &view, NULL, &view_handle));
+	return view_handle;
+}
+
+VkImageView texture_create_cube_view(VkDevice device, const Texture *t, uint32_t base_mip,
+									 uint32_t mip_count)
+{
+	VkImageViewCreateInfo view = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+		.image = t->image,
+		.viewType = VK_IMAGE_VIEW_TYPE_CUBE,
+		.format = t->format,
+		.subresourceRange = {t->aspect, base_mip, mip_count, 0, t->array_layers}};
+	VkImageView view_handle;
+	VK_CHECK(vkCreateImageView(device, &view, NULL, &view_handle));
+	return view_handle;
 }
 
 void texture_destroy(VkDevice device, GpuAllocator *allocator, Texture *t)

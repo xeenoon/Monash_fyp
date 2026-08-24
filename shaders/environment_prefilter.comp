@@ -1,0 +1,42 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "environment_common.glsl"
+
+/* B2 stage 2 (init-time, one-shot): GGX split-sum prefilter, Karis "Real
+   Shading in Unreal Engine 4". Reads only mip 0 of the cube (the raw
+   environment) and writes one increasing-roughness output mip per dispatch.
+   N = V = R is assumed, the standard prefilter simplification. */
+
+layout(set = 0, binding = 0) uniform samplerCube env_cube;
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image2DArray output_mip;
+
+layout(push_constant) uniform PushConstants {
+    float roughness;
+    float face_size;
+} pc;
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+void main() {
+    ivec3 pixel = ivec3(gl_GlobalInvocationID);
+    int size = int(pc.face_size);
+    if (pixel.x >= size || pixel.y >= size || pixel.z >= 6) return;
+
+    vec2 uv = (vec2(pixel.xy) + 0.5) / float(size) * 2.0 - 1.0;
+    vec3 N = environment_face_direction(uint(pixel.z), uv);
+
+    const uint SAMPLE_COUNT = 64u;
+    vec3 accum = vec3(0.0);
+    float weight = 0.0;
+    for (uint i = 0u; i < SAMPLE_COUNT; ++i) {
+        vec2 xi = environment_hammersley(i, SAMPLE_COUNT);
+        vec3 H = environment_importance_sample_ggx(xi, pc.roughness, N);
+        vec3 L = normalize(2.0 * dot(N, H) * H - N);
+        float NoL = dot(N, L);
+        if (NoL > 0.0) {
+            accum += textureLod(env_cube, L, 0.0).rgb * NoL;
+            weight += NoL;
+        }
+    }
+    vec3 result = weight > 0.0 ? accum / weight : textureLod(env_cube, N, 0.0).rgb;
+    imageStore(output_mip, pixel, vec4(result, 1.0));
+}

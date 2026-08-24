@@ -1,0 +1,27 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "environment_common.glsl"
+
+/* B2 stage 1 (init-time, one-shot): resample the loaded equirect HDR into mip
+   0 of the specular cube (roughness 0, mirror). See environment_prefilter(),
+   renderer.c. */
+
+layout(set = 0, binding = 0) uniform sampler2D equirect;
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image2DArray output_cube;
+
+layout(push_constant) uniform PushConstants {
+    float roughness; /* unused here; shared push layout with the prefilter pass */
+    float face_size;
+} pc;
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+void main() {
+    ivec3 pixel = ivec3(gl_GlobalInvocationID);
+    int size = int(pc.face_size);
+    if (pixel.x >= size || pixel.y >= size || pixel.z >= 6) return;
+
+    vec2 uv = (vec2(pixel.xy) + 0.5) / float(size) * 2.0 - 1.0;
+    vec3 dir = environment_face_direction(uint(pixel.z), uv);
+    vec3 color = textureLod(equirect, environment_direction_to_equirect_uv(dir), 0.0).rgb;
+    imageStore(output_cube, pixel, vec4(color, 1.0));
+}
