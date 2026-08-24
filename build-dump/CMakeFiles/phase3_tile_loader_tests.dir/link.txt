@@ -1,1 +1,0 @@
-/usr/bin/cc -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/phase3_tile_loader_tests.dir/link.d CMakeFiles/phase3_tile_loader_tests.dir/tests/phase3_tile_loader_tests.c.o CMakeFiles/phase3_tile_loader_tests.dir/src/terrain_tile.c.o -o phase3_tile_loader_tests  libcore_utils.a /usr/lib/libcglm.so.0.9.6 -lm /usr/lib/libz.so

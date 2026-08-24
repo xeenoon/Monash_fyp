@@ -1,1 +1,0 @@
-/usr/bin/cc -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/phase8_temporal_tests.dir/link.d CMakeFiles/phase8_temporal_tests.dir/tests/phase8_temporal_tests.c.o CMakeFiles/phase8_temporal_tests.dir/src/temporal.c.o -o phase8_temporal_tests  /usr/lib/libcglm.so.0.9.6 -lm

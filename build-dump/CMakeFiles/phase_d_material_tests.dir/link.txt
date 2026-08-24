@@ -1,1 +1,0 @@
-/usr/bin/cc -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/phase_d_material_tests.dir/link.d CMakeFiles/phase_d_material_tests.dir/tests/phase_d_material_tests.c.o CMakeFiles/phase_d_material_tests.dir/src/static_material.c.o -o phase_d_material_tests  -lm

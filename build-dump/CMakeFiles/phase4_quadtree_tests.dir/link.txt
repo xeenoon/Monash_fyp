@@ -1,1 +1,0 @@
-/usr/bin/cc -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/phase4_quadtree_tests.dir/link.d CMakeFiles/phase4_quadtree_tests.dir/tests/phase4_quadtree_tests.c.o CMakeFiles/phase4_quadtree_tests.dir/src/terrain_quadtree.c.o CMakeFiles/phase4_quadtree_tests.dir/src/terrain_grid.c.o -o phase4_quadtree_tests  /usr/lib/libcglm.so.0.9.6 -lm

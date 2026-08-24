@@ -1,1 +1,0 @@
-/usr/bin/cc -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/phase2_tests.dir/link.d CMakeFiles/phase2_tests.dir/tests/phase2_tests.c.o CMakeFiles/phase2_tests.dir/src/camera.c.o CMakeFiles/phase2_tests.dir/src/coordinate.c.o -o phase2_tests  /usr/lib/libcglm.so.0.9.6 -lm
