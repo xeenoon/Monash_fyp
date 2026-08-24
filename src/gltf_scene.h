@@ -38,6 +38,7 @@ typedef struct {
 typedef struct {
     float base_color_factor[4];
     float metallic_factor, roughness_factor, normal_scale, occlusion_strength;
+    bool use_metallic_roughness_red_as_occlusion;
     VkDescriptorSet descriptor_set;
     char *base_color_path, *metallic_roughness_path, *normal_path, *occlusion_path;
     Texture base_color, metallic_roughness, normal, occlusion;

@@ -133,26 +133,26 @@ GltfLoadResult gltf_scene_parse(const char *path,const GltfLoadOptions *options,
     if(d->skins_count||d->animations_count){if(error)snprintf(error->message,sizeof(error->message),"skins and animations are unsupported");cgltf_free(d);return GLTF_LOAD_UNSUPPORTED;}
     out->material_count=(uint32_t)d->materials_count+1u;out->materials=calloc(out->material_count,sizeof(*out->materials));if(!out->materials){cgltf_free(d);return GLTF_LOAD_OUT_OF_MEMORY;}
     out->materials[0] = (GltfMaterial){.base_color_factor={1,1,1,1},.metallic_factor=1,.roughness_factor=1,.normal_scale=1,.occlusion_strength=1};
-    for(cgltf_size i=0;i<d->materials_count;i++){cgltf_material *m=&d->materials[i];if(m->alpha_mode!=cgltf_alpha_mode_opaque){if(error)snprintf(error->message,sizeof(error->message),"material %zu is not opaque",i);cgltf_free(d);gltf_scene_destroy(NULL,out);return GLTF_LOAD_UNSUPPORTED;}GltfMaterial *x=&out->materials[i+1];memcpy(x->base_color_factor,m->pbr_metallic_roughness.base_color_factor,sizeof(x->base_color_factor));x->metallic_factor=m->pbr_metallic_roughness.metallic_factor;x->roughness_factor=m->pbr_metallic_roughness.roughness_factor;x->normal_scale=m->normal_texture.texture ? m->normal_texture.scale : 1.0f;x->occlusion_strength=m->occlusion_texture.texture ? m->occlusion_texture.scale : 1.0f;x->base_color_path=image_path(path,&m->pbr_metallic_roughness.base_color_texture);x->metallic_roughness_path=image_path(path,&m->pbr_metallic_roughness.metallic_roughness_texture);x->normal_path=image_path(path,&m->normal_texture);x->occlusion_path=image_path(path,&m->occlusion_texture);}
+    for(cgltf_size i=0;i<d->materials_count;i++){cgltf_material *m=&d->materials[i];if(m->alpha_mode!=cgltf_alpha_mode_opaque){if(error)snprintf(error->message,sizeof(error->message),"material %zu is not opaque",i);cgltf_free(d);gltf_scene_destroy(NULL,out);return GLTF_LOAD_UNSUPPORTED;}GltfMaterial *x=&out->materials[i+1];memcpy(x->base_color_factor,m->pbr_metallic_roughness.base_color_factor,sizeof(x->base_color_factor));x->metallic_factor=m->pbr_metallic_roughness.metallic_factor;x->roughness_factor=m->pbr_metallic_roughness.roughness_factor;x->normal_scale=m->normal_texture.texture ? m->normal_texture.scale : 1.0f;x->occlusion_strength=m->occlusion_texture.texture ? m->occlusion_texture.scale : 1.0f;x->base_color_path=image_path(path,&m->pbr_metallic_roughness.base_color_texture);x->metallic_roughness_path=image_path(path,&m->pbr_metallic_roughness.metallic_roughness_texture);x->normal_path=image_path(path,&m->normal_texture);x->occlusion_path=image_path(path,&m->occlusion_texture);x->use_metallic_roughness_red_as_occlusion=options && options->use_metallic_roughness_red_as_occlusion && !x->occlusion_path;}
     Import in={.scene=out,.data=d,.error=error,.result=GLTF_LOAD_OK}; cgltf_scene *scene=d->scene; if(scene)for(cgltf_size i=0;i<scene->nodes_count;i++)visit(&in,scene->nodes[i]);else for(cgltf_size i=0;i<d->nodes_count;i++)if(!d->nodes[i].parent)visit(&in,&d->nodes[i]); cgltf_free(d);
     if(in.result!=GLTF_LOAD_OK){gltf_scene_destroy(NULL,out);return in.result;} fprintf(stdout,"glTF: %s: %u primitives, %u materials\n",path,out->primitive_count,out->material_count-1u);return GLTF_LOAD_OK;
 }
 GltfLoadResult gltf_scene_upload(struct Renderer *renderer, GltfScene *scene, GltfLoadError *error)
 {
     if (!renderer || !scene) return GLTF_LOAD_INVALID;
-    /* Until a material slot is populated by an image, bind deterministic
-     * fallbacks for all four static-mesh bindings. */
+    /* Until a material slot is populated by an image, bind typed fallbacks. */
     for (uint32_t i = 0; i < scene->material_count; ++i) {
         GltfMaterial *m = &scene->materials[i];
         if (m->base_color_path) texture_load(renderer->device, renderer->allocator, renderer->upload, &m->base_color, m->base_color_path, renderer->max_anisotropy);
         if (m->metallic_roughness_path) texture_load_linear(renderer->device, renderer->allocator, renderer->upload, &m->metallic_roughness, m->metallic_roughness_path, renderer->max_anisotropy);
         if (m->normal_path) texture_load_linear(renderer->device, renderer->allocator, renderer->upload, &m->normal, m->normal_path, renderer->max_anisotropy);
         if (m->occlusion_path) texture_load_linear(renderer->device, renderer->allocator, renderer->upload, &m->occlusion, m->occlusion_path, renderer->max_anisotropy);
-        m->descriptor_set = renderer_allocate_pbr4_set(renderer,
+        m->descriptor_set = renderer_allocate_pbr5_set(renderer,
             m->base_color.image ? &m->base_color : &renderer->fallback_texture,
-            m->metallic_roughness.image ? &m->metallic_roughness : &renderer->fallback_texture,
-            m->normal.image ? &m->normal : &renderer->fallback_texture,
-            m->occlusion.image ? &m->occlusion : &renderer->fallback_texture);
+            m->metallic_roughness.image ? &m->metallic_roughness : &renderer->fallback_linear_texture,
+            m->normal.image ? &m->normal : &renderer->fallback_normal_texture,
+            m->occlusion.image ? &m->occlusion : (m->use_metallic_roughness_red_as_occlusion && m->metallic_roughness.image ? &m->metallic_roughness : &renderer->fallback_linear_texture),
+            &renderer->fallback_linear_texture);
     }
     for (uint32_t i = 0; i < scene->primitive_count; ++i)
         mesh_upload(renderer, &scene->primitives[i].mesh);

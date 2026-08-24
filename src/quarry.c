@@ -165,6 +165,18 @@ bool quarry_create(struct Renderer *renderer, Quarry *out, const char *directory
 		return false;
 	}
 	mesh_upload(renderer, &out->base);
+	const char *cavity_path = getenv("TERRAIN_QUARRY_CAVITY");
+	if (cavity_path && *cavity_path)
+	{
+		texture_load_linear(renderer->device, renderer->allocator, renderer->upload, &out->cavity,
+							cavity_path, renderer->max_anisotropy);
+		renderer_free_material_set(renderer, out->base.material_set);
+		out->base.material_set = renderer_allocate_pbr5_set(renderer, &out->base.texture, &out->base.orm,
+			&out->base.normal_map, &out->base.orm, &out->cavity);
+		out->cavity_available = true;
+		fprintf(stdout, "Quarry cavity: %s\n", cavity_path);
+	}
+	else fprintf(stdout, "Quarry cavity: unavailable/disabled\n");
 	return true;
 }
 
@@ -173,7 +185,11 @@ void quarry_destroy(struct Renderer *renderer, Quarry *quarry)
 	if (!quarry)
 		return;
 	if (renderer)
+	{
 		mesh_destroy(renderer, &quarry->base);
+		if (quarry->cavity.image)
+			texture_destroy(renderer->device, renderer->allocator, &quarry->cavity);
+	}
 	free((void *)quarry->base.texture_path);
 	free((void *)quarry->base.orm_path);
 	free((void *)quarry->base.normal_path);

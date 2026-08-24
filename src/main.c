@@ -31,6 +31,28 @@ static ShadowQualitySettings shadow_quality_from_environment(void)
 	return q;
 }
 
+/* The sole CPU packing contract for all static materials.  geometry retains
+ * glTF base-colour RGBA; shadow state lives in debug.z, never in alpha. */
+static DrawPushConstants static_material_push(LocalToWorldTransform transform,
+                                               WorldPosition camera_position,
+                                               const float base_color[4], float metallic,
+                                               float gltf_roughness,
+                                               const StaticMaterialParameters *parameters,
+                                               bool default_lit, bool diffuse_ibl,
+                                               bool specular_ibl, bool shadows,
+                                               float curvature_strength)
+{
+    return (DrawPushConstants){
+        .local_to_camera_relative = coordinate_local_to_camera_relative(&transform, camera_position),
+        .geometry = {{base_color[0], base_color[1], base_color[2], base_color[3]}},
+        .elevation_uv = {{gltf_roughness, parameters->normal_strength, parameters->ao_strength,
+                          parameters->roughness_bias}},
+        .material = {{metallic, default_lit ? 1.f : 0.f, diffuse_ibl ? 1.f : 0.f,
+                      specular_ibl ? 1.f : 0.f}},
+        .debug = {{parameters->cavity_strength, parameters->displacement_scale,
+                   shadows ? 1.f : 0.f, curvature_strength}}};
+}
+
 int main(void)
 {
 	const char *scene = getenv("TERRAIN_SCENE");
@@ -132,7 +154,7 @@ int main(void)
 	unsigned atmosphere_slice = 15;
 	/* F3 exposes the delivery sequence: legacy -> A (Default Lit) -> B1
 	   (diffuse IBL) -> B2 (specular IBL) -> C (shadowing) -> legacy. */
-	unsigned quarry_shading_mode = use_quarry ? 4u : 4u;
+unsigned quarry_shading_mode = use_quarry ? 5u : 5u;
 	AtmosphereParameters atmosphere = atmosphere_earth();
 	bool running = true;
 #ifdef DEBUG_SHADER_DUMP
@@ -178,11 +200,12 @@ int main(void)
 			running = false;
 		if (input.toggle_quarry_shading)
 		{
-			quarry_shading_mode = (quarry_shading_mode + 1) % 5u;
+			quarry_shading_mode = (quarry_shading_mode + 1) % 6u;
 			const char *names[] = {"legacy PBR", "Phase A: Unreal Default Lit",
 								   "Phase B1: Default Lit + diffuse sky IBL",
 								   "Phase B2: Default Lit + diffuse and specular sky IBL",
-								   "Phase C: B2 + cascaded shadows"};
+								   "Phase C: B2 + cascaded shadows",
+								   "Phase D: Phase C + material detail stability"};
 			printf("Quarry renderer: %s\n", names[quarry_shading_mode]);
 			history_valid = false;
 		}
@@ -255,19 +278,21 @@ int main(void)
 		bool diffuse_ibl_enabled = quarry_shading_mode >= 2u;
 		bool specular_ibl_enabled = quarry_shading_mode >= 3u;
 		bool shadows_enabled = quarry_shading_mode >= 4u;
-		DrawPushConstants quarry_push = {
-			.local_to_camera_relative =
-				coordinate_local_to_camera_relative(&quarry.base.local_to_world, camera.position),
-			.material = {{quarry.metallic_factor, default_lit ? 1.0f : 0.0f,
-						 diffuse_ibl_enabled ? 1.0f : 0.0f, specular_ibl_enabled ? 1.0f : 0.0f}},
-			.geometry = {{1.0f, 1.0f, 1.0f, shadows_enabled ? 1.0f : 0.0f}},
-			.elevation_uv = {{1.0f, 1.0f, 1.0f, 0.0f}},
-			.debug = {{0.0f, 0.0f, 0.0f, 0.0f}},
-		};
+		bool phase_d_enabled = quarry_shading_mode >= 5u;
+		StaticMaterialParameters quarry_parameters = {.normal_strength = 1.0f, .ao_strength = 1.0f,
+			.cavity_strength = quarry.cavity_available ? 0.25f : 0.0f, .roughness_bias = 0.0f,
+			.displacement_scale = 0.0f};
+		const float white_rgba[4] = {1.f, 1.f, 1.f, 1.f};
+		DrawPushConstants quarry_push = static_material_push(
+			quarry.base.local_to_world, camera.position, white_rgba, quarry.metallic_factor, 1.f,
+			&quarry_parameters, default_lit, diffuse_ibl_enabled, specular_ibl_enabled,
+			shadows_enabled, phase_d_enabled ? .25f : 0.f);
 		RendererDraw quarry_draw = {
 			.mesh = &quarry.base, .push = quarry_push, .static_mesh = true};
 		DrawPushConstants ground_push = quarry_push;
-		ground_push.local_to_camera_relative = coordinate_local_to_camera_relative(&ground.mesh.local_to_world, camera.position);
+		ground_push = static_material_push(ground.mesh.local_to_world, camera.position, white_rgba,
+			quarry.metallic_factor, 1.f, &quarry_parameters, default_lit, diffuse_ibl_enabled,
+			specular_ibl_enabled, shadows_enabled, phase_d_enabled ? .25f : 0.f);
 		RendererDraw ground_draw = {.mesh = &ground.mesh, .push = ground_push, .static_mesh = true};
 		RendererDraw *active_draws = &quarry_draw;
 		uint32_t active_draw_count = 1;
@@ -292,15 +317,13 @@ int main(void)
 					.mesh = &primitive->mesh,
 					.material_set = material->descriptor_set,
 					.static_mesh = true,
-					.push = {.local_to_camera_relative = coordinate_local_to_camera_relative(
-							&primitive->mesh.local_to_world, camera.position),
-						.geometry = {{material->base_color_factor[0], material->base_color_factor[1],
-							material->base_color_factor[2], material->base_color_factor[3]}},
-						.elevation_uv = {{material->roughness_factor, material->normal_scale,
-							material->occlusion_strength, 0.0f}},
-						.material = {{material->metallic_factor, default_lit ? 1.0f : 0.0f,
-							diffuse_ibl_enabled ? 1.0f : 0.0f,
-							specular_ibl_enabled ? 1.0f : 0.0f}}}};
+					.push = static_material_push(primitive->mesh.local_to_world, camera.position,
+						material->base_color_factor, material->metallic_factor, material->roughness_factor,
+						&(StaticMaterialParameters){.normal_strength = material->normal_scale,
+							.ao_strength = material->occlusion_strength, .cavity_strength = 0.f,
+							.roughness_bias = 0.f, .displacement_scale = 0.f}, default_lit,
+						diffuse_ibl_enabled, specular_ibl_enabled, shadows_enabled,
+						phase_d_enabled ? .25f : 0.f)};
 			}
 			active_shadow_draws = active_draws;
 			active_shadow_draw_count = active_draw_count;

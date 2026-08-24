@@ -8,6 +8,7 @@
 #include "gpu_memory.h"
 #include "mesh.h"
 #include "shadow_cascade.h"
+#include "static_material.h"
 #include "texture.h"
 #include "upload.h"
 #include <cglm/struct.h>
@@ -175,7 +176,10 @@ typedef struct Renderer
 	   once the compute pipelines exist. Zeroed (unused) after init. */
 	Texture environment_equirect;
 	VkDescriptorSet frame_set[MAX_FRAMES_IN_FLIGHT];
-	Texture fallback_texture;
+	/* Typed static-material fallbacks: colour is sRGB, data textures are linear. */
+	Texture fallback_texture; /* white sRGB albedo; retained name for terrain callers */
+	Texture fallback_linear_texture; /* white linear ORM/AO/cavity */
+	Texture fallback_normal_texture; /* flat linear tangent normal */
 	Texture terrain_detail_texture;
 	VkDescriptorSet fallback_material_set;
 	VkDescriptorSet display_set;
@@ -259,7 +263,10 @@ VkDescriptorSet renderer_allocate_material_set(Renderer *r, VkImageView view, Vk
 VkDescriptorSet renderer_allocate_pbr_set(Renderer *r, const Texture *albedo, const Texture *orm,
 										  const Texture *normal_map);
 VkDescriptorSet renderer_allocate_pbr4_set(Renderer *r, const Texture *albedo, const Texture *orm,
-                                           const Texture *normal_map, const Texture *occlusion);
+									   const Texture *normal_map, const Texture *occlusion);
+VkDescriptorSet renderer_allocate_pbr5_set(Renderer *r, const Texture *albedo, const Texture *orm,
+									   const Texture *normal_map, const Texture *occlusion,
+									   const Texture *cavity);
 VkDescriptorSet renderer_allocate_terrain_set(Renderer *r, VkImageView albedo_view,
 											  VkSampler albedo_sampler, VkImageView elevation_view,
 											  VkSampler elevation_sampler);

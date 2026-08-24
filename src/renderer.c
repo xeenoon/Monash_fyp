@@ -41,6 +41,7 @@ _Static_assert(sizeof(DumpRecord) == SHADER_DUMP_RECORD_FLOATS * 4u,
 #define DUMP_SHADER_TONEMAP 4u
 #define DUMP_SHADER_TEMPORAL_RESOLVE 5u
 #define DUMP_SHADER_ENVIRONMENT_IBL 6u
+#define DUMP_SHADER_MATERIAL_DETAIL 7u
 
 static const char *shader_dump_name(uint32_t shader_id)
 {
@@ -60,6 +61,8 @@ static const char *shader_dump_name(uint32_t shader_id)
 		return "temporal_resolve";
 	case DUMP_SHADER_ENVIRONMENT_IBL:
 		return "environment_ibl";
+	case DUMP_SHADER_MATERIAL_DETAIL:
+		return "material_detail";
 	default:
 		return "unknown";
 	}
@@ -196,17 +199,30 @@ VkDescriptorSet renderer_allocate_terrain_set(Renderer *r, VkImageView albedo_vi
 
 VkDescriptorSet renderer_allocate_material_set(Renderer *r, VkImageView view, VkSampler sampler)
 {
-	return renderer_allocate_terrain_set(r, view, sampler, view, sampler);
+	/* Texture-only static meshes still need typed data fallbacks, rather than
+	 * interpreting sRGB white as an ORM or tangent normal. */
+	Texture albedo = {.view = view, .sampler = sampler};
+	return renderer_allocate_pbr5_set(r, &albedo, &r->fallback_linear_texture,
+									  &r->fallback_normal_texture, &r->fallback_linear_texture,
+									  &r->fallback_linear_texture);
 }
 
 VkDescriptorSet renderer_allocate_pbr_set(Renderer *r, const Texture *albedo, const Texture *orm,
-										  const Texture *normal_map)
+									  const Texture *normal_map)
 {
-	return renderer_allocate_pbr4_set(r, albedo, orm, normal_map, orm);
+	return renderer_allocate_pbr5_set(r, albedo, orm, normal_map, orm, &r->fallback_linear_texture);
 }
 
 VkDescriptorSet renderer_allocate_pbr4_set(Renderer *r, const Texture *albedo, const Texture *orm,
 										   const Texture *normal_map, const Texture *occlusion)
+{
+	return renderer_allocate_pbr5_set(r, albedo, orm, normal_map, occlusion,
+									  &r->fallback_linear_texture);
+}
+
+VkDescriptorSet renderer_allocate_pbr5_set(Renderer *r, const Texture *albedo, const Texture *orm,
+									   const Texture *normal_map, const Texture *occlusion,
+									   const Texture *cavity)
 {
 	VkDescriptorSetAllocateInfo alloc = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
 										 .descriptorPool = r->descriptor_pool,
@@ -214,10 +230,10 @@ VkDescriptorSet renderer_allocate_pbr4_set(Renderer *r, const Texture *albedo, c
 										 .pSetLayouts = &r->material_set_layout};
 	VkDescriptorSet set;
 	VK_CHECK(vkAllocateDescriptorSets(r->device, &alloc, &set));
-	const Texture *textures[4] = {albedo, orm, normal_map, occlusion};
-	VkDescriptorImageInfo images[4];
-	VkWriteDescriptorSet writes[4];
-	for (uint32_t i = 0; i < 4; ++i)
+	const Texture *textures[5] = {albedo, orm, normal_map, occlusion, cavity};
+	VkDescriptorImageInfo images[5];
+	VkWriteDescriptorSet writes[5];
+	for (uint32_t i = 0; i < 5; ++i)
 	{
 		images[i] =
 			(VkDescriptorImageInfo){.sampler = textures[i]->sampler,
@@ -231,7 +247,7 @@ VkDescriptorSet renderer_allocate_pbr4_set(Renderer *r, const Texture *albedo, c
 								   .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 								   .pImageInfo = &images[i]};
 	}
-	vkUpdateDescriptorSets(r->device, 4, writes, 0, NULL);
+	vkUpdateDescriptorSets(r->device, 5, writes, 0, NULL);
 	return set;
 }
 
@@ -352,7 +368,7 @@ static void create_descriptors(Renderer *r)
 		.pBindings = frame_bindings};
 	VK_CHECK(vkCreateDescriptorSetLayout(r->device, &frame_layout, NULL, &r->frame_set_layout));
 
-	VkDescriptorSetLayoutBinding material_bindings[4] = {
+	VkDescriptorSetLayoutBinding material_bindings[5] = {
 		{.binding = 0,
 		 .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		 .descriptorCount = 1,
@@ -369,10 +385,14 @@ static void create_descriptors(Renderer *r)
 		 .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		 .descriptorCount = 1,
 		 .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+		{.binding = 4,
+		 .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+		 .descriptorCount = 1,
+		 .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
 	};
 	VkDescriptorSetLayoutCreateInfo material_layout = {
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-		.bindingCount = 4,
+		.bindingCount = 5,
 		.pBindings = material_bindings};
 	VK_CHECK(
 		vkCreateDescriptorSetLayout(r->device, &material_layout, NULL, &r->material_set_layout));
@@ -431,7 +451,7 @@ static void create_descriptors(Renderer *r)
 		 .descriptorCount = MAX_FRAMES_IN_FLIGHT * 2u /* frame UBO + environment UBO */},
 		{.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		 .descriptorCount =
-			 MAX_TEXTURE_SETS * 4u + MAX_FRAMES_IN_FLIGHT * 2u + 20u + ENV_CUBE_MIPS},
+			 MAX_TEXTURE_SETS * 5u + MAX_FRAMES_IN_FLIGHT * 2u + 20u + ENV_CUBE_MIPS},
 		{.type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = 5u + ENV_CUBE_MIPS},
 		{.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = MAX_FRAMES_IN_FLIGHT + 2u}};
 	uint32_t pool_size_count = 4;
@@ -507,10 +527,17 @@ static void create_descriptors(Renderer *r)
 	}
 
 	texture_create_white(r->device, r->allocator, r->upload, &r->fallback_texture);
+	const uint8_t linear_white[4] = {255, 255, 255, 255};
+	const uint8_t flat_normal[4] = {128, 128, 255, 255};
+	texture_create_solid_rgba8(r->device, r->allocator, r->upload, &r->fallback_linear_texture,
+							  linear_white, false);
+	texture_create_solid_rgba8(r->device, r->allocator, r->upload, &r->fallback_normal_texture,
+							  flat_normal, false);
 	texture_create_terrain_detail(r->device, r->allocator, r->upload, &r->terrain_detail_texture,
 								  r->max_anisotropy);
-	r->fallback_material_set =
-		renderer_allocate_material_set(r, r->fallback_texture.view, r->fallback_texture.sampler);
+	r->fallback_material_set = renderer_allocate_pbr5_set(r, &r->fallback_texture,
+		&r->fallback_linear_texture, &r->fallback_normal_texture, &r->fallback_linear_texture,
+		&r->fallback_linear_texture);
 
 	VkDescriptorSetAllocateInfo atmosphere_alloc = {
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
@@ -1960,6 +1987,9 @@ static const char *const SHADER_DUMP_LEGEND[] = {
 	"# legend: environment_ibl f0-2=reflection_direction f3=mip f4-6=raw_cube f7=NoV "
 	"f8-10=ggx_specular_energy f11=reflection_visibility f12-14=unoccluded_specular f15=AO "
 	"f16-18=final_specular f19=roughness\n",
+	"# legend: material_detail f0=authored_roughness f1=effective_roughness f2=curvature_floor f3=normal_variance "
+	"f4=AO_sample f5=AO_visibility f6=cavity_sample f7=cavity_strength f8=cavity_visibility "
+	"f9=curvature_strength f10=real_cavity_bound f11=phase_D_active f12-19=_\n",
 };
 
 /* Optional CPU-side output filters, applied only at write time (the GPU always
@@ -1980,7 +2010,7 @@ static ShaderDumpFilter shader_dump_read_filters(void)
 	const char *shader_env = getenv("DUMP_SHADER");
 	if (shader_env)
 	{
-		for (uint32_t id = 0; id <= DUMP_SHADER_ENVIRONMENT_IBL; ++id)
+		for (uint32_t id = 0; id <= DUMP_SHADER_MATERIAL_DETAIL; ++id)
 		{
 			if (strcasecmp(shader_env, shader_dump_name(id)) == 0)
 			{
@@ -2563,6 +2593,8 @@ void renderer_shutdown(Renderer *r)
 	vkDestroyDescriptorSetLayout(r->device, r->material_set_layout, NULL);
 	vkDestroyDescriptorSetLayout(r->device, r->frame_set_layout, NULL);
 	texture_destroy(r->device, r->allocator, &r->fallback_texture);
+	texture_destroy(r->device, r->allocator, &r->fallback_linear_texture);
+	texture_destroy(r->device, r->allocator, &r->fallback_normal_texture);
 	texture_destroy(r->device, r->allocator, &r->terrain_detail_texture);
 	texture_destroy(r->device, r->allocator, &r->environment_cube);
 	texture_destroy(r->device, r->allocator, &r->atmosphere_aerial_transmittance);

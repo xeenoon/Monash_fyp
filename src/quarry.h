@@ -15,6 +15,8 @@ typedef struct
 	/* Scalar declared by the GLB material; multiplied by ORM blue in the
 	   forward shader instead of treating the texture as metallic by itself. */
 	float metallic_factor;
+	Texture cavity;
+	bool cavity_available;
 } Quarry;
 
 bool quarry_create(struct Renderer *renderer, Quarry *out, const char *directory);

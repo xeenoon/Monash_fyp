@@ -4,6 +4,7 @@
 #include "shadow_filter.glsl"
 #include "pbr_common.glsl"
 #include "environment_lighting.glsl"
+#include "material_detail.glsl"
 #include "shader_dump.glsl"
 
 /* Opaque, single-pass forward shading with no discard/gl_FragDepth write:
@@ -25,14 +26,14 @@ layout(set = 1, binding = 0) uniform sampler2D albedo_map;
 layout(set = 1, binding = 1) uniform sampler2D orm_map;
 layout(set = 1, binding = 2) uniform sampler2D normal_map;
 layout(set = 1, binding = 3) uniform sampler2D occlusion_map;
+layout(set = 1, binding = 4) uniform sampler2D cavity_map;
 
 layout(push_constant) uniform DrawData {
     mat4 local_to_camera_relative;
     vec4 geometry;
     vec4 elevation_uv;
-    vec4 material_factors; /* x: glTF metallicFactor, y: Default Lit enabled,
-                               z: Phase B diffuse sky IBL enabled (F3 cycle) */
-    vec4 debug;
+    vec4 material_factors; /* metallic, Default Lit, diffuse IBL, specular IBL */
+    vec4 debug; /* cavity strength, displacement (reserved), shadows, curvature */
 } draw;
 
 vec3 fallback_tangent(vec3 N) {
@@ -98,7 +99,11 @@ void main() {
     if (default_lit && dot(N, V) < 0.0)
         N = -N;
     float NoL = max(dot(N, L), 0.0);
-    float roughness = clamp(orm.g * draw.elevation_uv.x, 0.045, 1.0);
+    float authored_roughness = material_authored_roughness(orm.g, draw.elevation_uv.x,
+                                                            draw.elevation_uv.w);
+    float normal_variance;
+    float curvature_floor = material_curvature_floor(N, draw.debug.w, normal_variance);
+    float roughness = max(authored_roughness, curvature_floor);
     float metallic;
     vec3 indirect_diffuse;
     vec3 F0;
@@ -118,9 +123,7 @@ void main() {
         indirect_diffuse = base_color;
     }
     ShadowResult shadow = shadow_evaluate(camera_relative_position, normalize(normal));
-    /* geometry.a is the Quarry F3 Phase-C gate; ordinary glTF materials use
-       their opaque base-colour alpha and therefore keep shadows enabled. */
-    float visibility = mix(1.0, shadow.visibility, draw.geometry.a);
+    float visibility = mix(1.0, shadow.visibility, draw.debug.z);
     if (frame.debug_view > 6.5 && frame.debug_view < 7.5) {
         const vec3 colors[5] = vec3[5](vec3(.95,.18,.12),vec3(.18,.82,.25),vec3(.15,.45,1),vec3(.95,.75,.1),vec3(.1));
         out_color = vec4(colors[shadow.cascade], 1); return;
@@ -143,14 +146,20 @@ void main() {
     EnvironmentLightingResult environment = environment_evaluate(
         camera_relative_position, N, V, roughness, F0, ao,
         diffuse_ibl_enabled, specular_ibl_enabled);
+    float cavity_sample = texture(cavity_map, uv).r;
+    float cavity_visibility = material_visibility(cavity_sample, draw.debug.x);
     vec3 irradiance = environment.irradiance;
-    vec3 ambient = indirect_diffuse * irradiance * ao;
+    vec3 ambient = indirect_diffuse * irradiance * ao * cavity_visibility;
     /* Sky specular IBL (Phase B2). Its own F3 step (material_factors.w),
        one past diffuse-only, so B1 and B2 can be compared independently.
        Reuses the analytic split-sum energy terms already computed for the
        direct BRDF instead of a baked LUT. Its dedicated, view/roughness-aware
        reflection visibility consumes AO; direct light remains unaffected. */
     vec3 specular_ibl = environment.final_specular;
+    if (frame.debug_view > 2.5 && frame.debug_view < 3.5) { out_color = vec4(N * .5 + .5, 1); return; }
+    if (frame.debug_view > 3.5 && frame.debug_view < 4.5) { out_color = vec4(vec3(authored_roughness), 1); return; }
+    if (frame.debug_view > 4.5 && frame.debug_view < 5.5) { out_color = vec4(vec3(curvature_floor), 1); return; }
+    if (frame.debug_view > 5.5 && frame.debug_view < 6.5) { out_color = vec4(roughness, ao * cavity_visibility, 0, 1); return; }
     out_color = vec4(direct + ambient + specular_ibl, 1.0);
     vec2 current_uv = current_clip.xy / current_clip.w * 0.5 + 0.5;
     vec2 previous_uv = previous_clip.xy / previous_clip.w * 0.5 + 0.5;
@@ -162,11 +171,19 @@ void main() {
                 vec4(base_color, visibility),
                 vec4(N, metallic),
                 vec4(camera_relative_position, default_lit ? 1.0 : 0.0),
-                vec4(irradiance, orm.r));
+                vec4(irradiance, ao));
     shader_dump(DUMP_SHADER_ENVIRONMENT_IBL,
                 vec4(environment.reflection_direction, environment.mip),
                 vec4(environment.sampled_reflection_radiance, environment.NoV),
                 vec4(environment.ggx_specular_energy, environment.reflection_visibility),
                 vec4(environment.unoccluded_specular, orm.r),
                 vec4(environment.final_specular, roughness));
+    /* Cavity strength is zero whenever the Quarry fallback is bound; therefore
+       this record also identifies whether its production cavity input is live. */
+    shader_dump(DUMP_SHADER_MATERIAL_DETAIL,
+                vec4(authored_roughness, roughness, curvature_floor, normal_variance),
+                vec4(texture(occlusion_map, uv).r, ao, cavity_sample, draw.debug.x),
+                vec4(cavity_visibility, draw.debug.w, draw.debug.x > 0.0 ? 1.0 : 0.0,
+                     draw.debug.w > 0.0 ? 1.0 : 0.0),
+                vec4(0.0), vec4(0.0));
 }

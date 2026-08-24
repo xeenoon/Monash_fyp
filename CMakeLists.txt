@@ -103,6 +103,7 @@ add_executable(terrain_renderer
     src/temporal.c
     src/texture.c
     src/renderer.c
+	 src/static_material.c
     third_party/mikktspace/mikktspace.c
     include/stb_image.c)
 add_dependencies(terrain_renderer shaders)
@@ -261,4 +262,9 @@ if(BUILD_TESTING)
             -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME phase8_motion_taa_and_exposure COMMAND phase8_temporal_tests)
+
+    add_executable(phase_d_material_tests tests/phase_d_material_tests.c src/static_material.c)
+    target_include_directories(phase_d_material_tests PRIVATE src)
+    target_link_libraries(phase_d_material_tests PRIVATE m)
+    add_test(NAME phase_d_material_policy COMMAND phase_d_material_tests)
 endif()
