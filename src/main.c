@@ -6,12 +6,12 @@
 #include <unistd.h>
 
 #include "atmosphere.h"
-#include "camera.h"
-#include "input.h"
-#include "gltf_scene.h"
-#include "quarry.h"
 #include "benchmark_ground.h"
+#include "camera.h"
+#include "gltf_scene.h"
+#include "input.h"
 #include "material_stability_demo.h"
+#include "quarry.h"
 #include "renderer.h"
 #include "temporal.h"
 
@@ -20,38 +20,53 @@
 
 static ShadowQualitySettings shadow_quality_from_environment(void)
 {
-	ShadowQualitySettings q = {.filter_mode = SHADOW_FILTER_PCF, .resolution = 2048u,
-		.pcf_radius_texels = 1.75f, .sun_angular_radius_rad = 0.004675f,
-		.blocker_search_m = 12.0f, .max_filter_radius_texels = 24.0f};
+	ShadowQualitySettings q = {.filter_mode = SHADOW_FILTER_PCF,
+							   .resolution = 2048u,
+							   .pcf_radius_texels = 1.75f,
+							   .sun_angular_radius_rad = 0.004675f,
+							   .blocker_search_m = 12.0f,
+							   .max_filter_radius_texels = 24.0f};
 	const char *mode = getenv("TERRAIN_SHADOW_FILTER");
-	if (mode && strcmp(mode, "hard") == 0) q.filter_mode = SHADOW_FILTER_HARD;
-	else if (mode && strcmp(mode, "pcss") == 0) q.filter_mode = SHADOW_FILTER_PCSS;
-	else if (mode && strcmp(mode, "pcf") != 0) { fprintf(stderr, "TERRAIN_SHADOW_FILTER must be hard, pcf, or pcss\n"); exit(EXIT_FAILURE); }
+	if (mode && strcmp(mode, "hard") == 0)
+		q.filter_mode = SHADOW_FILTER_HARD;
+	else if (mode && strcmp(mode, "pcss") == 0)
+		q.filter_mode = SHADOW_FILTER_PCSS;
+	else if (mode && strcmp(mode, "pcf") != 0)
+	{
+		fprintf(stderr, "TERRAIN_SHADOW_FILTER must be hard, pcf, or pcss\n");
+		exit(EXIT_FAILURE);
+	}
 	const char *resolution = getenv("TERRAIN_SHADOW_RESOLUTION");
-	if (resolution) { q.resolution = (uint32_t)strtoul(resolution, NULL, 10); if (q.resolution != 2048u && q.resolution != 4096u) { fprintf(stderr, "TERRAIN_SHADOW_RESOLUTION must be 2048 or 4096\n"); exit(EXIT_FAILURE); } }
+	if (resolution)
+	{
+		q.resolution = (uint32_t)strtoul(resolution, NULL, 10);
+		if (q.resolution != 2048u && q.resolution != 4096u)
+		{
+			fprintf(stderr, "TERRAIN_SHADOW_RESOLUTION must be 2048 or 4096\n");
+			exit(EXIT_FAILURE);
+		}
+	}
 	return q;
 }
 
 /* The sole CPU packing contract for all static materials.  geometry retains
  * glTF base-colour RGBA; shadow state lives in debug.z, never in alpha. */
-static DrawPushConstants static_material_push(LocalToWorldTransform transform,
-                                               WorldPosition camera_position,
-                                               const float base_color[4], float metallic,
-                                               float gltf_roughness,
-                                               const StaticMaterialParameters *parameters,
-                                               bool default_lit, bool diffuse_ibl,
-                                               bool specular_ibl, bool shadows,
-                                               float curvature_strength)
+static DrawPushConstants
+static_material_push(LocalToWorldTransform transform, WorldPosition camera_position,
+					 const float base_color[4], float metallic, float gltf_roughness,
+					 const StaticMaterialParameters *parameters, bool default_lit, bool diffuse_ibl,
+					 bool specular_ibl, bool shadows, float curvature_strength)
 {
-    return (DrawPushConstants){
-        .local_to_camera_relative = coordinate_local_to_camera_relative(&transform, camera_position),
-        .geometry = {{base_color[0], base_color[1], base_color[2], base_color[3]}},
-        .elevation_uv = {{gltf_roughness, parameters->normal_strength, parameters->ao_strength,
-                          parameters->roughness_bias}},
-        .material = {{metallic, default_lit ? 1.f : 0.f, diffuse_ibl ? 1.f : 0.f,
-                      specular_ibl ? 1.f : 0.f}},
-        .debug = {{parameters->cavity_strength, parameters->displacement_scale,
-                   shadows ? 1.f : 0.f, curvature_strength}}};
+	return (DrawPushConstants){
+		.local_to_camera_relative =
+			coordinate_local_to_camera_relative(&transform, camera_position),
+		.geometry = {{base_color[0], base_color[1], base_color[2], base_color[3]}},
+		.elevation_uv = {{gltf_roughness, parameters->normal_strength, parameters->ao_strength,
+						  parameters->roughness_bias}},
+		.material = {{metallic, default_lit ? 1.f : 0.f, diffuse_ibl ? 1.f : 0.f,
+					  specular_ibl ? 1.f : 0.f}},
+		.debug = {{parameters->cavity_strength, parameters->displacement_scale, shadows ? 1.f : 0.f,
+				   curvature_strength}}};
 }
 
 int main(void)
@@ -68,7 +83,7 @@ int main(void)
 		if (access(gltf_path, R_OK) != 0)
 		{
 			fprintf(stderr, "Coastal Cliff benchmark assets are missing. Download with:\n"
-					"python3 tools/download_benchmark_assets.py\n");
+							"python3 tools/download_benchmark_assets.py\n");
 			return EXIT_FAILURE;
 		}
 	}
@@ -83,7 +98,8 @@ int main(void)
 	}
 	else if (!use_quarry && !use_phase_d_demo)
 	{
-		fprintf(stderr, "Supported scene selectors: coastal_cliff, quarry, phase_d_demo, or gltf.\n");
+		fprintf(stderr,
+				"Supported scene selectors: coastal_cliff, quarry, phase_d_demo, or gltf.\n");
 		return EXIT_FAILURE;
 	}
 	if (!SDL_Init(SDL_INIT_VIDEO))
@@ -105,21 +121,32 @@ int main(void)
 
 	Renderer renderer;
 	ShadowQualitySettings shadow_quality = shadow_quality_from_environment();
-	renderer_init(&renderer, window, &(RendererConfig){.environment_path = getenv("TERRAIN_ENV_HDR"), .shadow_quality = shadow_quality});
+	renderer_init(&renderer, window,
+				  &(RendererConfig){.environment_path = getenv("TERRAIN_ENV_HDR"),
+									.shadow_quality = shadow_quality});
 	Quarry quarry = {0};
 	BenchmarkGround ground = {0};
 	GltfScene gltf = {0};
 	GltfLoadError gltf_error = {0};
 	MaterialStabilityDemo demo = {0};
-	GltfLoadResult load_result = use_phase_d_demo ? GLTF_LOAD_OK : (use_quarry ?
-		(quarry_create(&renderer, &quarry, QUARRY_DIR) ? GLTF_LOAD_OK : GLTF_LOAD_IO_ERROR) :
-		gltf_scene_create(&renderer, gltf_path,
-			&(GltfLoadOptions){.use_metallic_roughness_red_as_occlusion = !scene || strcmp(scene, "coastal_cliff") == 0,
-				/* Poly Haven's authored front faces +Z; the benchmark camera is
-				 * placed on -Z, so turn only this named benchmark toward it. */
-				.placement = (!scene || strcmp(scene, "coastal_cliff") == 0)
-					? coordinate_rotation_y(3.14159265358979323846, (WorldPosition){0})
-					: coordinate_identity_transform((WorldPosition){0})}, &gltf, &gltf_error));
+	GltfLoadResult load_result =
+		use_phase_d_demo
+			? GLTF_LOAD_OK
+			: (use_quarry
+				   ? (quarry_create(&renderer, &quarry, QUARRY_DIR) ? GLTF_LOAD_OK
+																	: GLTF_LOAD_IO_ERROR)
+				   : gltf_scene_create(
+						 &renderer, gltf_path,
+						 &(GltfLoadOptions){
+							 .use_metallic_roughness_red_as_occlusion =
+								 !scene || strcmp(scene, "coastal_cliff") == 0,
+							 /* Poly Haven's authored front faces +Z; the benchmark camera is
+							  * placed on -Z, so turn only this named benchmark toward it. */
+							 .placement = (!scene || strcmp(scene, "coastal_cliff") == 0)
+											  ? coordinate_rotation_y(3.14159265358979323846,
+																	  (WorldPosition){0})
+											  : coordinate_identity_transform((WorldPosition){0})},
+						 &gltf, &gltf_error));
 	if (load_result != GLTF_LOAD_OK)
 	{
 		fprintf(stderr, "Could not load %s: %s\n", use_quarry ? QUARRY_DIR : gltf_path,
@@ -132,16 +159,24 @@ int main(void)
 	if (use_quarry && !benchmark_ground_create(&renderer, &ground, &quarry.base))
 	{
 		fprintf(stderr, "Could not create Quarry benchmark ground\n");
-		quarry_destroy(&renderer, &quarry); renderer_shutdown(&renderer); SDL_DestroyWindow(window); SDL_Quit();
+		quarry_destroy(&renderer, &quarry);
+		renderer_shutdown(&renderer);
+		SDL_DestroyWindow(window);
+		SDL_Quit();
 		return EXIT_FAILURE;
 	}
 	if (use_phase_d_demo && !material_stability_demo_create(&renderer, &demo))
 	{
 		fprintf(stderr, "Could not create Phase D demo; download benchmark assets first.\n");
-		renderer_shutdown(&renderer); SDL_DestroyWindow(window); SDL_Quit(); return EXIT_FAILURE;
+		renderer_shutdown(&renderer);
+		SDL_DestroyWindow(window);
+		SDL_Quit();
+		return EXIT_FAILURE;
 	}
 	Camera camera = {
-		.position = use_phase_d_demo ? (WorldPosition){0.0, 1.0, -18.0} : (use_quarry ? (WorldPosition){0.0, 8.0, -25.0} : (WorldPosition){0.0, 6.0, -45.0}),
+		.position = use_phase_d_demo ? (WorldPosition){0.0, 1.0, -18.0}
+									 : (use_quarry ? (WorldPosition){0.0, 8.0, -25.0}
+												   : (WorldPosition){0.0, 6.0, -45.0}),
 		.yaw = 90.0f,
 		.pitch = use_quarry ? -3.0f : -2.0f,
 	};
@@ -158,8 +193,10 @@ int main(void)
 	float previous_camera_pitch = camera.pitch;
 	bool history_valid = false;
 	uint64_t temporal_frame = 0;
-	bool demo_flyby = use_phase_d_demo && getenv("TERRAIN_DEMO_FLYBY") && atoi(getenv("TERRAIN_DEMO_FLYBY")) != 0;
-	bool demo_split = use_phase_d_demo && !demo_flyby && getenv("TERRAIN_DEMO_SPLIT") && atoi(getenv("TERRAIN_DEMO_SPLIT")) != 0;
+	bool demo_flyby =
+		use_phase_d_demo && getenv("TERRAIN_DEMO_FLYBY") && atoi(getenv("TERRAIN_DEMO_FLYBY")) != 0;
+	bool demo_split = use_phase_d_demo && !demo_flyby && getenv("TERRAIN_DEMO_SPLIT") &&
+					  atoi(getenv("TERRAIN_DEMO_SPLIT")) != 0;
 	if (demo_flyby)
 		SDL_SetWindowTitle(window, "Phase C — raw normal detail");
 	else if (demo_split)
@@ -221,15 +258,17 @@ int main(void)
 				static_mesh_shading_mode = static_mesh_shading_mode >= 5u ? 4u : 5u;
 			else
 				static_mesh_shading_mode = (static_mesh_shading_mode + 1) % 6u;
-			const char *names[] = {"legacy PBR", "Phase A: Unreal Default Lit",
+			const char *names[] = {"legacy PBR",
+								   "Phase A: Unreal Default Lit",
 								   "Phase B1: Default Lit + diffuse sky IBL",
 								   "Phase B2: Default Lit + diffuse and specular sky IBL",
 								   "Phase C: B2 + cascaded shadows",
 								   "Phase D: Phase C + material detail stability"};
 			printf("Static-mesh renderer: %s\n", names[static_mesh_shading_mode]);
 			if (use_phase_d_demo && !demo_split)
-				SDL_SetWindowTitle(window, static_mesh_shading_mode >= 5u ?
-					"Phase D — stabilized material detail" : "Phase C — raw normal detail");
+				SDL_SetWindowTitle(window, static_mesh_shading_mode >= 5u
+											   ? "Phase D — stabilized material detail"
+											   : "Phase C — raw normal detail");
 			history_valid = false;
 		}
 		if (input.reload_shaders)
@@ -260,10 +299,13 @@ int main(void)
 		if (input.cycle_surface_debug)
 		{
 			debug_mode = debug_mode >= 3u && debug_mode < 6u ? debug_mode + 1u
-															 : (debug_mode == 6u ? 0u : 3u);
+															 : (debug_mode == 6u ? 21u : (debug_mode == 21u ? 0u : 3u));
 			const char *names[] = {"Mapped normal", "Authored roughness", "Curvature roughness",
-				"Effective roughness (R authored, G effective, B curvature)", "off"};
-			printf("Static-mesh material view: %s\n", debug_mode >= 3u && debug_mode <= 6u ? names[debug_mode - 3u] : names[4]);
+								   "Effective roughness (R authored, G effective, B curvature)",
+								   "Phase D activation ×20", "off"};
+			printf("Static-mesh material view: %s\n",
+				   debug_mode >= 3u && debug_mode <= 6u ? names[debug_mode - 3u] :
+				   (debug_mode == 21u ? names[4] : names[5]));
 		}
 		if (input.cycle_shadow_debug)
 			debug_mode = debug_mode >= 7u && debug_mode < 11u ? debug_mode + 1u
@@ -305,15 +347,22 @@ int main(void)
 			replay = fminf(fmaxf(replay, 0.0f), 1.0f);
 			float near_weight = 1.0f - fabsf(2.0f * replay - 1.0f);
 			camera.position = (WorldPosition){0.0, 1.0, -30.0 + 18.0 * near_weight};
-			camera.yaw = 90.f; camera.pitch = 0.f;
-			if (phase_d != demo_flyby_phase_d) {
-				demo_flyby_phase_d = phase_d; history_valid = false;
+			camera.yaw = 90.f;
+			camera.pitch = 0.f;
+			if (phase_d != demo_flyby_phase_d)
+			{
+				demo_flyby_phase_d = phase_d;
+				history_valid = false;
 				printf("Phase D demo flyby: Phase %c\n", phase_d ? 'D' : 'C');
-				SDL_SetWindowTitle(window, phase_d ? "Phase D — stabilized material detail" :
-					"Phase C — raw normal detail");
+				SDL_SetWindowTitle(window, phase_d ? "Phase D — stabilized material detail"
+												   : "Phase C — raw normal detail");
 			}
 			static_mesh_shading_mode = phase_d ? 5u : 4u;
-			if (seconds < dt) { history_valid = false; printf("Phase D demo flyby: Phase C\n"); }
+			if (seconds < dt)
+			{
+				history_valid = false;
+				printf("Phase D demo flyby: Phase C\n");
+			}
 		}
 		bool camera_cut =
 			history_valid &&
@@ -327,28 +376,46 @@ int main(void)
 		bool specular_ibl_enabled = static_mesh_shading_mode >= 3u;
 		bool shadows_enabled = static_mesh_shading_mode >= 4u;
 		bool phase_d_enabled = static_mesh_shading_mode >= 5u;
-		StaticMaterialParameters quarry_parameters = {.normal_strength = 1.0f, .ao_strength = 1.0f,
-			.cavity_strength = phase_d_enabled && quarry.cavity_available ? 0.25f : 0.0f, .roughness_bias = 0.0f,
+		StaticMaterialParameters quarry_parameters = {
+			.normal_strength = 1.0f,
+			.ao_strength = 1.0f,
+			.cavity_strength = phase_d_enabled && quarry.cavity_available ? 0.25f : 0.0f,
+			.roughness_bias = 0.0f,
 			.displacement_scale = phase_d_enabled && quarry.cavity_available ? 1.0f : 0.0f};
 		const float white_rgba[4] = {1.f, 1.f, 1.f, 1.f};
 		DrawPushConstants quarry_push = static_material_push(
 			quarry.base.local_to_world, camera.position, white_rgba, quarry.metallic_factor, 1.f,
 			&quarry_parameters, default_lit, diffuse_ibl_enabled, specular_ibl_enabled,
 			shadows_enabled, phase_d_enabled ? 1.f : 0.f);
-		RendererDraw quarry_draw = {
-			.mesh = &quarry.base, .material_set = phase_d_enabled && quarry.cavity_available ? quarry.cavity_material_set : quarry.base.material_set,
-			.push = quarry_push, .static_mesh = true};
+		RendererDraw quarry_draw = {.mesh = &quarry.base,
+									.material_set = phase_d_enabled && quarry.cavity_available
+														? quarry.cavity_material_set
+														: quarry.base.material_set,
+									.push = quarry_push,
+									.static_mesh = true};
 		DrawPushConstants ground_push = quarry_push;
 		ground_push = static_material_push(ground.mesh.local_to_world, camera.position, white_rgba,
-			quarry.metallic_factor, 1.f, &quarry_parameters, default_lit, diffuse_ibl_enabled,
-			specular_ibl_enabled, shadows_enabled, phase_d_enabled ? 1.f : 0.f);
+										   quarry.metallic_factor, 1.f, &quarry_parameters,
+										   default_lit, diffuse_ibl_enabled, specular_ibl_enabled,
+										   shadows_enabled, phase_d_enabled ? 1.f : 0.f);
 		ground_push.debug.y = 0.0f; /* ground retains the neutral cavity descriptor */
 		RendererDraw ground_draw = {.mesh = &ground.mesh, .push = ground_push, .static_mesh = true};
 		RendererDraw *active_draws = &quarry_draw;
 		uint32_t active_draw_count = 1;
 		RendererDraw *active_shadow_draws = &quarry_draw;
 		uint32_t active_shadow_draw_count = 1;
-		if (use_quarry) { active_draws = calloc(2, sizeof(*active_draws)); if (!active_draws) { running=false; continue; } active_draws[0]=quarry_draw; active_draws[1]=ground_draw; active_draw_count=2; }
+		if (use_quarry)
+		{
+			active_draws = calloc(2, sizeof(*active_draws));
+			if (!active_draws)
+			{
+				running = false;
+				continue;
+			}
+			active_draws[0] = quarry_draw;
+			active_draws[1] = ground_draw;
+			active_draw_count = 2;
+		}
 		if (!use_quarry)
 		{
 			active_draw_count = use_phase_d_demo ? (demo_split ? 2u : 1u) : gltf.primitive_count;
@@ -361,19 +428,25 @@ int main(void)
 			}
 			for (uint32_t i = 0; i < active_draw_count; ++i)
 			{
-				if (use_phase_d_demo) {
+				if (use_phase_d_demo)
+				{
 					/* Flyby submits the single centred hero; stationary mode retains
 					 * a simultaneous C/D split for diagnostic inspection. */
 					bool d = phase_d_enabled;
 					if (demo_split)
 						d = i != 0; /* optional simultaneous C/D inspection */
-					StaticMaterialParameters p = {.normal_strength=1.f,.ao_strength=1.f,
-						.cavity_strength = 0.f, .displacement_scale=0.f};
-					active_draws[i] = (RendererDraw){.mesh=&demo.panels[i],
+					StaticMaterialParameters p = {.normal_strength = 1.f,
+												  .ao_strength = 1.f,
+												  .cavity_strength = 0.f,
+												  .displacement_scale = 0.f};
+					active_draws[i] = (RendererDraw){
+						.mesh = &demo.panels[i],
 						/* Stability demo never binds cavity: it would confound C/D. */
-						.material_set = demo.neutral_set, .static_mesh=true,
-						.push=static_material_push(demo.panels[i].local_to_world,camera.position,white_rgba,
-							1.f,1.f,&p,true,true,true,true,d ? 1.f : 0.f)};
+						.material_set = demo.neutral_set,
+						.static_mesh = true,
+						.push = static_material_push(demo.panels[i].local_to_world, camera.position,
+													 white_rgba, 1.f, 1.f, &p, true, true, true,
+													 true, d ? 1.f : 0.f)};
 					continue;
 				}
 				GltfPrimitive *primitive = &gltf.primitives[i];
@@ -382,12 +455,16 @@ int main(void)
 					.mesh = &primitive->mesh,
 					.material_set = material->descriptor_set,
 					.static_mesh = true,
-					.push = static_material_push(primitive->mesh.local_to_world, camera.position,
-						material->base_color_factor, material->metallic_factor, material->roughness_factor,
+					.push = static_material_push(
+						primitive->mesh.local_to_world, camera.position,
+						material->base_color_factor, material->metallic_factor,
+						material->roughness_factor,
 						&(StaticMaterialParameters){.normal_strength = material->normal_scale,
-							.ao_strength = material->occlusion_strength, .cavity_strength = 0.f,
-							.roughness_bias = 0.f, .displacement_scale = 0.f}, default_lit,
-						diffuse_ibl_enabled, specular_ibl_enabled, shadows_enabled,
+													.ao_strength = material->occlusion_strength,
+													.cavity_strength = 0.f,
+													.roughness_bias = 0.f,
+													.displacement_scale = 0.f},
+						default_lit, diffuse_ibl_enabled, specular_ibl_enabled, shadows_enabled,
 						phase_d_enabled ? 1.f : 0.f)};
 			}
 			active_shadow_draws = active_draws;
@@ -452,9 +529,13 @@ int main(void)
 			.shadow_splits = (vec4s){{shadow_config.split_m[0], shadow_config.split_m[1],
 									  shadow_config.split_m[2], shadow_config.split_m[3]}},
 			.shadow_parameters = (vec4s){{0.35f, 1.75f, 1.0f, 1.25f}},
-			.shadow_radii = (vec4s){{shadow_cascades.radius_m[0], shadow_cascades.radius_m[1], shadow_cascades.radius_m[2], shadow_cascades.radius_m[3]}},
-			.shadow_quality = (vec4s){{(float)shadow_quality.filter_mode, shadow_quality.pcf_radius_texels, atmosphere.sun_angular_radius_rad, shadow_quality.blocker_search_m}},
-			.shadow_pcss = (vec4s){{shadow_quality.max_filter_radius_texels, (float)renderer.shadow_resolution, 0.0f, 0.0f}},
+			.shadow_radii = (vec4s){{shadow_cascades.radius_m[0], shadow_cascades.radius_m[1],
+									 shadow_cascades.radius_m[2], shadow_cascades.radius_m[3]}},
+			.shadow_quality =
+				(vec4s){{(float)shadow_quality.filter_mode, shadow_quality.pcf_radius_texels,
+						 atmosphere.sun_angular_radius_rad, shadow_quality.blocker_search_m}},
+			.shadow_pcss = (vec4s){{shadow_quality.max_filter_radius_texels,
+									(float)renderer.shadow_resolution, 0.0f, 0.0f}},
 			.sun_radiance = (vec4s){{1.6f, 1.5f, 1.35f, 0.0f}},
 			.atmosphere_radii = (vec4s){{atmosphere.bottom_radius_km, atmosphere.top_radius_km,
 										 fmaxf((float)camera.position.y * 0.001f, 0.001f),
@@ -479,7 +560,7 @@ int main(void)
 			.temporal_parameters = (vec4s){{use_history ? 1.0f : 0.0f, dt, 0.0f, 0.0f}},
 			.temporal_jitter = (vec4s){{jitter.x, jitter.y, previous_jitter.x, previous_jitter.y}},
 			.material_curvature = (vec4s){{1.0f, 0.0f, 0.333f, 0.0f}},
-			.material_normal_filter = (vec4s){{0.25f, 0.20f, 0.0001f, 0.0f}},
+			.material_normal_filter = (vec4s){{1.0f, 0.20f, 0.0001f, 0.0f}},
 #ifdef DEBUG_SHADER_DUMP
 			.shader_dump = (vec4s){{dump_this_frame ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f}},
 #endif
@@ -492,8 +573,8 @@ int main(void)
 		if (getenv("TERRAIN_SHADOW_NBIAS"))
 			frame.shadow_parameters.x = (float)atof(getenv("TERRAIN_SHADOW_NBIAS"));
 #endif
-		renderer_draw_frame(&renderer, &frame, active_draws, active_draw_count,
-							active_shadow_draws, active_shadow_draw_count, input.resized);
+		renderer_draw_frame(&renderer, &frame, active_draws, active_draw_count, active_shadow_draws,
+							active_shadow_draw_count, input.resized);
 		free(active_draws);
 #ifdef DEBUG_SHADER_DUMP
 		/* Dump reads the buffer the frame above just populated. Clear first so a
@@ -503,20 +584,26 @@ int main(void)
 		if (input.dump_shader_data)
 		{
 			char metadata[160];
-			snprintf(metadata, sizeof(metadata), "scene=%s static_mesh_mode=%u demo_split=%u flyby_replay=%u phase=%c",
-				use_phase_d_demo ? "phase_d_demo" : (use_quarry ? "quarry" : "gltf"), static_mesh_shading_mode,
-				demo_split ? 1u : 0u, demo_flyby_phase_d ? 1u : 0u, phase_d_enabled ? 'D' : 'C');
-			renderer_dump_shader_data(&renderer, SHADER_DUMP_PATH, camera.position, camera.yaw, camera.pitch, metadata);
+			snprintf(metadata, sizeof(metadata),
+					 "scene=%s static_mesh_mode=%u demo_split=%u flyby_replay=%u phase=%c",
+					 use_phase_d_demo ? "phase_d_demo" : (use_quarry ? "quarry" : "gltf"),
+					 static_mesh_shading_mode, demo_split ? 1u : 0u, demo_flyby_phase_d ? 1u : 0u,
+					 phase_d_enabled ? 'D' : 'C');
+			renderer_dump_shader_data(&renderer, SHADER_DUMP_PATH, camera.position, camera.yaw,
+									  camera.pitch, metadata);
 		}
 		if (auto_dump_after && ++rendered_frames >= auto_dump_after)
 		{
-		{
-			char metadata[160];
-			snprintf(metadata, sizeof(metadata), "scene=%s static_mesh_mode=%u demo_split=%u flyby_replay=%u phase=%c",
-				use_phase_d_demo ? "phase_d_demo" : (use_quarry ? "quarry" : "gltf"), static_mesh_shading_mode,
-				demo_split ? 1u : 0u, demo_flyby_phase_d ? 1u : 0u, phase_d_enabled ? 'D' : 'C');
-			renderer_dump_shader_data(&renderer, SHADER_DUMP_PATH, camera.position, camera.yaw, camera.pitch, metadata);
-		}
+			{
+				char metadata[160];
+				snprintf(metadata, sizeof(metadata),
+						 "scene=%s static_mesh_mode=%u demo_split=%u flyby_replay=%u phase=%c",
+						 use_phase_d_demo ? "phase_d_demo" : (use_quarry ? "quarry" : "gltf"),
+						 static_mesh_shading_mode, demo_split ? 1u : 0u,
+						 demo_flyby_phase_d ? 1u : 0u, phase_d_enabled ? 'D' : 'C');
+				renderer_dump_shader_data(&renderer, SHADER_DUMP_PATH, camera.position, camera.yaw,
+										  camera.pitch, metadata);
+			}
 			running = false;
 		}
 #endif

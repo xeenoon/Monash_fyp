@@ -165,6 +165,7 @@ void main() {
     /* Effective material-detail diagnostic: authored (R), effective (G),
        curvature floor (B).  Green therefore appears only where D raises it. */
     if (frame.debug_view > 5.5 && frame.debug_view < 6.5) { out_color = vec4(authored_roughness, roughness, detail.geometric_floor, 1); return; }
+    if (frame.debug_view > 20.5 && frame.debug_view < 21.5) { out_color = vec4(vec3(clamp((roughness - authored_roughness) * 20.0, 0.0, 1.0)), 1); return; }
     vec3 final_hdr = direct + ambient + specular_ibl;
     out_color = vec4(final_hdr, 1.0);
     vec2 current_uv = current_clip.xy / current_clip.w * 0.5 + 0.5;
