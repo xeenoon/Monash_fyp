@@ -2,10 +2,13 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 
 #include "atmosphere.h"
 #include "camera.h"
 #include "input.h"
+#include "gltf_scene.h"
 #include "quarry.h"
 #include "renderer.h"
 #include "temporal.h"
@@ -15,6 +18,35 @@
 
 int main(void)
 {
+	const char *scene = getenv("TERRAIN_SCENE");
+	bool use_quarry = scene && strcmp(scene, "quarry") == 0;
+	const char *gltf_path = NULL;
+	/* The large benchmark is intentionally not in git.  Check before Vulkan so
+	 * a no-argument invocation never quietly falls back to Quarry. */
+	if (!scene || strcmp(scene, "coastal_cliff") == 0)
+	{
+		gltf_path = BENCHMARK_DIR "/coastal_cliff_01/coastal_cliff_01_4k.gltf";
+		if (access(gltf_path, R_OK) != 0)
+		{
+			fprintf(stderr, "Coastal Cliff benchmark assets are missing. Download with:\n"
+					"python3 tools/download_benchmark_assets.py\n");
+			return EXIT_FAILURE;
+		}
+	}
+	else if (!use_quarry && strcmp(scene, "gltf") == 0)
+	{
+		gltf_path = getenv("TERRAIN_GLTF_PATH");
+		if (!gltf_path || !*gltf_path)
+		{
+			fprintf(stderr, "TERRAIN_SCENE=gltf requires TERRAIN_GLTF_PATH\n");
+			return EXIT_FAILURE;
+		}
+	}
+	else if (!use_quarry)
+	{
+		fprintf(stderr, "Supported scene selectors: coastal_cliff, quarry, or gltf.\n");
+		return EXIT_FAILURE;
+	}
 	if (!SDL_Init(SDL_INIT_VIDEO))
 	{
 		fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
@@ -31,20 +63,28 @@ int main(void)
 		fprintf(stderr, "Relative mouse mode unavailable: %s\n", SDL_GetError());
 
 	Renderer renderer;
-	renderer_init(&renderer, window);
-	Quarry quarry;
-	if (!quarry_create(&renderer, &quarry, QUARRY_DIR))
+	renderer_init(&renderer, window, &(RendererConfig){.environment_path = getenv("TERRAIN_ENV_HDR")});
+	Quarry quarry = {0};
+	GltfScene gltf = {0};
+	GltfLoadError gltf_error = {0};
+	GltfLoadResult load_result = use_quarry ?
+		(quarry_create(&renderer, &quarry, QUARRY_DIR) ? GLTF_LOAD_OK : GLTF_LOAD_IO_ERROR) :
+		gltf_scene_create(&renderer, gltf_path,
+			&(GltfLoadOptions){.use_metallic_roughness_red_as_occlusion = !scene || strcmp(scene, "coastal_cliff") == 0,
+				.placement = coordinate_identity_transform((WorldPosition){0})}, &gltf, &gltf_error);
+	if (load_result != GLTF_LOAD_OK)
 	{
-		fprintf(stderr, "Could not load quarry sample from %s\n", QUARRY_DIR);
+		fprintf(stderr, "Could not load %s: %s\n", use_quarry ? QUARRY_DIR : gltf_path,
+				use_quarry ? "Quarry loader failed" : gltf_error.message);
 		renderer_shutdown(&renderer);
 		SDL_DestroyWindow(window);
 		SDL_Quit();
 		return EXIT_FAILURE;
 	}
 	Camera camera = {
-		.position = {0.0, 8.0, -25.0},
+		.position = use_quarry ? (WorldPosition){0.0, 8.0, -25.0} : (WorldPosition){0.0, 6.0, -45.0},
 		.yaw = 90.0f,
-		.pitch = -3.0f,
+		.pitch = use_quarry ? -3.0f : -2.0f,
 	};
 
 	Input input = {.mouse_captured = true};
@@ -67,7 +107,7 @@ int main(void)
 	   no IBL ("metallic shader") -> 2 = Default Lit + Phase B1 diffuse sky IBL
 	   -> 3 = Default Lit + Phase B1 diffuse + Phase B2 specular sky IBL ->
 	   back to 0. */
-	unsigned quarry_shading_mode = 1;
+	unsigned quarry_shading_mode = use_quarry ? 1u : 3u;
 	AtmosphereParameters atmosphere = atmosphere_earth();
 	bool running = true;
 #ifdef DEBUG_SHADER_DUMP
@@ -193,10 +233,43 @@ int main(void)
 				coordinate_local_to_camera_relative(&quarry.base.local_to_world, camera.position),
 			.material = {{quarry.metallic_factor, default_lit ? 1.0f : 0.0f,
 						 diffuse_ibl_enabled ? 1.0f : 0.0f, specular_ibl_enabled ? 1.0f : 0.0f}},
+			.geometry = {{1.0f, 1.0f, 1.0f, 1.0f}},
+			.elevation_uv = {{1.0f, 1.0f, 1.0f, 0.0f}},
 			.debug = {{0.0f, 0.0f, 0.0f, 0.0f}},
 		};
 		RendererDraw quarry_draw = {
 			.mesh = &quarry.base, .push = quarry_push, .static_mesh = true};
+		RendererDraw *active_draws = &quarry_draw;
+		uint32_t active_draw_count = 1;
+		if (!use_quarry)
+		{
+			active_draw_count = gltf.primitive_count;
+			active_draws = calloc(active_draw_count, sizeof(*active_draws));
+			if (!active_draws)
+			{
+				fprintf(stderr, "Out of memory building glTF draw list\n");
+				running = false;
+				continue;
+			}
+			for (uint32_t i = 0; i < active_draw_count; ++i)
+			{
+				GltfPrimitive *primitive = &gltf.primitives[i];
+				GltfMaterial *material = &gltf.materials[primitive->material_index];
+				active_draws[i] = (RendererDraw){
+					.mesh = &primitive->mesh,
+					.material_set = material->descriptor_set,
+					.static_mesh = true,
+					.push = {.local_to_camera_relative = coordinate_local_to_camera_relative(
+							&primitive->mesh.local_to_world, camera.position),
+						.geometry = {{material->base_color_factor[0], material->base_color_factor[1],
+							material->base_color_factor[2], material->base_color_factor[3]}},
+						.elevation_uv = {{material->roughness_factor, material->normal_scale,
+							material->occlusion_strength, 0.0f}},
+						.material = {{material->metallic_factor, default_lit ? 1.0f : 0.0f,
+							diffuse_ibl_enabled ? 1.0f : 0.0f,
+							specular_ibl_enabled ? 1.0f : 0.0f}}}};
+			}
+		}
 
 		vec2s jitter = temporal_jitter_ndc(temporal_frame++, renderer.swapchain_extent.width,
 										   renderer.swapchain_extent.height);
@@ -290,7 +363,10 @@ int main(void)
 		if (getenv("TERRAIN_SHADOW_NBIAS"))
 			frame.shadow_parameters.x = (float)atof(getenv("TERRAIN_SHADOW_NBIAS"));
 #endif
-		renderer_draw_frame(&renderer, &frame, &quarry_draw, 1, &quarry_draw, 1, input.resized);
+		renderer_draw_frame(&renderer, &frame, active_draws, active_draw_count,
+							active_draws, active_draw_count, input.resized);
+		if (!use_quarry)
+			free(active_draws);
 #ifdef DEBUG_SHADER_DUMP
 		/* Dump reads the buffer the frame above just populated. Clear first so a
 		   same-frame C+X starts a fresh file. */
@@ -318,7 +394,10 @@ int main(void)
 	}
 
 	renderer_wait_idle(&renderer);
-	quarry_destroy(&renderer, &quarry);
+	if (use_quarry)
+		quarry_destroy(&renderer, &quarry);
+	else
+		gltf_scene_destroy(&renderer, &gltf);
 	renderer_shutdown(&renderer);
 	SDL_DestroyWindow(window);
 	SDL_Quit();

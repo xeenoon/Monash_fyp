@@ -97,10 +97,15 @@ typedef struct
 {
 	const Mesh *mesh;
 	DrawPushConstants push;
+	/* Imported scenes own material descriptors independently of Mesh.  This
+	   deliberately takes precedence over mesh-owned Quarry descriptors. */
+	VkDescriptorSet material_set;
 	/* Route through the triplanar static-mesh pipeline instead of the terrain
 	   pipeline. Terrain tiles leave this false; imported meshes set it. */
 	bool static_mesh;
 } RendererDraw;
+
+typedef struct { const char *environment_path; } RendererConfig;
 
 typedef struct Renderer
 {
@@ -114,6 +119,7 @@ typedef struct Renderer
 	VkQueue graphics_queue;
 	VkQueue present_queue;
 	float max_anisotropy;
+	char environment_path[1024];
 
 	/* Reusable GPU resource infrastructure, shared by every subsystem. */
 	GpuAllocator *allocator;
@@ -219,7 +225,7 @@ typedef struct Renderer
 #endif
 } Renderer;
 
-void renderer_init(Renderer *r, SDL_Window *window);
+void renderer_init(Renderer *r, SDL_Window *window, const RendererConfig *config);
 void renderer_shutdown(Renderer *r);
 void renderer_wait_idle(Renderer *r);
 float renderer_aspect(const Renderer *r);
@@ -237,6 +243,8 @@ void renderer_draw_frame(Renderer *r, const FrameUniforms *frame, const Renderer
 VkDescriptorSet renderer_allocate_material_set(Renderer *r, VkImageView view, VkSampler sampler);
 VkDescriptorSet renderer_allocate_pbr_set(Renderer *r, const Texture *albedo, const Texture *orm,
 										  const Texture *normal_map);
+VkDescriptorSet renderer_allocate_pbr4_set(Renderer *r, const Texture *albedo, const Texture *orm,
+                                           const Texture *normal_map, const Texture *occlusion);
 VkDescriptorSet renderer_allocate_terrain_set(Renderer *r, VkImageView albedo_view,
 											  VkSampler albedo_sampler, VkImageView elevation_view,
 											  VkSampler elevation_sampler);

@@ -1,0 +1,13 @@
+{
+  "name": "Poly Haven Coastal Cliff 01 / Quarry 01 benchmark",
+  "author": "Poly Haven contributors",
+  "license": "CC0-1.0 (https://polyhaven.com/license)",
+  "files": [
+    {"path":"coastal_cliff_01/coastal_cliff_01_4k.gltf", "url":"https://dl.polyhaven.org/file/ph-assets/Models/gltf/4k/coastal_cliff_01/coastal_cliff_01_4k.gltf", "algorithm":"md5", "checksum":"25bc1756f311d07e321aafe07f8c03f7"},
+    {"path":"coastal_cliff_01/coastal_cliff_01.bin", "url":"https://dl.polyhaven.org/file/ph-assets/Models/gltf/8k/coastal_cliff_01/coastal_cliff_01.bin", "algorithm":"md5", "checksum":"d9f1e368b18c018e158d06ab9d924646"},
+    {"path":"coastal_cliff_01/textures/coastal_cliff_01_diff_4k.jpg", "url":"https://dl.polyhaven.org/file/ph-assets/Models/jpg/4k/coastal_cliff_01/coastal_cliff_01_diff_4k.jpg", "algorithm":"md5", "checksum":"14298d23d36e717111e2f6a208f61565"},
+    {"path":"coastal_cliff_01/textures/coastal_cliff_01_arm_4k.jpg", "url":"https://dl.polyhaven.org/file/ph-assets/Models/jpg/4k/coastal_cliff_01/coastal_cliff_01_arm_4k.jpg", "algorithm":"md5", "checksum":"b92548e874e430a44cf9dc0c40c941a8"},
+    {"path":"coastal_cliff_01/textures/coastal_cliff_01_nor_gl_4k.jpg", "url":"https://dl.polyhaven.org/file/ph-assets/Models/jpg/4k/coastal_cliff_01/coastal_cliff_01_nor_gl_4k.jpg", "algorithm":"md5", "checksum":"e962b55e2917e36969889f6d265ec688"},
+    {"path":"quarry_01_4k.hdr", "url":"https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/quarry_01_4k.hdr", "algorithm":"md5", "checksum":"a5396f4e17c350511cb6545503a68fea"}
+  ]
+}

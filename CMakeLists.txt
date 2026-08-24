@@ -88,6 +88,7 @@ add_executable(terrain_renderer
     src/gpu_buffer.c
     src/upload.c
     src/mesh.c
+    src/gltf_scene.c
     src/quarry.c
     src/terrain_tile.c
     src/terrain_grid.c
@@ -101,9 +102,10 @@ add_executable(terrain_renderer
     src/temporal.c
     src/texture.c
     src/renderer.c
+    third_party/mikktspace/mikktspace.c
     include/stb_image.c)
 add_dependencies(terrain_renderer shaders)
-target_include_directories(terrain_renderer PRIVATE include)
+target_include_directories(terrain_renderer PRIVATE include third_party/cgltf third_party/mikktspace)
 target_link_libraries(terrain_renderer PRIVATE
     core_utils Vulkan::Vulkan cglm::cglm PkgConfig::SDL3 m)
 if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets/env.hdr")
@@ -111,9 +113,14 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets/env.hdr")
         "No IBL environment at assets/env.hdr -- the Quarry cliff will use the "
         "hemispheric ambient fallback (Phase B indirect lighting disabled).")
 endif()
+
+# Pinned decoder sources used by the strict static glTF importer.  cgltf:
+# 85cd62382dfea638278962690cf515023f33ed00 (MIT); MikkTSpace:
+# 3e895b49d05ea07e4c2133156cfa94369e19e409 (zlib).
 target_compile_definitions(terrain_renderer PRIVATE
     SHADER_DIR="${SHADER_OUTPUT_DIR}"
     ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets"
+    BENCHMARK_DIR="${CMAKE_CURRENT_SOURCE_DIR}/benchmark-assets"
     QUARRY_DIR="${CMAKE_CURRENT_SOURCE_DIR}/valley-of-the-ancient"
     TRN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/trn"
     ENV_HDR_PATH="${CMAKE_CURRENT_SOURCE_DIR}/assets/env.hdr"

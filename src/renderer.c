@@ -131,8 +131,8 @@ _Static_assert(sizeof(EnvironmentUniforms) == 160, "EnvironmentUniforms std140 s
 
 /* Staging capacity for the upload ring: large enough for the 2048x2048 albedo
    (16 MiB) plus the terrain mesh in a single batch. */
-#define UPLOAD_STAGING_CAPACITY (32u * 1024u * 1024u)
-#define MAX_TEXTURE_SETS 256
+#define UPLOAD_STAGING_CAPACITY (80u * 1024u * 1024u)
+#define MAX_TEXTURE_SETS 1024
 /* B2 specular IBL cube face size; ENV_CUBE_MIPS (renderer.h) must match
    texture_mip_levels(ENV_FACE_SIZE, ENV_FACE_SIZE). */
 #define ENV_FACE_SIZE 128u
@@ -147,7 +147,7 @@ VkDescriptorSet renderer_allocate_terrain_set(Renderer *r, VkImageView albedo_vi
 										 .pSetLayouts = &r->material_set_layout};
 	VkDescriptorSet set;
 	VK_CHECK(vkAllocateDescriptorSets(r->device, &alloc, &set));
-	VkDescriptorImageInfo images[3] = {
+	VkDescriptorImageInfo images[4] = {
 		{.sampler = albedo_sampler,
 		 .imageView = albedo_view,
 		 .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
@@ -157,8 +157,11 @@ VkDescriptorSet renderer_allocate_terrain_set(Renderer *r, VkImageView albedo_vi
 		{.sampler = r->terrain_detail_texture.sampler,
 		 .imageView = r->terrain_detail_texture.view,
 		 .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+		{.sampler = elevation_sampler,
+		 .imageView = elevation_view,
+		 .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
 	};
-	VkWriteDescriptorSet writes[3] = {
+	VkWriteDescriptorSet writes[4] = {
 		{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 		 .dstSet = set,
 		 .dstBinding = 0,
@@ -177,8 +180,14 @@ VkDescriptorSet renderer_allocate_terrain_set(Renderer *r, VkImageView albedo_vi
 		 .descriptorCount = 1,
 		 .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		 .pImageInfo = &images[2]},
+		{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+		 .dstSet = set,
+		 .dstBinding = 3,
+		 .descriptorCount = 1,
+		 .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+		 .pImageInfo = &images[3]},
 	};
-	vkUpdateDescriptorSets(r->device, 3, writes, 0, NULL);
+	vkUpdateDescriptorSets(r->device, 4, writes, 0, NULL);
 	return set;
 }
 
@@ -190,16 +199,22 @@ VkDescriptorSet renderer_allocate_material_set(Renderer *r, VkImageView view, Vk
 VkDescriptorSet renderer_allocate_pbr_set(Renderer *r, const Texture *albedo, const Texture *orm,
 										  const Texture *normal_map)
 {
+	return renderer_allocate_pbr4_set(r, albedo, orm, normal_map, orm);
+}
+
+VkDescriptorSet renderer_allocate_pbr4_set(Renderer *r, const Texture *albedo, const Texture *orm,
+										   const Texture *normal_map, const Texture *occlusion)
+{
 	VkDescriptorSetAllocateInfo alloc = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
 										 .descriptorPool = r->descriptor_pool,
 										 .descriptorSetCount = 1,
 										 .pSetLayouts = &r->material_set_layout};
 	VkDescriptorSet set;
 	VK_CHECK(vkAllocateDescriptorSets(r->device, &alloc, &set));
-	const Texture *textures[3] = {albedo, orm, normal_map};
-	VkDescriptorImageInfo images[3];
-	VkWriteDescriptorSet writes[3];
-	for (uint32_t i = 0; i < 3; ++i)
+	const Texture *textures[4] = {albedo, orm, normal_map, occlusion};
+	VkDescriptorImageInfo images[4];
+	VkWriteDescriptorSet writes[4];
+	for (uint32_t i = 0; i < 4; ++i)
 	{
 		images[i] =
 			(VkDescriptorImageInfo){.sampler = textures[i]->sampler,
@@ -213,7 +228,7 @@ VkDescriptorSet renderer_allocate_pbr_set(Renderer *r, const Texture *albedo, co
 								   .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 								   .pImageInfo = &images[i]};
 	}
-	vkUpdateDescriptorSets(r->device, 3, writes, 0, NULL);
+	vkUpdateDescriptorSets(r->device, 4, writes, 0, NULL);
 	return set;
 }
 
@@ -241,17 +256,18 @@ static void create_environment(Renderer *r)
 	EnvironmentUniforms uniforms = {0};
 	float *pixels = NULL;
 	int width = 0, height = 0;
-	bool loaded = environment_load_hdr(ENV_HDR_PATH, &pixels, &width, &height);
+	const char *environment_path = r->environment_path[0] ? r->environment_path : ENV_HDR_PATH;
+	bool loaded = environment_load_hdr(environment_path, &pixels, &width, &height);
 	if (loaded)
 	{
 		EnvironmentSH sh;
 		environment_project_sh9(pixels, width, height, &sh);
 		for (uint32_t i = 0; i < 9; ++i)
 			uniforms.sh[i] = (vec4s){{sh.coeffs[i][0], sh.coeffs[i][1], sh.coeffs[i][2], 0.0f}};
-		printf("Environment: loaded IBL from %dx%d %s\n", width, height, ENV_HDR_PATH);
+		printf("Environment: loaded IBL from %dx%d %s\n", width, height, environment_path);
 	}
 	else
-		printf("Environment: no HDR at %s, using hemispheric ambient fallback\n", ENV_HDR_PATH);
+		printf("Environment: no HDR at %s, using hemispheric ambient fallback\n", environment_path);
 	uniforms.env_params =
 		(vec4s){{loaded ? 1.0f : 0.0f, 0.30f, 0.10f, (float)(ENV_CUBE_MIPS - 1u)}};
 
@@ -333,7 +349,7 @@ static void create_descriptors(Renderer *r)
 		.pBindings = frame_bindings};
 	VK_CHECK(vkCreateDescriptorSetLayout(r->device, &frame_layout, NULL, &r->frame_set_layout));
 
-	VkDescriptorSetLayoutBinding material_bindings[3] = {
+	VkDescriptorSetLayoutBinding material_bindings[4] = {
 		{.binding = 0,
 		 .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		 .descriptorCount = 1,
@@ -346,10 +362,14 @@ static void create_descriptors(Renderer *r)
 		 .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		 .descriptorCount = 1,
 		 .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+		{.binding = 3,
+		 .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+		 .descriptorCount = 1,
+		 .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
 	};
 	VkDescriptorSetLayoutCreateInfo material_layout = {
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-		.bindingCount = 3,
+		.bindingCount = 4,
 		.pBindings = material_bindings};
 	VK_CHECK(
 		vkCreateDescriptorSetLayout(r->device, &material_layout, NULL, &r->material_set_layout));
@@ -408,7 +428,7 @@ static void create_descriptors(Renderer *r)
 		 .descriptorCount = MAX_FRAMES_IN_FLIGHT * 2u /* frame UBO + environment UBO */},
 		{.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		 .descriptorCount =
-			 MAX_TEXTURE_SETS * 3u + MAX_FRAMES_IN_FLIGHT * 2u + 20u + ENV_CUBE_MIPS},
+			 MAX_TEXTURE_SETS * 4u + MAX_FRAMES_IN_FLIGHT * 2u + 20u + ENV_CUBE_MIPS},
 		{.type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = 5u + ENV_CUBE_MIPS},
 		{.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = MAX_FRAMES_IN_FLIGHT + 2u}};
 	uint32_t pool_size_count = 4;
@@ -2083,8 +2103,8 @@ static void bind_draw(Renderer *r, VkCommandBuffer command, const RendererDraw *
 					  const DrawPushConstants *push)
 {
 	const Mesh *mesh = draw->mesh;
-	VkDescriptorSet material_set =
-		mesh->material_set ? mesh->material_set : r->fallback_material_set;
+	VkDescriptorSet material_set = draw->material_set ? draw->material_set :
+		(mesh->material_set ? mesh->material_set : r->fallback_material_set);
 	vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, r->pipeline_layout, 1, 1,
 							&material_set, 0, NULL);
 	vkCmdPushConstants(command, r->pipeline_layout,
@@ -2447,10 +2467,12 @@ void renderer_draw_frame(Renderer *r, const FrameUniforms *frame, const Renderer
 	r->frame = (r->frame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 
-void renderer_init(Renderer *r, SDL_Window *window)
+void renderer_init(Renderer *r, SDL_Window *window, const RendererConfig *config)
 {
 	*r = (Renderer){0};
 	r->window = window;
+	if (config && config->environment_path)
+		snprintf(r->environment_path, sizeof(r->environment_path), "%s", config->environment_path);
 	create_instance_and_device(r);
 	r->allocator = gpu_allocator_create(r->physical_device, r->device);
 	r->upload = upload_context_create(r->device, r->allocator, r->graphics_queue,

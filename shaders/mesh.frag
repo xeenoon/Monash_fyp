@@ -23,6 +23,7 @@ layout(location = 1) out vec2 out_motion;
 layout(set = 1, binding = 0) uniform sampler2D albedo_map;
 layout(set = 1, binding = 1) uniform sampler2D orm_map;
 layout(set = 1, binding = 2) uniform sampler2D normal_map;
+layout(set = 1, binding = 3) uniform sampler2D occlusion_map;
 
 layout(push_constant) uniform DrawData {
     mat4 local_to_camera_relative;
@@ -78,9 +79,12 @@ float shadow_visibility(vec3 position, vec3 N) {
    through the asset's own unwrapped UVs. Lighting matches the terrain forward
    pass so the two stay visually consistent. */
 void main() {
-    vec3 base_color = texture(albedo_map, uv).rgb;
+    vec4 base_color_sample = texture(albedo_map, uv);
+    vec3 base_color = base_color_sample.rgb * draw.geometry.rgb;
     vec3 orm = texture(orm_map, uv).rgb;
     vec3 ntex = texture(normal_map, uv).xyz * 2.0 - 1.0;
+    float normal_scale = draw.elevation_uv.y;
+    ntex.xy *= normal_scale;
     bool default_lit = draw.material_factors.y > 0.5;
     vec3 N;
     if (default_lit) {
@@ -105,7 +109,7 @@ void main() {
     if (default_lit && dot(N, V) < 0.0)
         N = -N;
     float NoL = max(dot(N, L), 0.0);
-    float roughness = clamp(orm.g, 0.045, 1.0);
+    float roughness = clamp(orm.g * draw.elevation_uv.x, 0.045, 1.0);
     float metallic;
     vec3 indirect_diffuse;
     vec3 F0;
@@ -134,11 +138,13 @@ void main() {
        or specular. */
     bool diffuse_ibl_enabled = draw.material_factors.z > 0.5;
     bool specular_ibl_enabled = draw.material_factors.w > 0.5;
+    float ao_strength = draw.elevation_uv.z;
+    float ao = 1.0 + ao_strength * (texture(occlusion_map, uv).r - 1.0);
     EnvironmentLightingResult environment = environment_evaluate(
-        camera_relative_position, N, V, roughness, F0, orm.r,
+        camera_relative_position, N, V, roughness, F0, ao,
         diffuse_ibl_enabled, specular_ibl_enabled);
     vec3 irradiance = environment.irradiance;
-    vec3 ambient = indirect_diffuse * irradiance * orm.r;
+    vec3 ambient = indirect_diffuse * irradiance * ao;
     /* Sky specular IBL (Phase B2). Its own F3 step (material_factors.w),
        one past diffuse-only, so B1 and B2 can be compared independently.
        Reuses the analytic split-sum energy terms already computed for the
