@@ -70,15 +70,20 @@ building any natural-only `.trn` dataset.
 - Mouse: look around
 - W/A/S/D: move relative to the direction you are looking
 - Left Shift: move faster
-- F3: cycle Quarry shading — legacy PBR, Unreal Default Lit, Default Lit + Phase B1 diffuse sky IBL, Default Lit + Phase B1+B2 diffuse+specular sky IBL
+- F3: cycle Quarry shading — legacy PBR, Phase A Default Lit, Phase B1 diffuse IBL, Phase B2 diffuse+specular IBL, and Phase C cascaded shadows
 - F4: cycle TAA history-weight, rejection, motion, and clamp views
 - F6: toggle logarithmic linear-depth debug view
 - F7: toggle quadtree LOD colours
 - F8: cycle unlit, subtle relight, and full material lighting
 - F9: cycle normal, slope, curvature, and height-gradient views
 - F10: cycle cascade, shadow-coordinate, visibility, bias, and raw-map views
+
 - F11: cycle atmosphere LUT and aerial-volume debug views
 - `[` / `]`: select the aerial-volume debug slice
 - F12: cycle afternoon, sunset, and high-sun lighting
 - F5: reload shaders
 - Escape: quit
+
+Shadows default to stable eight-tap rotated PCF on four 2048² cascades. Set
+`TERRAIN_SHADOW_FILTER=hard`, `pcf`, or `pcss` (PCSS is opt-in), and use
+`TERRAIN_SHADOW_RESOLUTION=4096` only for benchmarks; other resolutions are rejected.

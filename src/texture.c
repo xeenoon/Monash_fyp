@@ -158,6 +158,14 @@ void texture_create_white(VkDevice device, GpuAllocator *allocator, struct Uploa
 	upload_pixels(upload, t, white, 4);
 }
 
+void texture_create_solid_rgba8(VkDevice device, GpuAllocator *allocator, struct UploadContext *upload,
+								Texture *t, const uint8_t rgba[4], bool srgb)
+{
+	*t = create_sampled(device, allocator, srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM,
+						1, 1, 1, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, 0.0f);
+	upload_pixels(upload, t, rgba, 4);
+}
+
 void texture_create_elevation(VkDevice device, GpuAllocator *allocator,
 							  struct UploadContext *upload, Texture *t, const uint16_t *heights,
 							  uint32_t width, uint32_t height)

@@ -23,6 +23,9 @@ layout(set = 0, binding = 0) uniform FrameUniforms {
     mat4  shadow_view_projection[4];
     vec4  shadow_splits;
     vec4  shadow_parameters;
+    vec4  shadow_radii;
+    vec4  shadow_quality;
+    vec4  shadow_pcss;
     vec4  sun_radiance;
     vec4  atmosphere_radii;       /* bottom/top/camera altitude km/sun radius */
     vec4  atmosphere_rayleigh;    /* scattering RGB, density exponential scale */

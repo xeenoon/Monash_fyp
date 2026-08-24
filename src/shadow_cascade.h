@@ -8,7 +8,7 @@
 #include "coordinate.h"
 
 #define SHADOW_CASCADE_COUNT 4u
-#define SHADOW_MAP_RESOLUTION 2048u
+#define SHADOW_MAP_RESOLUTION_DEFAULT 2048u
 
 typedef struct
 {

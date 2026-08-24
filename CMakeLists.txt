@@ -90,6 +90,7 @@ add_executable(terrain_renderer
     src/mesh.c
     src/gltf_scene.c
     src/quarry.c
+    src/benchmark_ground.c
     src/terrain_tile.c
     src/terrain_grid.c
     src/terrain_quadtree.c

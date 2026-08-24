@@ -10,11 +10,26 @@
 #include "input.h"
 #include "gltf_scene.h"
 #include "quarry.h"
+#include "benchmark_ground.h"
 #include "renderer.h"
 #include "temporal.h"
 
 #define WINDOW_WIDTH 1280
 #define WINDOW_HEIGHT 720
+
+static ShadowQualitySettings shadow_quality_from_environment(void)
+{
+	ShadowQualitySettings q = {.filter_mode = SHADOW_FILTER_PCF, .resolution = 2048u,
+		.pcf_radius_texels = 1.75f, .sun_angular_radius_rad = 0.004675f,
+		.blocker_search_m = 12.0f, .max_filter_radius_texels = 24.0f};
+	const char *mode = getenv("TERRAIN_SHADOW_FILTER");
+	if (mode && strcmp(mode, "hard") == 0) q.filter_mode = SHADOW_FILTER_HARD;
+	else if (mode && strcmp(mode, "pcss") == 0) q.filter_mode = SHADOW_FILTER_PCSS;
+	else if (mode && strcmp(mode, "pcf") != 0) { fprintf(stderr, "TERRAIN_SHADOW_FILTER must be hard, pcf, or pcss\n"); exit(EXIT_FAILURE); }
+	const char *resolution = getenv("TERRAIN_SHADOW_RESOLUTION");
+	if (resolution) { q.resolution = (uint32_t)strtoul(resolution, NULL, 10); if (q.resolution != 2048u && q.resolution != 4096u) { fprintf(stderr, "TERRAIN_SHADOW_RESOLUTION must be 2048 or 4096\n"); exit(EXIT_FAILURE); } }
+	return q;
+}
 
 int main(void)
 {
@@ -63,8 +78,10 @@ int main(void)
 		fprintf(stderr, "Relative mouse mode unavailable: %s\n", SDL_GetError());
 
 	Renderer renderer;
-	renderer_init(&renderer, window, &(RendererConfig){.environment_path = getenv("TERRAIN_ENV_HDR")});
+	ShadowQualitySettings shadow_quality = shadow_quality_from_environment();
+	renderer_init(&renderer, window, &(RendererConfig){.environment_path = getenv("TERRAIN_ENV_HDR"), .shadow_quality = shadow_quality});
 	Quarry quarry = {0};
+	BenchmarkGround ground = {0};
 	GltfScene gltf = {0};
 	GltfLoadError gltf_error = {0};
 	GltfLoadResult load_result = use_quarry ?
@@ -83,6 +100,12 @@ int main(void)
 		renderer_shutdown(&renderer);
 		SDL_DestroyWindow(window);
 		SDL_Quit();
+		return EXIT_FAILURE;
+	}
+	if (use_quarry && !benchmark_ground_create(&renderer, &ground, &quarry.base))
+	{
+		fprintf(stderr, "Could not create Quarry benchmark ground\n");
+		quarry_destroy(&renderer, &quarry); renderer_shutdown(&renderer); SDL_DestroyWindow(window); SDL_Quit();
 		return EXIT_FAILURE;
 	}
 	Camera camera = {
@@ -107,11 +130,9 @@ int main(void)
 	unsigned relight_mode = 1;
 	unsigned sun_mode = 0;
 	unsigned atmosphere_slice = 15;
-	/* F3 cycles: 0 = legacy PBR, no IBL ("nothing") -> 1 = Unreal Default Lit,
-	   no IBL ("metallic shader") -> 2 = Default Lit + Phase B1 diffuse sky IBL
-	   -> 3 = Default Lit + Phase B1 diffuse + Phase B2 specular sky IBL ->
-	   back to 0. */
-	unsigned quarry_shading_mode = use_quarry ? 1u : 3u;
+	/* F3 exposes the delivery sequence: legacy -> A (Default Lit) -> B1
+	   (diffuse IBL) -> B2 (specular IBL) -> C (shadowing) -> legacy. */
+	unsigned quarry_shading_mode = use_quarry ? 4u : 4u;
 	AtmosphereParameters atmosphere = atmosphere_earth();
 	bool running = true;
 #ifdef DEBUG_SHADER_DUMP
@@ -127,7 +148,7 @@ int main(void)
 	if (getenv("TERRAIN_DUMP_QUARRY_MODE"))
 	{
 		unsigned requested_mode = (unsigned)atoi(getenv("TERRAIN_DUMP_QUARRY_MODE"));
-		if (requested_mode <= 3u)
+		if (requested_mode <= 4u)
 			quarry_shading_mode = requested_mode;
 	}
 	if (getenv("TERRAIN_DUMP_YAW"))
@@ -157,10 +178,11 @@ int main(void)
 			running = false;
 		if (input.toggle_quarry_shading)
 		{
-			quarry_shading_mode = (quarry_shading_mode + 1) % 4u;
-			const char *names[] = {"nothing (legacy PBR)", "metallic shader (Unreal Default Lit)",
-								   "metallic shader + Phase B1 diffuse sky IBL",
-								   "metallic shader + Phase B1+B2 diffuse+specular sky IBL"};
+			quarry_shading_mode = (quarry_shading_mode + 1) % 5u;
+			const char *names[] = {"legacy PBR", "Phase A: Unreal Default Lit",
+								   "Phase B1: Default Lit + diffuse sky IBL",
+								   "Phase B2: Default Lit + diffuse and specular sky IBL",
+								   "Phase C: B2 + cascaded shadows"};
 			printf("Quarry renderer: %s\n", names[quarry_shading_mode]);
 			history_valid = false;
 		}
@@ -232,19 +254,26 @@ int main(void)
 		bool default_lit = quarry_shading_mode != 0u;
 		bool diffuse_ibl_enabled = quarry_shading_mode >= 2u;
 		bool specular_ibl_enabled = quarry_shading_mode >= 3u;
+		bool shadows_enabled = quarry_shading_mode >= 4u;
 		DrawPushConstants quarry_push = {
 			.local_to_camera_relative =
 				coordinate_local_to_camera_relative(&quarry.base.local_to_world, camera.position),
 			.material = {{quarry.metallic_factor, default_lit ? 1.0f : 0.0f,
 						 diffuse_ibl_enabled ? 1.0f : 0.0f, specular_ibl_enabled ? 1.0f : 0.0f}},
-			.geometry = {{1.0f, 1.0f, 1.0f, 1.0f}},
+			.geometry = {{1.0f, 1.0f, 1.0f, shadows_enabled ? 1.0f : 0.0f}},
 			.elevation_uv = {{1.0f, 1.0f, 1.0f, 0.0f}},
 			.debug = {{0.0f, 0.0f, 0.0f, 0.0f}},
 		};
 		RendererDraw quarry_draw = {
 			.mesh = &quarry.base, .push = quarry_push, .static_mesh = true};
+		DrawPushConstants ground_push = quarry_push;
+		ground_push.local_to_camera_relative = coordinate_local_to_camera_relative(&ground.mesh.local_to_world, camera.position);
+		RendererDraw ground_draw = {.mesh = &ground.mesh, .push = ground_push, .static_mesh = true};
 		RendererDraw *active_draws = &quarry_draw;
 		uint32_t active_draw_count = 1;
+		RendererDraw *active_shadow_draws = &quarry_draw;
+		uint32_t active_shadow_draw_count = 1;
+		if (use_quarry) { active_draws = calloc(2, sizeof(*active_draws)); if (!active_draws) { running=false; continue; } active_draws[0]=quarry_draw; active_draws[1]=ground_draw; active_draw_count=2; }
 		if (!use_quarry)
 		{
 			active_draw_count = gltf.primitive_count;
@@ -273,6 +302,8 @@ int main(void)
 							diffuse_ibl_enabled ? 1.0f : 0.0f,
 							specular_ibl_enabled ? 1.0f : 0.0f}}}};
 			}
+			active_shadow_draws = active_draws;
+			active_shadow_draw_count = active_draw_count;
 		}
 
 		vec2s jitter = temporal_jitter_ndc(temporal_frame++, renderer.swapchain_extent.width,
@@ -305,6 +336,7 @@ int main(void)
 		vec3s sun_direction = glms_vec3_normalize(sun_directions[sun_mode]);
 		ShadowCascadeConfig shadow_config =
 			shadow_cascade_default_config(renderer_aspect(&renderer));
+		shadow_config.resolution = renderer.shadow_resolution;
 		ShadowCascadeSet shadow_cascades;
 		if (!shadow_cascade_build(&shadow_config, camera.position, camera_forward_direction,
 								  (vec3s){{0.0f, 1.0f, 0.0f}}, sun_direction, &shadow_cascades))
@@ -332,6 +364,9 @@ int main(void)
 			.shadow_splits = (vec4s){{shadow_config.split_m[0], shadow_config.split_m[1],
 									  shadow_config.split_m[2], shadow_config.split_m[3]}},
 			.shadow_parameters = (vec4s){{0.35f, 1.75f, 1.0f, 1.25f}},
+			.shadow_radii = (vec4s){{shadow_cascades.radius_m[0], shadow_cascades.radius_m[1], shadow_cascades.radius_m[2], shadow_cascades.radius_m[3]}},
+			.shadow_quality = (vec4s){{(float)shadow_quality.filter_mode, shadow_quality.pcf_radius_texels, atmosphere.sun_angular_radius_rad, shadow_quality.blocker_search_m}},
+			.shadow_pcss = (vec4s){{shadow_quality.max_filter_radius_texels, (float)renderer.shadow_resolution, 0.0f, 0.0f}},
 			.sun_radiance = (vec4s){{1.6f, 1.5f, 1.35f, 0.0f}},
 			.atmosphere_radii = (vec4s){{atmosphere.bottom_radius_km, atmosphere.top_radius_km,
 										 fmaxf((float)camera.position.y * 0.001f, 0.001f),
@@ -368,9 +403,8 @@ int main(void)
 			frame.shadow_parameters.x = (float)atof(getenv("TERRAIN_SHADOW_NBIAS"));
 #endif
 		renderer_draw_frame(&renderer, &frame, active_draws, active_draw_count,
-							active_draws, active_draw_count, input.resized);
-		if (!use_quarry)
-			free(active_draws);
+							active_shadow_draws, active_shadow_draw_count, input.resized);
+		free(active_draws);
 #ifdef DEBUG_SHADER_DUMP
 		/* Dump reads the buffer the frame above just populated. Clear first so a
 		   same-frame C+X starts a fresh file. */
@@ -399,7 +433,10 @@ int main(void)
 
 	renderer_wait_idle(&renderer);
 	if (use_quarry)
+	{
+		benchmark_ground_destroy(&renderer, &ground);
 		quarry_destroy(&renderer, &quarry);
+	}
 	else
 		gltf_scene_destroy(&renderer, &gltf);
 	renderer_shutdown(&renderer);

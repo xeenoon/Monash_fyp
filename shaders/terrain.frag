@@ -1,6 +1,7 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
 #include "common.glsl"
+#include "shadow_filter.glsl"
 #include "pbr_common.glsl"
 #include "environment_lighting.glsl"
 #include "shader_dump.glsl"
@@ -60,18 +61,6 @@ mat3 tangent_frame(vec3 interpolated_normal, vec4 interpolated_tangent) {
     return mat3(T, B, N);
 }
 
-float shadow_visibility(vec3 position, vec3 N) {
-    float distance_m = length(position);
-    uint cascade = distance_m < frame.shadow_splits.x ? 0u :
-                   distance_m < frame.shadow_splits.y ? 1u :
-                   distance_m < frame.shadow_splits.z ? 2u : 3u;
-    vec3 receiver = position + N * frame.shadow_parameters.x;
-    vec4 clip = frame.shadow_view_projection[cascade] * vec4(receiver, 1.0);
-    vec3 c = clip.xyz / clip.w;
-    vec3 coord = vec3(c.xy * 0.5 + 0.5, c.z);
-    if (any(lessThan(coord.xy, vec2(0.0))) || any(greaterThan(coord.xy, vec2(1.0)))) return 1.0;
-    return texture(shadow_map, vec4(coord.xy, float(cascade), coord.z));
-}
 
 void main() {
     vec3 base_color = texture(albedo_map, uv).rgb;
@@ -118,7 +107,13 @@ void main() {
             base_color, metallic, roughness, N, V, L);
         indirect_diffuse = base_color;
     }
-    float visibility = shadow_visibility(camera_relative_position, N);
+    ShadowResult shadow = shadow_evaluate(camera_relative_position, normalize(normal));
+    float visibility = shadow.visibility;
+    if (frame.debug_view > 6.5 && frame.debug_view < 7.5) { const vec3 colors[5]=vec3[5](vec3(.95,.18,.12),vec3(.18,.82,.25),vec3(.15,.45,1),vec3(.95,.75,.1),vec3(.1)); out_color=vec4(colors[shadow.cascade],1); return; }
+    if (frame.debug_view > 7.5 && frame.debug_view < 8.5) { out_color=vec4(shadow.coordinate,1); return; }
+    if (frame.debug_view > 8.5 && frame.debug_view < 9.5) { out_color=vec4(vec3(visibility),1); return; }
+    if (frame.debug_view > 9.5 && frame.debug_view < 10.5) { out_color=vec4(vec3(clamp(shadow.receiver_bias/max(frame.shadow_parameters.x,1e-5),0,1)),1); return; }
+    if (frame.debug_view > 10.5 && frame.debug_view < 11.5) { float d=shadow.cascade<4u?texture(shadow_map_raw,vec3(shadow.coordinate.xy,float(shadow.cascade))).r:1.; out_color=vec4(vec3(d),1); return; }
     vec3 direct = (bxdf.diffuse + bxdf.specular) *
                   frame.sun_radiance.rgb * NoL * visibility;
     /* Sky diffuse IBL (Phase B1). Falls back to the original hemispheric

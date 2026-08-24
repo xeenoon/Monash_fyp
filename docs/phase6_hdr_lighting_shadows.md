@@ -34,16 +34,25 @@ transmittance.
 `shadow_cascade.c` builds four camera-relative matrices with 120, 350, 1000,
 and 3000 metre splits. Each frustum slice is enclosed by a light-space sphere,
 the radius is quantised, and its XY centre is snapped to the 2048-pixel shadow
-grid. The snap is calculated from the absolute double-precision camera position
+grid (2048² by default; 4096² is an explicit benchmark option). The snap is calculated from the absolute double-precision camera position
 before being reduced back to a small float matrix. This keeps the grid fixed in
 the world without sending projected-world floats to the GPU.
 
 The shadow target is a four-layer filterable depth array. `shadow.vert`
 repeats the exact elevation displacement used by the colour pass. The terrain
 shader selects the smallest cascade containing the receiver, applies a
-slope-aware normal offset, filters an eight-point rotated Vogel disk, and
+slope-aware *geometric*-normal offset, filters an eight-point rotated Vogel disk
+(rotation is anchored to snapped shadow texels), and
 blends across the inner 10% of a cascade into its successor. Raster depth bias
 and receiver normal bias are separate controls in `FrameUniforms`.
+
+`shaders/shadow_filter.glsl` is shared by terrain and static meshes. Its normal
+mode is rotated PCF. `TERRAIN_SHADOW_FILTER=pcss` enables the optional
+directional-light PCSS path: an eight-tap raw-depth blocker search followed by
+a 16-tap comparison filter. Blocker/receiver separation is converted using the
+orthographic `8 * cascade_radius` depth span, then the Earth atmosphere's
+single 0.004675-radian sun angular radius converts it to a bounded texel
+footprint. `hard`, `pcf`, and `pcss` are the accepted filter values.
 
 The shadow pass currently reuses the main terrain selection. This guarantees
 matching receiver/caster geometry and avoids drawing overlapping resident
@@ -75,7 +84,7 @@ Adjacent source comments identify the adapted donor code and why it was kept:
 - `wiRenderer.cpp:2936-3060`: frustum-sphere fitting and texel snapping;
 - `tonemapCS.hlsl:8-43`: the fitted ACES matrices and rational curve.
 
-Wicked's `Surface`, bindless tables, half types, transparent shadows, PCSS,
+Wicked's `Surface`, bindless tables, half types, transparent shadows,
 extra material lobes, bloom, colour grading, and adaptive luminance were not
 copied. The full Wicked Engine MIT notice is in `third_party_notices.md`.
 

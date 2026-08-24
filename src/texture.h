@@ -72,6 +72,9 @@ void texture_load_linear(VkDevice device, GpuAllocator *allocator, struct Upload
 /* 1x1 opaque-white sRGB texture used as the fallback for untextured meshes. */
 void texture_create_white(VkDevice device, GpuAllocator *allocator, struct UploadContext *upload,
 						  Texture *t);
+/* Programmatic 1x1 RGBA material texel; sRGB is selected explicitly. */
+void texture_create_solid_rgba8(VkDevice device, GpuAllocator *allocator, struct UploadContext *upload,
+								Texture *t, const uint8_t rgba[4], bool srgb);
 
 /* Sampled single-channel R16_UNORM elevation texture, uploaded from `heights`
    (width*height uint16 texels). Address mode clamps to edge; no mips. */

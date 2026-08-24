@@ -99,26 +99,29 @@ _Static_assert(offsetof(FrameUniforms, shadow_view_projection) == 608,
 _Static_assert(offsetof(FrameUniforms, shadow_splits) == 864, "FrameUniforms shadow splits offset");
 _Static_assert(offsetof(FrameUniforms, shadow_parameters) == 880,
 			   "FrameUniforms shadow parameters offset");
-_Static_assert(offsetof(FrameUniforms, sun_radiance) == 896, "FrameUniforms radiance offset");
-_Static_assert(offsetof(FrameUniforms, atmosphere_radii) == 912,
+_Static_assert(offsetof(FrameUniforms, shadow_radii) == 896, "FrameUniforms shadow radii offset");
+_Static_assert(offsetof(FrameUniforms, shadow_quality) == 912, "FrameUniforms shadow quality offset");
+_Static_assert(offsetof(FrameUniforms, shadow_pcss) == 928, "FrameUniforms PCSS offset");
+_Static_assert(offsetof(FrameUniforms, sun_radiance) == 944, "FrameUniforms radiance offset");
+_Static_assert(offsetof(FrameUniforms, atmosphere_radii) == 960,
 			   "FrameUniforms atmosphere radii offset");
-_Static_assert(offsetof(FrameUniforms, atmosphere_rayleigh) == 928,
+_Static_assert(offsetof(FrameUniforms, atmosphere_rayleigh) == 976,
 			   "FrameUniforms Rayleigh offset");
-_Static_assert(offsetof(FrameUniforms, atmosphere_mie_scatter) == 944,
+_Static_assert(offsetof(FrameUniforms, atmosphere_mie_scatter) == 992,
 			   "FrameUniforms Mie scatter offset");
-_Static_assert(offsetof(FrameUniforms, atmosphere_mie_extinct) == 960,
+_Static_assert(offsetof(FrameUniforms, atmosphere_mie_extinct) == 1008,
 			   "FrameUniforms Mie extinction offset");
-_Static_assert(offsetof(FrameUniforms, atmosphere_absorption) == 976, "FrameUniforms ozone offset");
-_Static_assert(offsetof(FrameUniforms, atmosphere_ground) == 992,
+_Static_assert(offsetof(FrameUniforms, atmosphere_absorption) == 1024, "FrameUniforms ozone offset");
+_Static_assert(offsetof(FrameUniforms, atmosphere_ground) == 1040,
 			   "FrameUniforms atmosphere ground offset");
-_Static_assert(offsetof(FrameUniforms, atmosphere_options) == 1008,
+_Static_assert(offsetof(FrameUniforms, atmosphere_options) == 1056,
 			   "FrameUniforms atmosphere options offset");
-_Static_assert(offsetof(FrameUniforms, temporal_parameters) == 1024,
+_Static_assert(offsetof(FrameUniforms, temporal_parameters) == 1072,
 			   "FrameUniforms temporal parameters offset");
-_Static_assert(offsetof(FrameUniforms, temporal_jitter) == 1040,
+_Static_assert(offsetof(FrameUniforms, temporal_jitter) == 1088,
 			   "FrameUniforms temporal jitter offset");
-_Static_assert(offsetof(FrameUniforms, shader_dump) == 1056, "FrameUniforms shader dump offset");
-_Static_assert(sizeof(FrameUniforms) == 1072, "FrameUniforms std140 size");
+_Static_assert(offsetof(FrameUniforms, shader_dump) == 1104, "FrameUniforms shader dump offset");
+_Static_assert(sizeof(FrameUniforms) == 1120, "FrameUniforms std140 size");
 _Static_assert(sizeof(DrawPushConstants) == 128, "terrain push constant size");
 _Static_assert(offsetof(TemporalExposure, histogram) == 16,
 			   "TemporalExposure std430 histogram offset");
@@ -591,7 +594,7 @@ static void create_shadow_texture(Renderer *r)
 {
 	VkFormat format = find_shadow_format(r->physical_device);
 	r->shadow_map = texture_create_shadow_array(r->device, r->allocator, format,
-												SHADOW_MAP_RESOLUTION, SHADOW_CASCADE_COUNT);
+												r->shadow_resolution, SHADOW_CASCADE_COUNT);
 
 	VkSamplerCreateInfo raw_sampler = {.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
 									   .magFilter = VK_FILTER_NEAREST,
@@ -971,8 +974,8 @@ static void create_shadow_framebuffers(Renderer *r)
 										.renderPass = r->shadow_render_pass,
 										.attachmentCount = 1,
 										.pAttachments = &r->shadow_layer_views[layer],
-										.width = SHADOW_MAP_RESOLUTION,
-										.height = SHADOW_MAP_RESOLUTION,
+										.width = r->shadow_resolution,
+										.height = r->shadow_resolution,
 										.layers = 1};
 		VK_CHECK(vkCreateFramebuffer(r->device, &info, NULL, &r->shadow_framebuffers[layer]));
 	}
@@ -2236,12 +2239,12 @@ static void record_commands(Renderer *r, uint32_t image_index, const FrameUnifor
 			.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
 			.renderPass = r->shadow_render_pass,
 			.framebuffer = r->shadow_framebuffers[cascade],
-			.renderArea = {{0, 0}, {SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION}},
+			.renderArea = {{0, 0}, {r->shadow_resolution, r->shadow_resolution}},
 			.clearValueCount = 1,
 			.pClearValues = &shadow_clear};
 		vkCmdBeginRenderPass(command, &shadow, VK_SUBPASS_CONTENTS_INLINE);
 		vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, r->shadow_pipeline);
-		set_viewport_scissor(command, (VkExtent2D){SHADOW_MAP_RESOLUTION, SHADOW_MAP_RESOLUTION});
+		set_viewport_scissor(command, (VkExtent2D){r->shadow_resolution, r->shadow_resolution});
 		vkCmdSetDepthBias(command, frame->shadow_parameters.w, 0.0f, 1.75f);
 		vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, r->pipeline_layout, 0, 1,
 								&r->frame_set[r->frame], 0, NULL);
@@ -2471,9 +2474,27 @@ void renderer_init(Renderer *r, SDL_Window *window, const RendererConfig *config
 {
 	*r = (Renderer){0};
 	r->window = window;
+	r->shadow_quality = config ? config->shadow_quality : (ShadowQualitySettings){0};
+	if (!r->shadow_quality.resolution)
+		r->shadow_quality.resolution = SHADOW_MAP_RESOLUTION_DEFAULT;
+	if (r->shadow_quality.filter_mode > SHADOW_FILTER_PCSS ||
+		(r->shadow_quality.resolution != 2048u && r->shadow_quality.resolution != 4096u))
+	{
+		fprintf(stderr, "Invalid shadow settings: resolution must be 2048 or 4096\n");
+		exit(EXIT_FAILURE);
+	}
+	r->shadow_resolution = r->shadow_quality.resolution;
 	if (config && config->environment_path)
 		snprintf(r->environment_path, sizeof(r->environment_path), "%s", config->environment_path);
 	create_instance_and_device(r);
+	VkPhysicalDeviceProperties shadow_properties;
+	vkGetPhysicalDeviceProperties(r->physical_device, &shadow_properties);
+	if (r->shadow_resolution > shadow_properties.limits.maxImageDimension2D)
+	{
+		fprintf(stderr, "Requested shadow resolution %u exceeds Vulkan maximum %u\n",
+			r->shadow_resolution, shadow_properties.limits.maxImageDimension2D);
+		exit(EXIT_FAILURE);
+	}
 	r->allocator = gpu_allocator_create(r->physical_device, r->device);
 	r->upload = upload_context_create(r->device, r->allocator, r->graphics_queue,
 									  r->graphics_family, UPLOAD_STAGING_CAPACITY);

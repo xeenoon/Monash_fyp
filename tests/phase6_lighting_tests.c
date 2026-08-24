@@ -72,6 +72,17 @@ static void absolute_texel_snapping_is_stable_at_large_coordinates(void)
 	assert(fabsf(clip_first.y - clip_second.y) <= one_shadow_texel_ndc + 1e-5f);
 }
 
+static void snapping_supports_benchmark_resolution(void)
+{
+	ShadowCascadeConfig config = shadow_cascade_default_config(16.0f / 9.0f);
+	config.resolution = 4096u;
+	ShadowCascadeSet cascades;
+	assert(shadow_cascade_build(&config, (WorldPosition){2000000.0, 500.0, -1000000.0},
+		glms_vec3_normalize((vec3s){{0.2f, -0.1f, 1.0f}}), (vec3s){{0,1,0}},
+		glms_vec3_normalize((vec3s){{-0.4f,-1.0f,-0.3f}}), &cascades));
+	assert(isfinite(8.0f * cascades.radius_m[0])); /* PCSS normalized-depth conversion */
+}
+
 static void invalid_cascade_configuration_is_rejected(void)
 {
 	ShadowCascadeConfig config = shadow_cascade_default_config(1.0f);
@@ -80,12 +91,17 @@ static void invalid_cascade_configuration_is_rejected(void)
 	assert(!shadow_cascade_build(&config, (WorldPosition){0}, (vec3s){{0.0f, 0.0f, -1.0f}},
 								 (vec3s){{0.0f, 1.0f, 0.0f}}, (vec3s){{0.0f, -1.0f, 0.0f}},
 								 &cascades));
+	config = shadow_cascade_default_config(1.0f);
+	config.resolution = 0u;
+	assert(!shadow_cascade_build(&config, (WorldPosition){0}, (vec3s){{0.0f, 0.0f, -1.0f}},
+								 (vec3s){{0.0f, 1.0f, 0.0f}}, (vec3s){{0.0f, -1.0f, 0.0f}}, &cascades));
 }
 
 int main(void)
 {
 	cascades_are_finite_nested_and_cover_the_view_axis();
 	absolute_texel_snapping_is_stable_at_large_coordinates();
+	snapping_supports_benchmark_resolution();
 	invalid_cascade_configuration_is_rejected();
 	return 0;
 }

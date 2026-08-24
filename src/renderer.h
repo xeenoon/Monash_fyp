@@ -19,6 +19,16 @@
    prefilter, increasing roughness. See environment_prefilter() in renderer.c. */
 #define ENV_CUBE_MIPS 8u
 
+typedef enum { SHADOW_FILTER_HARD = 0, SHADOW_FILTER_PCF = 1, SHADOW_FILTER_PCSS = 2 } ShadowFilterMode;
+typedef struct {
+	ShadowFilterMode filter_mode;
+	uint32_t resolution;
+	float pcf_radius_texels;
+	float sun_angular_radius_rad;
+	float blocker_search_m;
+	float max_filter_radius_texels;
+} ShadowQualitySettings;
+
 /* Per-frame shader data (descriptor set 0). All matrices operate on small,
    camera-relative floats. Absolute world positions never cross the CPU/GPU
    boundary. Current and previous state is present now so motion vectors can be
@@ -42,6 +52,9 @@ typedef struct
 	mat4s shadow_view_projection[SHADOW_CASCADE_COUNT];
 	vec4s shadow_splits;
 	vec4s shadow_parameters; /* normal bias m, PCF radius px, exposure, depth bias */
+	vec4s shadow_radii;      /* cascade horizontal radii in metres */
+	vec4s shadow_quality;    /* mode, PCF px, sun angular radius rad, blocker search m */
+	vec4s shadow_pcss;       /* max filter px, resolution, reserved */
 	vec4s sun_radiance;
 	vec4s atmosphere_radii;
 	vec4s atmosphere_rayleigh;
@@ -105,7 +118,7 @@ typedef struct
 	bool static_mesh;
 } RendererDraw;
 
-typedef struct { const char *environment_path; } RendererConfig;
+typedef struct { const char *environment_path; ShadowQualitySettings shadow_quality; } RendererConfig;
 
 typedef struct Renderer
 {
@@ -119,6 +132,8 @@ typedef struct Renderer
 	VkQueue graphics_queue;
 	VkQueue present_queue;
 	float max_anisotropy;
+	ShadowQualitySettings shadow_quality;
+	uint32_t shadow_resolution;
 	char environment_path[1024];
 
 	/* Reusable GPU resource infrastructure, shared by every subsystem. */

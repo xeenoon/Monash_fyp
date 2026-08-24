@@ -55,7 +55,7 @@ ShadowCascadeConfig shadow_cascade_default_config(float aspect)
 		.split_m = {120.0f, 350.0f, 1000.0f, 3000.0f},
 		.vertical_fov_radians = glm_rad(60.0f),
 		.aspect = aspect,
-		.resolution = SHADOW_MAP_RESOLUTION,
+		.resolution = SHADOW_MAP_RESOLUTION_DEFAULT,
 	};
 }
 
