@@ -67,8 +67,10 @@ typedef struct
 	vec4s temporal_parameters; /* history valid, dt, sRGB swapchain, reserved */
 	vec4s temporal_jitter;	   /* current NDC xy, previous NDC xy */
 	vec4s shader_dump;		   /* dump enabled (x), reserved */
-	/* D1 curvature response: scale, bias, exponent, reserved. */
-	vec4s material_detail_settings;
+	/* D1 geometric curvature: scale, bias, exponent, reserved. */
+	vec4s material_curvature;
+	/* D1 normal-map filtering: variance scale, kernel cap, length epsilon. */
+	vec4s material_normal_filter;
 } FrameUniforms;
 
 typedef struct
@@ -288,7 +290,7 @@ void renderer_reload_pipeline(Renderer *r);
    DUMP_SHADER and DUMP_RECT env filters. Returns the number of records
    written after filtering. */
 uint32_t renderer_dump_shader_data(Renderer *r, const char *path, WorldPosition camera_position,
-								   float camera_yaw, float camera_pitch);
+								   float camera_yaw, float camera_pitch, const char *metadata);
 /* Truncate the dump file at `path` so subsequent dumps start fresh. */
 void renderer_clear_shader_dump(const char *path);
 #endif

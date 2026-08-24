@@ -37,7 +37,8 @@ layout(set = 0, binding = 0) uniform FrameUniforms {
     vec4  temporal_parameters;    /* history valid, dt, sRGB swapchain, reserved */
     vec4  temporal_jitter;        /* current NDC xy, previous NDC xy */
     vec4  shader_dump;            /* dump enabled (x), reserved */
-    vec4  material_detail_settings; /* curvature scale, bias, exponent */
+    vec4  material_curvature;       /* scale, bias, exponent */
+    vec4  material_normal_filter;   /* variance scale, cap, length epsilon */
 } frame;
 
 layout(set = 0, binding = 1) uniform sampler2DArrayShadow shadow_map;

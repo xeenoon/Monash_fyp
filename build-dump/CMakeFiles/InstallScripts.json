@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/ccw100/terrain_gen/build-dump/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

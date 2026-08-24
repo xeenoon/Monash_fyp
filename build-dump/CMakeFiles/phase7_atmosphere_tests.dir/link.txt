@@ -1,0 +1,1 @@
+/usr/bin/cc -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/phase7_atmosphere_tests.dir/link.d CMakeFiles/phase7_atmosphere_tests.dir/tests/phase7_atmosphere_tests.c.o CMakeFiles/phase7_atmosphere_tests.dir/src/atmosphere.c.o -o phase7_atmosphere_tests  -lm

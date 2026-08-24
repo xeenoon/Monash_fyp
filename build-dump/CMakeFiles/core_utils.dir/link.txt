@@ -1,0 +1,2 @@
+/usr/bin/ar qc libcore_utils.a CMakeFiles/core_utils.dir/src/byte_utils.c.o CMakeFiles/core_utils.dir/src/checksum_utils.c.o CMakeFiles/core_utils.dir/src/file_utils.c.o CMakeFiles/core_utils.dir/src/path_utils.c.o CMakeFiles/core_utils.dir/src/size_utils.c.o CMakeFiles/core_utils.dir/src/str_utils.c.o
+/usr/bin/ranlib libcore_utils.a

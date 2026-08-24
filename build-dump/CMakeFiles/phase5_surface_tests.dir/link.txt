@@ -1,0 +1,1 @@
+/usr/bin/cc -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/phase5_surface_tests.dir/link.d CMakeFiles/phase5_surface_tests.dir/tests/phase5_surface_tests.c.o CMakeFiles/phase5_surface_tests.dir/src/surface_detail.c.o -o phase5_surface_tests  -lm

@@ -162,6 +162,8 @@ int main(void)
 	bool demo_split = use_phase_d_demo && !demo_flyby && getenv("TERRAIN_DEMO_SPLIT") && atoi(getenv("TERRAIN_DEMO_SPLIT")) != 0;
 	if (demo_flyby)
 		SDL_SetWindowTitle(window, "Phase C — raw normal detail");
+	else if (demo_split)
+		SDL_SetWindowTitle(window, "Phase D demo — LEFT: Phase C/raw | RIGHT: Phase D/stabilized");
 	bool demo_flyby_phase_d = false;
 	unsigned debug_mode = 0;
 	unsigned relight_mode = 1;
@@ -225,7 +227,7 @@ int main(void)
 								   "Phase C: B2 + cascaded shadows",
 								   "Phase D: Phase C + material detail stability"};
 			printf("Static-mesh renderer: %s\n", names[static_mesh_shading_mode]);
-			if (use_phase_d_demo)
+			if (use_phase_d_demo && !demo_split)
 				SDL_SetWindowTitle(window, static_mesh_shading_mode >= 5u ?
 					"Phase D — stabilized material detail" : "Phase C — raw normal detail");
 			history_valid = false;
@@ -295,20 +297,23 @@ int main(void)
 					  input.sprint, dt);
 		if (demo_flyby)
 		{
-			float seconds = fmodf((float)(ticks - start_ticks) / 1000000000.0f, 20.0f);
+			float seconds = fmodf((float)(ticks - start_ticks) / 1000000000.0f, 22.0f);
 			bool phase_d = seconds >= 10.0f;
-			float replay = fmodf(seconds, 10.0f) / 10.0f;
-			/* Identical far -> near -> far camera path for C then D. */
+			float replay = phase_d ? (seconds - 12.0f) / 8.0f : seconds / 8.0f;
+			/* C: 0-8 replay, 8-10 far hold. D: 10-12 far hold, 12-20
+			 * identical replay, 20-22 far hold. */
+			replay = fminf(fmaxf(replay, 0.0f), 1.0f);
 			float near_weight = 1.0f - fabsf(2.0f * replay - 1.0f);
 			camera.position = (WorldPosition){0.0, 1.0, -30.0 + 18.0 * near_weight};
 			camera.yaw = 90.f; camera.pitch = 0.f;
 			if (phase_d != demo_flyby_phase_d) {
 				demo_flyby_phase_d = phase_d; history_valid = false;
+				printf("Phase D demo flyby: Phase %c\n", phase_d ? 'D' : 'C');
 				SDL_SetWindowTitle(window, phase_d ? "Phase D — stabilized material detail" :
 					"Phase C — raw normal detail");
 			}
 			static_mesh_shading_mode = phase_d ? 5u : 4u;
-			if (seconds < dt) history_valid = false;
+			if (seconds < dt) { history_valid = false; printf("Phase D demo flyby: Phase C\n"); }
 		}
 		bool camera_cut =
 			history_valid &&
@@ -363,9 +368,10 @@ int main(void)
 					if (demo_split)
 						d = i != 0; /* optional simultaneous C/D inspection */
 					StaticMaterialParameters p = {.normal_strength=1.f,.ao_strength=1.f,
-						.cavity_strength = i == 2 ? .25f : 0.f, .displacement_scale=d ? 1.f : 0.f};
+						.cavity_strength = 0.f, .displacement_scale=0.f};
 					active_draws[i] = (RendererDraw){.mesh=&demo.panels[i],
-						.material_set = d ? demo.cavity_set : demo.neutral_set, .static_mesh=true,
+						/* Stability demo never binds cavity: it would confound C/D. */
+						.material_set = demo.neutral_set, .static_mesh=true,
 						.push=static_material_push(demo.panels[i].local_to_world,camera.position,white_rgba,
 							1.f,1.f,&p,true,true,true,true,d ? 1.f : 0.f)};
 					continue;
@@ -472,7 +478,8 @@ int main(void)
 				(vec4s){{atmosphere.aerial_max_distance_km, (float)atmosphere_slice, 0.0f, 0.0f}},
 			.temporal_parameters = (vec4s){{use_history ? 1.0f : 0.0f, dt, 0.0f, 0.0f}},
 			.temporal_jitter = (vec4s){{jitter.x, jitter.y, previous_jitter.x, previous_jitter.y}},
-			.material_detail_settings = (vec4s){{1.0f, 0.0f, 0.333f, 0.0f}},
+			.material_curvature = (vec4s){{1.0f, 0.0f, 0.333f, 0.0f}},
+			.material_normal_filter = (vec4s){{0.25f, 0.20f, 0.0001f, 0.0f}},
 #ifdef DEBUG_SHADER_DUMP
 			.shader_dump = (vec4s){{dump_this_frame ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f}},
 #endif
@@ -494,12 +501,22 @@ int main(void)
 		if (input.clear_shader_dump)
 			renderer_clear_shader_dump(SHADER_DUMP_PATH);
 		if (input.dump_shader_data)
-			renderer_dump_shader_data(&renderer, SHADER_DUMP_PATH, camera.position, camera.yaw,
-									  camera.pitch);
+		{
+			char metadata[160];
+			snprintf(metadata, sizeof(metadata), "scene=%s static_mesh_mode=%u demo_split=%u flyby_replay=%u phase=%c",
+				use_phase_d_demo ? "phase_d_demo" : (use_quarry ? "quarry" : "gltf"), static_mesh_shading_mode,
+				demo_split ? 1u : 0u, demo_flyby_phase_d ? 1u : 0u, phase_d_enabled ? 'D' : 'C');
+			renderer_dump_shader_data(&renderer, SHADER_DUMP_PATH, camera.position, camera.yaw, camera.pitch, metadata);
+		}
 		if (auto_dump_after && ++rendered_frames >= auto_dump_after)
 		{
-			renderer_dump_shader_data(&renderer, SHADER_DUMP_PATH, camera.position, camera.yaw,
-									  camera.pitch);
+		{
+			char metadata[160];
+			snprintf(metadata, sizeof(metadata), "scene=%s static_mesh_mode=%u demo_split=%u flyby_replay=%u phase=%c",
+				use_phase_d_demo ? "phase_d_demo" : (use_quarry ? "quarry" : "gltf"), static_mesh_shading_mode,
+				demo_split ? 1u : 0u, demo_flyby_phase_d ? 1u : 0u, phase_d_enabled ? 'D' : 'C');
+			renderer_dump_shader_data(&renderer, SHADER_DUMP_PATH, camera.position, camera.yaw, camera.pitch, metadata);
+		}
 			running = false;
 		}
 #endif

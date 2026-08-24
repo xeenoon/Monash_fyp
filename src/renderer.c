@@ -124,8 +124,9 @@ _Static_assert(offsetof(FrameUniforms, temporal_parameters) == 1072,
 _Static_assert(offsetof(FrameUniforms, temporal_jitter) == 1088,
 			   "FrameUniforms temporal jitter offset");
 _Static_assert(offsetof(FrameUniforms, shader_dump) == 1104, "FrameUniforms shader dump offset");
-_Static_assert(offsetof(FrameUniforms, material_detail_settings) == 1120, "FrameUniforms material detail offset");
-_Static_assert(sizeof(FrameUniforms) == 1136, "FrameUniforms std140 size");
+_Static_assert(offsetof(FrameUniforms, material_curvature) == 1120, "FrameUniforms curvature offset");
+_Static_assert(offsetof(FrameUniforms, material_normal_filter) == 1136, "FrameUniforms normal filter offset");
+_Static_assert(sizeof(FrameUniforms) == 1152, "FrameUniforms std140 size");
 _Static_assert(sizeof(DrawPushConstants) == 128, "terrain push constant size");
 _Static_assert(offsetof(TemporalExposure, histogram) == 16,
 			   "TemporalExposure std430 histogram offset");
@@ -1988,9 +1989,9 @@ static const char *const SHADER_DUMP_LEGEND[] = {
 	"# legend: environment_ibl f0-2=reflection_direction f3=mip f4-6=raw_cube f7=NoV "
 	"f8-10=ggx_specular_energy f11=reflection_visibility f12-14=unoccluded_specular f15=AO "
 	"f16-18=final_specular f19=roughness\n",
-	"# legend: material_detail f0=authored_roughness f1=effective_roughness f2=curvature_floor f3=normal_variance "
-	"f4=AO_sample f5=AO_visibility f6=cavity_sample f7=cavity_strength f8=cavity_visibility "
-	"f9=curvature_strength f10=cavity_descriptor_bound f11=phase_D_active f12-19=_\n",
+	"# legend: material_detail f0=authored_roughness f1=effective_roughness f2=geometric_floor f3=geometric_variance "
+	"f4=filtered_normal_length f5=mip_variance f6=mip_kernel f7=mip_roughness f8=AO_visibility f9=cavity_visibility "
+	"f10=phase_D_active f11=normal_strength f12-14=final_pre_TAA_HDR f15=normal_map_LOD f16-19=_\n",
 };
 
 /* Optional CPU-side output filters, applied only at write time (the GPU always
@@ -2041,7 +2042,7 @@ static bool shader_dump_record_passes(const DumpRecord *rec, const ShaderDumpFil
 }
 
 uint32_t renderer_dump_shader_data(Renderer *r, const char *path, WorldPosition camera_position,
-								   float camera_yaw, float camera_pitch)
+								   float camera_yaw, float camera_pitch, const char *metadata)
 {
 	/* The dump buffer holds the most recently submitted frame; wait for all GPU
 	   work so the host read below sees complete, coherent records. */
@@ -2075,6 +2076,8 @@ uint32_t renderer_dump_shader_data(Renderer *r, const char *path, WorldPosition 
 			"TERRAIN_DUMP_PITCH=%.3f)\n",
 			camera_position.x, camera_position.y, camera_position.z, camera_yaw, camera_pitch,
 			camera_position.x, camera_position.y, camera_position.z, camera_yaw, camera_pitch);
+	if (metadata && *metadata)
+		fprintf(file, "# %s\n", metadata);
 	for (size_t i = 0; i < sizeof(SHADER_DUMP_LEGEND) / sizeof(SHADER_DUMP_LEGEND[0]); ++i)
 		fputs(SHADER_DUMP_LEGEND[i], file);
 	fputs("shader,frag_x,frag_y,f0,f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13,f14,f15,f16,f17,f18,"

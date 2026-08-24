@@ -1,0 +1,1 @@
+/usr/bin/cc -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/utils_tests.dir/link.d CMakeFiles/utils_tests.dir/tests/utils_tests.c.o -o utils_tests  libcore_utils.a -lm /usr/lib/libz.so

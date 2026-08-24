@@ -72,38 +72,41 @@ void main() {
     vec4 base_color_sample = texture(albedo_map, uv);
     vec3 base_color = base_color_sample.rgb * draw.geometry.rgb;
     vec3 orm = texture(orm_map, uv).rgb;
-    vec3 ntex = texture(normal_map, uv).xyz * 2.0 - 1.0;
+    vec3 filtered_normal = texture(normal_map, uv).xyz * 2.0 - 1.0;
     float normal_scale = draw.elevation_uv.y;
-    ntex.xy *= normal_scale;
+    float filtered_normal_length = clamp(length(filtered_normal),
+                                         frame.material_normal_filter.z, 1.0);
+    vec3 tangent_normal = filtered_normal / filtered_normal_length;
+    tangent_normal.xy *= normal_scale;
+    tangent_normal = normalize(tangent_normal);
     bool default_lit = draw.material_factors.y > 0.5;
-    vec3 N;
+    vec3 geometric_normal = normalize(normal);
+    vec3 mapped_normal;
     if (default_lit) {
         mat3 tbn = tangent_frame(normal, tangent);
-        float mapped_normal_length2 = dot(ntex, ntex);
-        ntex = mapped_normal_length2 > 1e-10
-            ? ntex * inversesqrt(mapped_normal_length2)
-            : vec3(0.0, 0.0, 1.0);
-        N = normalize(tbn * ntex);
+        mapped_normal = normalize(tbn * tangent_normal);
     } else {
         /* Exact legacy tangent construction, including its unguarded inputs. */
         vec3 legacy_normal = normalize(normal);
         vec3 T = normalize(tangent.xyz -
                            legacy_normal * dot(legacy_normal, tangent.xyz));
         vec3 B = normalize(cross(legacy_normal, T)) * tangent.w;
-        N = normalize(mat3(T, B, legacy_normal) * ntex);
+        geometric_normal = legacy_normal;
+        mapped_normal = normalize(mat3(T, B, legacy_normal) * tangent_normal);
     }
     vec3 L = normalize(-frame.sun_direction.xyz);
     vec3 V = normalize(-camera_relative_position);
     /* Default Lit normal maps must shade the visible hemisphere. Preserve the
        legacy Quarry path verbatim for its F3 comparison. */
-    if (default_lit && dot(N, V) < 0.0)
-        N = -N;
+    if (default_lit && dot(mapped_normal, V) < 0.0)
+        mapped_normal = -mapped_normal;
+    vec3 N = mapped_normal;
     float NoL = max(dot(N, L), 0.0);
     float authored_roughness = material_authored_roughness(orm.g, draw.elevation_uv.x,
                                                             draw.elevation_uv.w);
-    float normal_variance;
-    float curvature_floor = material_curvature_floor(N, draw.debug.w, normal_variance);
-    float roughness = max(authored_roughness, curvature_floor);
+    MaterialDetailResult detail = material_detail_evaluate(geometric_normal,
+        filtered_normal_length, normal_scale, authored_roughness, draw.debug.w > 0.0);
+    float roughness = detail.effective_roughness;
     float metallic;
     vec3 indirect_diffuse;
     vec3 F0;
@@ -158,11 +161,12 @@ void main() {
     vec3 specular_ibl = environment.final_specular;
     if (frame.debug_view > 2.5 && frame.debug_view < 3.5) { out_color = vec4(N * .5 + .5, 1); return; }
     if (frame.debug_view > 3.5 && frame.debug_view < 4.5) { out_color = vec4(vec3(authored_roughness), 1); return; }
-    if (frame.debug_view > 4.5 && frame.debug_view < 5.5) { out_color = vec4(vec3(curvature_floor), 1); return; }
+    if (frame.debug_view > 4.5 && frame.debug_view < 5.5) { out_color = vec4(vec3(detail.geometric_floor), 1); return; }
     /* Effective material-detail diagnostic: authored (R), effective (G),
        curvature floor (B).  Green therefore appears only where D raises it. */
-    if (frame.debug_view > 5.5 && frame.debug_view < 6.5) { out_color = vec4(authored_roughness, roughness, curvature_floor, 1); return; }
-    out_color = vec4(direct + ambient + specular_ibl, 1.0);
+    if (frame.debug_view > 5.5 && frame.debug_view < 6.5) { out_color = vec4(authored_roughness, roughness, detail.geometric_floor, 1); return; }
+    vec3 final_hdr = direct + ambient + specular_ibl;
+    out_color = vec4(final_hdr, 1.0);
     vec2 current_uv = current_clip.xy / current_clip.w * 0.5 + 0.5;
     vec2 previous_uv = previous_clip.xy / previous_clip.w * 0.5 + 0.5;
     out_motion = previous_uv - current_uv;
@@ -180,12 +184,12 @@ void main() {
                 vec4(environment.ggx_specular_energy, environment.reflection_visibility),
                 vec4(environment.unoccluded_specular, orm.r),
                 vec4(environment.final_specular, roughness));
-    /* Cavity strength is zero whenever the Quarry fallback is bound; therefore
-       this record also identifies whether its production cavity input is live. */
     shader_dump(DUMP_SHADER_MATERIAL_DETAIL,
-                vec4(authored_roughness, roughness, curvature_floor, normal_variance),
-                vec4(texture(occlusion_map, uv).r, ao, cavity_sample, draw.debug.x),
-                vec4(cavity_visibility, draw.debug.w, draw.debug.y > 0.5 ? 1.0 : 0.0,
-                     draw.debug.w > 0.0 ? 1.0 : 0.0),
-                vec4(0.0), vec4(0.0));
+                vec4(detail.authored_roughness, detail.effective_roughness,
+                     detail.geometric_floor, detail.geometric_variance),
+                vec4(detail.filtered_normal_length, detail.mip_variance,
+                     detail.mip_kernel, detail.mip_roughness),
+                vec4(ao * cavity_visibility, cavity_visibility, draw.debug.w > 0.0 ? 1.0 : 0.0,
+                     normal_scale),
+                vec4(final_hdr, textureQueryLod(normal_map, uv).x), vec4(0.0));
 }

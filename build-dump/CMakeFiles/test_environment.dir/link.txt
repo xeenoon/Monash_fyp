@@ -1,0 +1,1 @@
+/usr/bin/cc -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/test_environment.dir/link.d CMakeFiles/test_environment.dir/tests/environment_tests.c.o CMakeFiles/test_environment.dir/src/environment.c.o CMakeFiles/test_environment.dir/include/stb_image.c.o -o test_environment  -lm
