@@ -27,7 +27,8 @@ layout(push_constant) uniform DrawData {
     mat4 local_to_camera_relative;
     vec4 geometry;
     vec4 elevation_uv;
-    vec4 material_factors; /* x: glTF metallicFactor, y: Default Lit enabled */
+    vec4 material_factors; /* x: glTF metallicFactor, y: Default Lit enabled,
+                               z: Phase B diffuse sky IBL enabled (F3 cycle) */
     vec4 debug;
 } draw;
 
@@ -119,8 +120,16 @@ void main() {
     float visibility = shadow_visibility(camera_relative_position, N);
     vec3 direct = (bxdf.diffuse + bxdf.specular) *
                   frame.sun_radiance.rgb * NoL * visibility;
-    vec3 ambient = indirect_diffuse *
-                   (0.045 + 0.10 * max(N.y, 0.0)) * orm.r;
+    /* Sky diffuse IBL (Phase B1). Falls back to the original hemispheric
+       constant when no HDR was loaded, or when the F3 cycle has it switched
+       off (material_factors.z), so the render is byte-identical to pre-
+       Phase-B in either case. AO (orm.r) applies only here, never to direct
+       or specular. */
+    bool ibl_enabled = env.env_params.x > 0.5 && draw.material_factors.z > 0.5;
+    vec3 irradiance = ibl_enabled
+        ? environment_irradiance(N) * env.env_params.y
+        : vec3(0.045 + 0.10 * max(N.y, 0.0));
+    vec3 ambient = indirect_diffuse * irradiance * orm.r;
     out_color = vec4(direct + ambient, 1.0);
     vec2 current_uv = current_clip.xy / current_clip.w * 0.5 + 0.5;
     vec2 previous_uv = previous_clip.xy / previous_clip.w * 0.5 + 0.5;
@@ -132,5 +141,5 @@ void main() {
                 vec4(base_color, visibility),
                 vec4(N, metallic),
                 vec4(camera_relative_position, default_lit ? 1.0 : 0.0),
-                vec4(out_color.rgb, 0.0));
+                vec4(irradiance, orm.r));
 }

@@ -96,6 +96,7 @@ add_executable(terrain_renderer
     src/surface_detail.c
     src/shadow_cascade.c
     src/atmosphere.c
+    src/environment.c
     src/temporal.c
     src/texture.c
     src/renderer.c
@@ -104,11 +105,17 @@ add_dependencies(terrain_renderer shaders)
 target_include_directories(terrain_renderer PRIVATE include)
 target_link_libraries(terrain_renderer PRIVATE
     core_utils Vulkan::Vulkan cglm::cglm PkgConfig::SDL3 m)
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets/env.hdr")
+    message(WARNING
+        "No IBL environment at assets/env.hdr -- the Quarry cliff will use the "
+        "hemispheric ambient fallback (Phase B indirect lighting disabled).")
+endif()
 target_compile_definitions(terrain_renderer PRIVATE
     SHADER_DIR="${SHADER_OUTPUT_DIR}"
     ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets"
     QUARRY_DIR="${CMAKE_CURRENT_SOURCE_DIR}/valley-of-the-ancient"
     TRN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/trn"
+    ENV_HDR_PATH="${CMAKE_CURRENT_SOURCE_DIR}/assets/env.hdr"
     CGLM_FORCE_DEPTH_ZERO_TO_ONE)
 if(DEBUG_SHADER_DUMP)
     target_compile_definitions(terrain_renderer PRIVATE
@@ -221,6 +228,17 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME phase7_physical_sky_and_aerial_perspective
              COMMAND phase7_atmosphere_tests)
+
+    add_executable(test_environment
+        tests/environment_tests.c
+        src/environment.c
+        include/stb_image.c)
+    target_include_directories(test_environment PRIVATE src include)
+    target_link_libraries(test_environment PRIVATE m)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(test_environment PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME environment_sh9_projection COMMAND test_environment)
 
     add_executable(phase8_temporal_tests
         tests/phase8_temporal_tests.c

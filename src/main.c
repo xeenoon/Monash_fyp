@@ -63,7 +63,10 @@ int main(void)
 	unsigned relight_mode = 1;
 	unsigned sun_mode = 0;
 	unsigned atmosphere_slice = 15;
-	bool use_default_lit = true;
+	/* F3 cycles: 0 = legacy PBR, no IBL ("nothing") -> 1 = Unreal Default Lit,
+	   no IBL ("metallic shader") -> 2 = Default Lit + Phase B diffuse sky IBL
+	   -> back to 0. */
+	unsigned quarry_shading_mode = 1;
 	AtmosphereParameters atmosphere = atmosphere_earth();
 	bool running = true;
 #ifdef DEBUG_SHADER_DUMP
@@ -103,9 +106,10 @@ int main(void)
 			running = false;
 		if (input.toggle_quarry_shading)
 		{
-			use_default_lit = !use_default_lit;
-			printf("Quarry renderer: %s\n",
-				   use_default_lit ? "Unreal Default Lit (Phase A)" : "legacy PBR");
+			quarry_shading_mode = (quarry_shading_mode + 1) % 3u;
+			const char *names[] = {"nothing (legacy PBR)", "metallic shader (Unreal Default Lit)",
+								   "metallic shader + Phase B sky IBL"};
+			printf("Quarry renderer: %s\n", names[quarry_shading_mode]);
 			history_valid = false;
 		}
 		if (input.reload_shaders)
@@ -173,10 +177,13 @@ int main(void)
 		bool use_history = history_valid && !input.resized && !camera_cut;
 
 		vec3s camera_forward_direction = camera_forward(&camera);
+		bool default_lit = quarry_shading_mode != 0u;
+		bool ibl_enabled = quarry_shading_mode == 2u;
 		DrawPushConstants quarry_push = {
 			.local_to_camera_relative =
 				coordinate_local_to_camera_relative(&quarry.base.local_to_world, camera.position),
-			.material = {{quarry.metallic_factor, use_default_lit ? 1.0f : 0.0f, 0.0f, 0.0f}},
+			.material = {{quarry.metallic_factor, default_lit ? 1.0f : 0.0f,
+						 ibl_enabled ? 1.0f : 0.0f, 0.0f}},
 			.debug = {{0.0f, 0.0f, 0.0f, 0.0f}},
 		};
 		RendererDraw quarry_draw = {
@@ -239,7 +246,7 @@ int main(void)
 			.shadow_splits = (vec4s){{shadow_config.split_m[0], shadow_config.split_m[1],
 									  shadow_config.split_m[2], shadow_config.split_m[3]}},
 			.shadow_parameters = (vec4s){{0.35f, 1.75f, 1.0f, 1.25f}},
-			.sun_radiance = (vec4s){{3.2f, 3.0f, 2.7f, 0.0f}},
+			.sun_radiance = (vec4s){{1.6f, 1.5f, 1.35f, 0.0f}},
 			.atmosphere_radii = (vec4s){{atmosphere.bottom_radius_km, atmosphere.top_radius_km,
 										 fmaxf((float)camera.position.y * 0.001f, 0.001f),
 										 atmosphere.sun_angular_radius_rad}},

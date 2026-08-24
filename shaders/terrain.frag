@@ -116,10 +116,14 @@ void main() {
     float visibility = shadow_visibility(camera_relative_position, N);
     vec3 direct = (bxdf.diffuse + bxdf.specular) *
                   frame.sun_radiance.rgb * NoL * visibility;
-    /* Retain the pre-IBL hemispheric approximation. AO remains restricted to
-       this indirect diffuse term and never darkens sun or specular lighting. */
-    vec3 ambient = indirect_diffuse *
-                   (0.045 + 0.10 * max(N.y, 0.0)) * orm.r;
+    /* Sky diffuse IBL (Phase B1). Falls back to the original hemispheric
+       constant when no HDR was loaded, so the render is byte-identical to
+       pre-Phase-B until an environment is provided (env.env_params.x gates
+       it). AO (orm.r) applies only here, never to direct or specular. */
+    vec3 irradiance = env.env_params.x > 0.5
+        ? environment_irradiance(N) * env.env_params.y
+        : vec3(0.045 + 0.10 * max(N.y, 0.0));
+    vec3 ambient = indirect_diffuse * irradiance * orm.r;
     out_color = vec4(direct + ambient, 1.0);
     vec2 current_uv = current_clip.xy / current_clip.w * 0.5 + 0.5;
     vec2 previous_uv = previous_clip.xy / previous_clip.w * 0.5 + 0.5;
@@ -131,5 +135,5 @@ void main() {
                 vec4(base_color, visibility),
                 vec4(N, metallic),
                 vec4(camera_relative_position, default_lit ? 1.0 : 0.0),
-                vec4(out_color.rgb, 0.0));
+                vec4(irradiance, orm.r));
 }

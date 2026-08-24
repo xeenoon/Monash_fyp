@@ -59,6 +59,16 @@ typedef struct
 	uint32_t histogram[256];
 } TemporalExposure;
 
+/* Diffuse sky IBL (set 0, binding 4). Independent of FrameUniforms -- its own
+   std140 contract, updated once at load (unlike the per-frame UBO). Mirrored
+   byte-for-byte by the EnvironmentUniforms block in common.glsl. */
+typedef struct
+{
+	vec4s sh[9];	   /* 3rd-order SH, RGB in .xyz; cosine-lobe + 1/pi baked in
+						  (see EnvironmentSH in environment.h) */
+	vec4s env_params; /* x: enabled, y: diffuse intensity, z/w: reserved */
+} EnvironmentUniforms;
+
 /* Exactly 128 bytes, the Vulkan minimum guaranteed push-constant capacity.
    This is tile/draw data; camera and lighting remain in the frame UBO. */
 typedef struct
@@ -128,6 +138,7 @@ typedef struct Renderer
 	VkDescriptorPool descriptor_pool;
 	GpuBuffer frame_ubo[MAX_FRAMES_IN_FLIGHT];
 	GpuBuffer exposure_buffer;
+	GpuBuffer environment_ubo; /* diffuse sky IBL SH-9, set 0 binding 4; see environment.c */
 	VkDescriptorSet frame_set[MAX_FRAMES_IN_FLIGHT];
 	Texture fallback_texture;
 	Texture terrain_detail_texture;

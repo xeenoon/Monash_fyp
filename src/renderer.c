@@ -1,10 +1,12 @@
 #include "renderer.h"
+#include "environment.h"
 #include "file_utils.h"
 #include "vk_common.h"
 
 #include <SDL3/SDL_vulkan.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include <vulkan/vulkan_core.h>
 
@@ -116,6 +118,11 @@ _Static_assert(sizeof(FrameUniforms) == 1072, "FrameUniforms std140 size");
 _Static_assert(sizeof(DrawPushConstants) == 128, "terrain push constant size");
 _Static_assert(offsetof(TemporalExposure, histogram) == 16,
 			   "TemporalExposure std430 histogram offset");
+/* Keep the C UBO byte-for-byte compatible with shaders/common.glsl std140. */
+_Static_assert(offsetof(EnvironmentUniforms, sh) == 0, "EnvironmentUniforms sh offset");
+_Static_assert(offsetof(EnvironmentUniforms, env_params) == 144,
+			   "EnvironmentUniforms env_params offset");
+_Static_assert(sizeof(EnvironmentUniforms) == 160, "EnvironmentUniforms std140 size");
 
 /* Staging capacity for the upload ring: large enough for the 2048x2048 albedo
    (16 MiB) plus the terrain mesh in a single batch. */
@@ -208,12 +215,47 @@ void renderer_free_material_set(Renderer *r, VkDescriptorSet set)
 		VK_CHECK(vkFreeDescriptorSets(r->device, r->descriptor_pool, 1, &set));
 }
 
+/* Load + project the diffuse-IBL environment once at startup and upload the
+   result to a small static UBO. Must run before create_descriptors, which
+   binds r->environment_ubo at set 0 binding 4. Absent-able: if ENV_HDR_PATH
+   doesn't decode, env_params.x stays 0 and the shader falls back to the
+   original hemispheric-ambient constant -- draw submission is unchanged
+   either way (Phase B architecture invariant #5, unrealplan.md). */
+static void create_environment(Renderer *r)
+{
+	EnvironmentUniforms uniforms = {0};
+	float *pixels = NULL;
+	int width = 0, height = 0;
+	if (environment_load_hdr(ENV_HDR_PATH, &pixels, &width, &height))
+	{
+		EnvironmentSH sh;
+		environment_project_sh9(pixels, width, height, &sh);
+		environment_free_hdr(pixels);
+		for (uint32_t i = 0; i < 9; ++i)
+			uniforms.sh[i] =
+				(vec4s){{sh.coeffs[i][0], sh.coeffs[i][1], sh.coeffs[i][2], 0.0f}};
+		uniforms.env_params = (vec4s){{1.0f, 1.0f, 0.0f, 0.0f}};
+		printf("Environment: loaded IBL from %dx%d %s\n", width, height, ENV_HDR_PATH);
+	}
+	else
+		printf("Environment: no HDR at %s, using hemispheric ambient fallback\n", ENV_HDR_PATH);
+
+	r->environment_ubo = gpu_buffer_create(
+		r->device, r->allocator, sizeof(EnvironmentUniforms), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+	memcpy(r->environment_ubo.allocation.mapped, &uniforms, sizeof(uniforms));
+}
+
 /* Descriptor roles: set 0 = per-frame UBO; set 1 = pass-local material/HDR;
    set 2 = atmosphere LUTs for graphics. Compute sees that same atmosphere set
    as set 1, avoiding duplicate descriptors. */
 static void create_descriptors(Renderer *r)
 {
-	VkDescriptorSetLayoutBinding frame_bindings[4] = {
+	/* Binding 4 (environment UBO) is unconditional; binding 3 (debug dump SSBO)
+	   stays conditional and must stay last in this array so the non-debug
+	   build's frame_binding_count == 4 slice excludes it. Non-contiguous
+	   binding numbers are legal in Vulkan. */
+	VkDescriptorSetLayoutBinding frame_bindings[5] = {
 		{.binding = 0,
 		 .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
 		 .descriptorCount = 1,
@@ -227,14 +269,18 @@ static void create_descriptors(Renderer *r)
 		 .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		 .descriptorCount = 1,
 		 .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+		{.binding = 4,
+		 .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+		 .descriptorCount = 1,
+		 .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
 		{.binding = 3,
 		 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 		 .descriptorCount = 1,
 		 .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
 	};
-	uint32_t frame_binding_count = 3;
+	uint32_t frame_binding_count = 4;
 #ifdef DEBUG_SHADER_DUMP
-	frame_binding_count = 4;
+	frame_binding_count = 5;
 #endif
 	VkDescriptorSetLayoutCreateInfo frame_layout = {
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
@@ -310,7 +356,8 @@ static void create_descriptors(Renderer *r)
 										 &r->atmosphere_set_layout));
 
 	VkDescriptorPoolSize pool_sizes[4] = {
-		{.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = MAX_FRAMES_IN_FLIGHT},
+		{.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+		 .descriptorCount = MAX_FRAMES_IN_FLIGHT * 2u /* frame UBO + environment UBO */},
 		{.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		 .descriptorCount = MAX_TEXTURE_SETS * 3u + MAX_FRAMES_IN_FLIGHT * 2u + 20u},
 		{.type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = 5u},
@@ -337,6 +384,9 @@ static void create_descriptors(Renderer *r)
 		VK_CHECK(vkAllocateDescriptorSets(r->device, &alloc, &r->frame_set[i]));
 		VkDescriptorBufferInfo info = {
 			.buffer = r->frame_ubo[i].buffer, .offset = 0, .range = sizeof(FrameUniforms)};
+		VkDescriptorBufferInfo env_info = {.buffer = r->environment_ubo.buffer,
+										   .offset = 0,
+										   .range = sizeof(EnvironmentUniforms)};
 		VkDescriptorImageInfo shadow_images[2] = {
 			{.sampler = r->shadow_map.sampler,
 			 .imageView = r->shadow_map.view,
@@ -345,7 +395,7 @@ static void create_descriptors(Renderer *r)
 			 .imageView = r->shadow_map.view,
 			 .imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL},
 		};
-		VkWriteDescriptorSet writes[3] = {
+		VkWriteDescriptorSet writes[4] = {
 			{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 			 .dstSet = r->frame_set[i],
 			 .dstBinding = 0,
@@ -364,8 +414,14 @@ static void create_descriptors(Renderer *r)
 			 .descriptorCount = 1,
 			 .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 			 .pImageInfo = &shadow_images[1]},
+			{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			 .dstSet = r->frame_set[i],
+			 .dstBinding = 4,
+			 .descriptorCount = 1,
+			 .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+			 .pBufferInfo = &env_info},
 		};
-		vkUpdateDescriptorSets(r->device, 3, writes, 0, NULL);
+		vkUpdateDescriptorSets(r->device, 4, writes, 0, NULL);
 	}
 
 	texture_create_white(r->device, r->allocator, r->upload, &r->fallback_texture);
@@ -1579,7 +1635,7 @@ void renderer_clear_shader_dump(const char *path)
    with the shader_dump() call in each instrumented .frag file. */
 static const char *const SHADER_DUMP_LEGEND[] = {
 	"# legend: terrain/mesh f0-1=uv f2=roughness f3=NoL f4-6=base_color f7=visibility "
-	"f8-10=N f11=metallic f12-14=cam_rel_pos f15=default_lit f16-18=out_color f19=_\n",
+	"f8-10=N f11=metallic f12-14=cam_rel_pos f15=default_lit f16-18=irradiance f19=AO(orm.r)\n",
 	"# legend: cube f0-2=normal f3=diffuse f4=lighting f5-7=out_color f8-19=_\n",
 	"# legend: atmosphere_composite f0-1=texcoord f2=depth f3=branch(1=lut,2=pass,3=sky,4=aerial) "
 	"f4-6=out_color f7=_ f8-10=view_dir f11=distance_km f12-14=scattering f15=near_weight "
@@ -2109,6 +2165,7 @@ void renderer_init(Renderer *r, SDL_Window *window)
 									  r->graphics_family, UPLOAD_STAGING_CAPACITY);
 	create_shadow_texture(r);
 	create_atmosphere_textures(r);
+	create_environment(r);
 	create_descriptors(r);
 	create_command_and_sync(r);
 	create_pipeline_layout(r);
@@ -2156,6 +2213,7 @@ void renderer_shutdown(Renderer *r)
 		gpu_buffer_destroy(r->device, r->allocator, &r->frame_ubo[i]);
 	}
 	gpu_buffer_destroy(r->device, r->allocator, &r->exposure_buffer);
+	gpu_buffer_destroy(r->device, r->allocator, &r->environment_ubo);
 	vkDestroyCommandPool(r->device, r->command_pool, NULL);
 	vkDestroyDescriptorPool(r->device, r->descriptor_pool, NULL);
 	vkDestroyDescriptorSetLayout(r->device, r->atmosphere_set_layout, NULL);
