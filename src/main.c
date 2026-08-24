@@ -71,7 +71,11 @@ int main(void)
 		(quarry_create(&renderer, &quarry, QUARRY_DIR) ? GLTF_LOAD_OK : GLTF_LOAD_IO_ERROR) :
 		gltf_scene_create(&renderer, gltf_path,
 			&(GltfLoadOptions){.use_metallic_roughness_red_as_occlusion = !scene || strcmp(scene, "coastal_cliff") == 0,
-				.placement = coordinate_identity_transform((WorldPosition){0})}, &gltf, &gltf_error);
+				/* Poly Haven's authored front faces +Z; the benchmark camera is
+				 * placed on -Z, so turn only this named benchmark toward it. */
+				.placement = (!scene || strcmp(scene, "coastal_cliff") == 0)
+					? coordinate_rotation_y(3.14159265358979323846, (WorldPosition){0})
+					: coordinate_identity_transform((WorldPosition){0})}, &gltf, &gltf_error);
 	if (load_result != GLTF_LOAD_OK)
 	{
 		fprintf(stderr, "Could not load %s: %s\n", use_quarry ? QUARRY_DIR : gltf_path,
