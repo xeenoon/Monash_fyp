@@ -40,6 +40,7 @@ _Static_assert(sizeof(DumpRecord) == SHADER_DUMP_RECORD_FLOATS * 4u,
 #define DUMP_SHADER_ATMOSPHERE_COMPOSITE 3u
 #define DUMP_SHADER_TONEMAP 4u
 #define DUMP_SHADER_TEMPORAL_RESOLVE 5u
+#define DUMP_SHADER_ENVIRONMENT_IBL 6u
 
 static const char *shader_dump_name(uint32_t shader_id)
 {
@@ -57,6 +58,8 @@ static const char *shader_dump_name(uint32_t shader_id)
 		return "tonemap";
 	case DUMP_SHADER_TEMPORAL_RESOLVE:
 		return "temporal_resolve";
+	case DUMP_SHADER_ENVIRONMENT_IBL:
+		return "environment_ibl";
 	default:
 		return "unknown";
 	}
@@ -64,12 +67,14 @@ static const char *shader_dump_name(uint32_t shader_id)
 
 /* Records per screen pixel the dump buffer can hold before truncating (i.e.
    how many overdrawn/overlapping shader invocations per pixel across every
-   instrumented shader in a frame). 8 at 1280x720 is ~7.4M records, ~700 MB.
+   instrumented shader in a frame). Terrain/mesh now add environment_ibl as a
+   second record but the existing eight-layer default remains sufficient.
+   8 at 1280x720 is ~7.4M records, ~700 MB.
    Override with TERRAIN_DUMP_LAYERS. */
 #define DUMP_LAYER_BUDGET_DEFAULT 8u
 #endif
 
-/* Keep the C UBO byte-for-byte compatible with shaders/common.glsl std140. */
+/* Keep the C frame UBO byte-for-byte compatible with shaders/common.glsl std140. */
 _Static_assert(offsetof(FrameUniforms, projection) == 0, "FrameUniforms projection offset");
 _Static_assert(offsetof(FrameUniforms, view) == 64, "FrameUniforms view offset");
 _Static_assert(offsetof(FrameUniforms, view_projection) == 128, "FrameUniforms VP offset");
@@ -117,7 +122,8 @@ _Static_assert(sizeof(FrameUniforms) == 1072, "FrameUniforms std140 size");
 _Static_assert(sizeof(DrawPushConstants) == 128, "terrain push constant size");
 _Static_assert(offsetof(TemporalExposure, histogram) == 16,
 			   "TemporalExposure std430 histogram offset");
-/* Keep the C UBO byte-for-byte compatible with shaders/common.glsl std140. */
+/* Keep the environment UBO byte-for-byte compatible with
+   shaders/environment_lighting.glsl std140. */
 _Static_assert(offsetof(EnvironmentUniforms, sh) == 0, "EnvironmentUniforms sh offset");
 _Static_assert(offsetof(EnvironmentUniforms, env_params) == 144,
 			   "EnvironmentUniforms env_params offset");
@@ -247,7 +253,7 @@ static void create_environment(Renderer *r)
 	else
 		printf("Environment: no HDR at %s, using hemispheric ambient fallback\n", ENV_HDR_PATH);
 	uniforms.env_params =
-		(vec4s){{loaded ? 1.0f : 0.0f, 0.3f, (float)(ENV_CUBE_MIPS - 1u), 0.0f}};
+		(vec4s){{loaded ? 1.0f : 0.0f, 0.30f, 0.10f, (float)(ENV_CUBE_MIPS - 1u)}};
 
 	r->environment_ubo = gpu_buffer_create(
 		r->device, r->allocator, sizeof(EnvironmentUniforms), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
@@ -1928,6 +1934,9 @@ static const char *const SHADER_DUMP_LEGEND[] = {
 	"f8-10=display_linear f11=debug_view f12-14=encoded f15=_ f16-18=out_color f19=_\n",
 	"# legend: temporal_resolve f0-1=texcoord f2=depth f3=valid f4-5=velocity f6=motion_px "
 	"f7=current_weight f8-10=current f11=_ f12-14=history f15=_ f16-18=resolved f19=_\n",
+	"# legend: environment_ibl f0-2=reflection_direction f3=mip f4-6=raw_cube f7=NoV "
+	"f8-10=ggx_specular_energy f11=reflection_visibility f12-14=unoccluded_specular f15=AO "
+	"f16-18=final_specular f19=roughness\n",
 };
 
 /* Optional CPU-side output filters, applied only at write time (the GPU always
@@ -1948,7 +1957,7 @@ static ShaderDumpFilter shader_dump_read_filters(void)
 	const char *shader_env = getenv("DUMP_SHADER");
 	if (shader_env)
 	{
-		for (uint32_t id = 0; id <= DUMP_SHADER_TEMPORAL_RESOLVE; ++id)
+		for (uint32_t id = 0; id <= DUMP_SHADER_ENVIRONMENT_IBL; ++id)
 		{
 			if (strcasecmp(shader_env, shader_dump_name(id)) == 0)
 			{

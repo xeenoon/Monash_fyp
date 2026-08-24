@@ -80,6 +80,12 @@ int main(void)
 	uint64_t rendered_frames = 0;
 	if (getenv("TERRAIN_DUMP_SUN"))
 		sun_mode = (unsigned)atoi(getenv("TERRAIN_DUMP_SUN")) % 3u;
+	if (getenv("TERRAIN_DUMP_QUARRY_MODE"))
+	{
+		unsigned requested_mode = (unsigned)atoi(getenv("TERRAIN_DUMP_QUARRY_MODE"));
+		if (requested_mode <= 3u)
+			quarry_shading_mode = requested_mode;
+	}
 	if (getenv("TERRAIN_DUMP_YAW"))
 		camera.yaw = (float)atof(getenv("TERRAIN_DUMP_YAW"));
 	if (getenv("TERRAIN_DUMP_PITCH"))

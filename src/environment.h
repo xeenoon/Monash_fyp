@@ -6,7 +6,7 @@
    diffuse response. 3rd-order (9-term) real SH, RGB per term. Two things are
    baked into these coefficients at projection time so a shader can reconstruct
    them as a flat 9-term polynomial in the surface normal with no extra
-   constants (see environment_irradiance in shaders/common.glsl):
+   constants (see environment_irradiance in shaders/environment_lighting.glsl):
 	 - the l=1/l=2 cosine-lobe convolution (Ramamoorthi & Hanrahan 2001, "An
 	   Efficient Representation for Irradiance Environment Maps", the A_l
 	   bands: A0=pi, A1=2pi/3, A2=pi/4);

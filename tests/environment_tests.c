@@ -88,9 +88,42 @@ static void bright_direction_peaks_reconstruction_along_it(void)
 	assert(along[0] > 0.0);
 }
 
+/* CPU mirror of environment_reflection_visibility in
+   shaders/environment_lighting.glsl. */
+static double reflection_visibility(double nov, double ao, double roughness)
+{
+	double exponent = exp2(-16.0 * roughness - 1.0);
+	double base = fmin(fmax(nov + ao, 0.0), 2.0);
+	double value = pow(base, exponent) - 1.0 + ao;
+	return fmin(fmax(value, 0.0), 1.0);
+}
+
+static void reflection_visibility_contract(void)
+{
+	const double values[] = {0.0, 0.05, 0.25, 0.5, 0.75, 1.0};
+	for (size_t r = 0; r < sizeof(values) / sizeof(values[0]); ++r)
+		for (size_t n = 0; n < sizeof(values) / sizeof(values[0]); ++n)
+			for (size_t a = 0; a < sizeof(values) / sizeof(values[0]); ++a)
+			{
+				double v = reflection_visibility(values[n], values[a], values[r]);
+				assert(isfinite(v));
+				assert(v >= 0.0 && v <= 1.0);
+				assert(reflection_visibility(values[n], 0.0, values[r]) == 0.0);
+				assert(fabs(reflection_visibility(values[n], 1.0, values[r]) - 1.0) < 1e-12);
+				if (a + 1 < sizeof(values) / sizeof(values[0]))
+					assert(v <= reflection_visibility(values[n], values[a + 1], values[r]) + 1e-12);
+				if (n + 1 < sizeof(values) / sizeof(values[0]))
+					assert(v <= reflection_visibility(values[n + 1], values[a], values[r]) + 1e-12);
+			}
+	for (size_t n = 0; n < sizeof(values) / sizeof(values[0]); ++n)
+		for (size_t a = 0; a < sizeof(values) / sizeof(values[0]); ++a)
+			assert(reflection_visibility(values[n], values[a], 1.0) <= values[a] + 0.02);
+}
+
 int main(void)
 {
 	uniform_environment_yields_flat_irradiance();
 	bright_direction_peaks_reconstruction_along_it();
+	reflection_visibility_contract();
 	return 0;
 }

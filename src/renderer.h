@@ -67,15 +67,15 @@ typedef struct
 /* Diffuse + specular sky IBL (set 0, bindings 4-5). Independent of
    FrameUniforms -- its own std140 contract, updated once at load (unlike the
    per-frame UBO). Mirrored byte-for-byte by the EnvironmentUniforms block in
-   common.glsl. The specular cube itself is bound separately at binding 5 (a
-   sampler, not part of this UBO); env_params.z just tells the shader its max
-   mip index. */
+   environment_lighting.glsl. The specular cube itself is bound separately at
+   binding 5 (a sampler, not part of this UBO); env_params.w tells the shader
+   its maximum mip index. */
 typedef struct
 {
 	vec4s sh[9];	   /* 3rd-order SH, RGB in .xyz; cosine-lobe + 1/pi baked in
 						  (see EnvironmentSH in environment.h) */
-	vec4s env_params; /* x: enabled, y: intensity (diffuse+specular), z:
-						  specular cube max mip index, w: reserved */
+	vec4s env_params; /* x: enabled, y: diffuse intensity, z: specular intensity,
+						  w: specular cube max mip index */
 } EnvironmentUniforms;
 
 /* Exactly 128 bytes, the Vulkan minimum guaranteed push-constant capacity.

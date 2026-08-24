@@ -2,6 +2,7 @@
 #extension GL_GOOGLE_include_directive : require
 #include "common.glsl"
 #include "pbr_common.glsl"
+#include "environment_lighting.glsl"
 #include "shader_dump.glsl"
 
 /* Opaque, single-pass forward shading with no discard/gl_FragDepth write:
@@ -95,6 +96,8 @@ void main() {
     }
     vec3 L = normalize(-frame.sun_direction.xyz);
     vec3 V = normalize(-camera_relative_position);
+    if (default_lit && dot(N, V) < 0.0)
+        N = -N;
     float NoL = max(dot(N, L), 0.0);
     float roughness = clamp(orm.g, 0.045, 1.0);
     float metallic;
@@ -121,24 +124,15 @@ void main() {
     /* Sky diffuse IBL (Phase B1). Falls back to the original hemispheric
        constant when no HDR was loaded, so the render is byte-identical to
        pre-Phase-B until an environment is provided (env.env_params.x gates
-       it). AO (orm.r) applies only here, never to direct or specular. */
-    bool ibl_enabled = env.env_params.x > 0.5;
-    vec3 irradiance = ibl_enabled
-        ? environment_irradiance(N) * env.env_params.y
-        : vec3(0.045 + 0.10 * max(N.y, 0.0));
+       it). AO (orm.r) applies here; indirect specular has its own dedicated
+       reflection-visibility rule, while direct light remains unaffected. */
+    EnvironmentLightingResult environment = environment_evaluate(
+        camera_relative_position, N, V, roughness, F0, orm.r, true, true);
+    vec3 irradiance = environment.irradiance;
     vec3 ambient = indirect_diffuse * irradiance * orm.r;
     /* Sky specular IBL (Phase B2). Reuses the analytic split-sum energy terms
-       already computed for the direct BRDF instead of a baked LUT. AO
-       (orm.r) must NOT scale specular, unlike ambient above. */
-    vec3 specular_ibl = vec3(0.0);
-    if (ibl_enabled) {
-        float NoV = clamp(dot(N, V), 0.0, 1.0);
-        vec3 R = reflect(-V, N);
-        float mip = roughness * env.env_params.z;
-        vec3 prefiltered = textureLod(env_specular, R, mip).rgb * env.env_params.y;
-        UeBxdfEnergyTerms energy = ue_compute_ggx_spec_energy_terms(roughness, NoV, F0);
-        specular_ibl = prefiltered * energy.specular_energy;
-    }
+       already computed for the direct BRDF instead of a baked LUT. */
+    vec3 specular_ibl = environment.final_specular;
     out_color = vec4(direct + ambient + specular_ibl, 1.0);
     vec2 current_uv = current_clip.xy / current_clip.w * 0.5 + 0.5;
     vec2 previous_uv = previous_clip.xy / previous_clip.w * 0.5 + 0.5;
@@ -151,4 +145,10 @@ void main() {
                 vec4(N, metallic),
                 vec4(camera_relative_position, default_lit ? 1.0 : 0.0),
                 vec4(irradiance, orm.r));
+    shader_dump(DUMP_SHADER_ENVIRONMENT_IBL,
+                vec4(environment.reflection_direction, environment.mip),
+                vec4(environment.sampled_reflection_radiance, environment.NoV),
+                vec4(environment.ggx_specular_energy, environment.reflection_visibility),
+                vec4(environment.unoccluded_specular, orm.r),
+                vec4(environment.final_specular, roughness));
 }

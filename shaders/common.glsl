@@ -39,41 +39,6 @@ layout(set = 0, binding = 0) uniform FrameUniforms {
 layout(set = 0, binding = 1) uniform sampler2DArrayShadow shadow_map;
 layout(set = 0, binding = 2) uniform sampler2DArray shadow_map_raw;
 
-/* Diffuse sky IBL (set 0, binding 4). Matches EnvironmentUniforms in
-   renderer.h; independent of FrameUniforms, updated once at load rather than
-   per frame (see environment.c). */
-layout(set = 0, binding = 4) uniform EnvironmentUniforms {
-    vec4 sh[9];       /* 3rd-order SH, RGB in .xyz; cosine-lobe + 1/pi baked in */
-    vec4 env_params;  /* x: enabled, y: diffuse intensity, z: specular cube max
-                          mip index, w: reserved */
-} env;
-
-/* Specular sky IBL (set 0, binding 5, B2): GGX-prefiltered environment cube,
-   mip 0 = mirror (roughness 0) through mip env_params.z = fully rough. Built
-   once at init by environment_prefilter() (renderer.c); absent-able like the
-   diffuse term, gated by env_params.x. */
-layout(set = 0, binding = 5) uniform samplerCube env_specular;
-
-/* 3rd-order real-SH reconstruction of the diffuse (Lambertian) response to the
-   environment along N. The basis below must match environment_project_sh9's
-   projection basis in environment.c exactly (same normalization constants,
-   same term order) -- env.sh[] already has the cosine-lobe convolution and
-   the 1/pi Lambertian normalization baked in, so this is directly usable as
-   `indirect_diffuse * environment_irradiance(N)`, no further constants. */
-vec3 environment_irradiance(vec3 N) {
-    vec3 result =
-        env.sh[0].xyz * 0.282095 +
-        env.sh[1].xyz * (0.488603 * N.y) +
-        env.sh[2].xyz * (0.488603 * N.z) +
-        env.sh[3].xyz * (0.488603 * N.x) +
-        env.sh[4].xyz * (1.092548 * N.x * N.y) +
-        env.sh[5].xyz * (1.092548 * N.y * N.z) +
-        env.sh[6].xyz * (0.315392 * (3.0 * N.z * N.z - 1.0)) +
-        env.sh[7].xyz * (1.092548 * N.x * N.z) +
-        env.sh[8].xyz * (0.546274 * (N.x * N.x - N.y * N.y));
-    return max(result, vec3(0.0));
-}
-
 /* Infinite reversed-Z helpers. UV follows Vulkan framebuffer orientation, so
    the projection's single Y flip is not repeated here. The reconstructed
    position is camera-relative by design; absolute world positions stay double
