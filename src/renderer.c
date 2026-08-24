@@ -27,7 +27,7 @@
 #define SHADER_DUMP_RECORD_FLOATS 24u /* six vec4s */
 typedef struct
 {
-	float meta[4]; /* shader_id, frag_x, frag_y, reserved */
+	float meta[4];							 /* shader_id, frag_x, frag_y, reserved */
 	float v0[4], v1[4], v2[4], v3[4], v4[4]; /* 20 generic floats, meaning per shader_id */
 } DumpRecord;
 _Static_assert(sizeof(DumpRecord) == SHADER_DUMP_RECORD_FLOATS * 4u,
@@ -112,8 +112,7 @@ _Static_assert(offsetof(FrameUniforms, temporal_parameters) == 1024,
 			   "FrameUniforms temporal parameters offset");
 _Static_assert(offsetof(FrameUniforms, temporal_jitter) == 1040,
 			   "FrameUniforms temporal jitter offset");
-_Static_assert(offsetof(FrameUniforms, shader_dump) == 1056,
-			   "FrameUniforms shader dump offset");
+_Static_assert(offsetof(FrameUniforms, shader_dump) == 1056, "FrameUniforms shader dump offset");
 _Static_assert(sizeof(FrameUniforms) == 1072, "FrameUniforms std140 size");
 _Static_assert(sizeof(DrawPushConstants) == 128, "terrain push constant size");
 _Static_assert(offsetof(TemporalExposure, histogram) == 16,
@@ -232,9 +231,8 @@ static void create_environment(Renderer *r)
 		environment_project_sh9(pixels, width, height, &sh);
 		environment_free_hdr(pixels);
 		for (uint32_t i = 0; i < 9; ++i)
-			uniforms.sh[i] =
-				(vec4s){{sh.coeffs[i][0], sh.coeffs[i][1], sh.coeffs[i][2], 0.0f}};
-		uniforms.env_params = (vec4s){{1.0f, 1.0f, 0.0f, 0.0f}};
+			uniforms.sh[i] = (vec4s){{sh.coeffs[i][0], sh.coeffs[i][1], sh.coeffs[i][2], 0.0f}};
+		uniforms.env_params = (vec4s){{1.0f, 0.3f, 0.0f, 0.0f}};
 		printf("Environment: loaded IBL from %dx%d %s\n", width, height, ENV_HDR_PATH);
 	}
 	else
@@ -384,9 +382,8 @@ static void create_descriptors(Renderer *r)
 		VK_CHECK(vkAllocateDescriptorSets(r->device, &alloc, &r->frame_set[i]));
 		VkDescriptorBufferInfo info = {
 			.buffer = r->frame_ubo[i].buffer, .offset = 0, .range = sizeof(FrameUniforms)};
-		VkDescriptorBufferInfo env_info = {.buffer = r->environment_ubo.buffer,
-										   .offset = 0,
-										   .range = sizeof(EnvironmentUniforms)};
+		VkDescriptorBufferInfo env_info = {
+			.buffer = r->environment_ubo.buffer, .offset = 0, .range = sizeof(EnvironmentUniforms)};
 		VkDescriptorImageInfo shadow_images[2] = {
 			{.sampler = r->shadow_map.sampler,
 			 .imageView = r->shadow_map.view,
@@ -1687,9 +1684,8 @@ static bool shader_dump_record_passes(const DumpRecord *rec, const ShaderDumpFil
 {
 	if (filter->has_shader && (uint32_t)rec->meta[0] != filter->shader_id)
 		return false;
-	if (filter->has_rect &&
-		(rec->meta[1] < filter->rect[0] || rec->meta[1] > filter->rect[2] ||
-		 rec->meta[2] < filter->rect[1] || rec->meta[2] > filter->rect[3]))
+	if (filter->has_rect && (rec->meta[1] < filter->rect[0] || rec->meta[1] > filter->rect[2] ||
+							 rec->meta[2] < filter->rect[1] || rec->meta[2] > filter->rect[3]))
 		return false;
 	return true;
 }
