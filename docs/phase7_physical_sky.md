@@ -53,8 +53,9 @@ scattering instead of Wicked's scalar opacity.
 - F11 cycles transmittance, multiple scattering, sky view, aerial scattering,
   and aerial transmittance debug views.
 - `[` and `]` select any of the 32 aerial debug slices.
-- F12 cycles afternoon, sunset, and high-sun directions. Shadows, terrain sun
-  colour, sky, haze, and the sun disk all use that same direction.
+- Holding F12 rotates the sun continuously along a great-circle orbit. Shadows,
+  terrain sun colour, sky, haze, and the visible sun disk all use that same
+  direction; a visible moon disk tracks the opposite side of the orbit.
 - F5 rebuilds all graphics/compute pipelines and invalidates cached static LUTs.
 
 Subtle relight treats the source imagery as its baseline and applies shadow

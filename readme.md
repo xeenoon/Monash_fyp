@@ -81,7 +81,7 @@ building any natural-only `.trn` dataset.
 
 - F11: cycle atmosphere LUT and aerial-volume debug views
 - `[` / `]`: select the aerial-volume debug slice
-- F12: cycle afternoon, sunset, and high-sun lighting
+- F12 (hold): rotate the visible sun and opposing moon through the sky
 - F5: reload shaders
 - Escape: quit
 

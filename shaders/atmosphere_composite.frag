@@ -15,16 +15,26 @@ layout(set = 2, binding = 2) uniform sampler2D atmosphere_skyview_lut;
 layout(set = 2, binding = 3) uniform sampler2DArray atmosphere_aerial_scattering;
 layout(set = 2, binding = 4) uniform sampler2DArray atmosphere_aerial_transmittance;
 
-vec3 sky_with_sun(vec3 view_direction) {
+float celestial_disk(vec3 view_direction, vec3 direction, float radius) {
+    float outer = cos(radius);
+    float inner = outer + (1.0 - outer) * 0.25;
+    return smoothstep(outer, inner, dot(view_direction, direction));
+}
+
+vec3 sky_with_celestials(vec3 view_direction) {
     vec3 to_sun = normalize(-frame.sun_direction.xyz);
     vec3 sky = textureLod(atmosphere_skyview_lut,
         atmosphere_skyview_uv(view_direction, to_sun), 0.0).rgb;
-    float outer = cos(frame.atmosphere_radii.w);
-    float inner = outer + (1.0 - outer) * 0.25;
-    float disk = smoothstep(outer, inner, dot(view_direction, to_sun));
     vec3 transmittance = atmosphere_transmittance_to_sun(
         atmosphere_transmittance_lut, atmosphere_camera_position(), view_direction);
-    return sky + disk * frame.sun_radiance.rgb * transmittance;
+    float sun_disk = celestial_disk(
+        view_direction, to_sun, frame.atmosphere_radii.w * 1.35);
+    vec3 to_moon = -to_sun;
+    float moon_disk = celestial_disk(
+        view_direction, to_moon, frame.atmosphere_radii.w * 1.25);
+    vec3 sun = sun_disk * frame.sun_radiance.rgb * 8.0 * transmittance;
+    vec3 moon = moon_disk * vec3(0.10, 0.12, 0.16) * transmittance;
+    return sky + sun + moon;
 }
 
 vec3 sample_aerial_volume(sampler2DArray volume, vec2 uv, float w) {
@@ -77,7 +87,7 @@ void main() {
                  vec4(texcoord * 2.0 - 1.0, 0.0, 1.0);
     vec3 view_direction = normalize(ray_h.xyz);
     if (depth <= 1e-8) {
-        out_color = vec4(sky_with_sun(view_direction), 1.0);
+        out_color = vec4(sky_with_celestials(view_direction), 1.0);
         shader_dump(DUMP_SHADER_ATMOSPHERE_COMPOSITE,
                     vec4(texcoord, depth, 3.0), vec4(out_color.rgb, 0.0),
                     vec4(view_direction, 0.0), vec4(0.0), vec4(0.0));

@@ -29,7 +29,7 @@ void input_poll(Input *in, SDL_Window *window)
 	in->cycle_surface_debug = false;
 	in->cycle_shadow_debug = false;
 	in->cycle_atmosphere_debug = false;
-	in->cycle_sun = false;
+	in->rotate_sun = false;
 	in->previous_atmosphere_slice = false;
 	in->next_atmosphere_slice = false;
 	in->dump_shader_data = false;
@@ -61,8 +61,6 @@ void input_poll(Input *in, SDL_Window *window)
 			in->cycle_shadow_debug = true;
 		if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_F11)
 			in->cycle_atmosphere_debug = true;
-		if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_F12)
-			in->cycle_sun = true;
 		if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
 			event.key.key == SDLK_LEFTBRACKET)
 			in->previous_atmosphere_slice = true;
@@ -87,6 +85,7 @@ void input_poll(Input *in, SDL_Window *window)
 	in->look_dy = in->mouse_captured ? mouse_y : 0.0f;
 
 	const bool *keys = SDL_GetKeyboardState(NULL);
+	in->rotate_sun = keys[SDL_SCANCODE_F12];
 	if (in->mouse_captured)
 	{
 		in->move_forward =

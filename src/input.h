@@ -20,7 +20,7 @@ typedef struct
 	bool cycle_surface_debug;		/* F9 pressed this frame   */
 	bool cycle_shadow_debug;		/* F10 pressed this frame  */
 	bool cycle_atmosphere_debug;	/* F11 pressed this frame  */
-	bool cycle_sun;					/* F12 pressed this frame  */
+	bool rotate_sun;				/* F12 held                */
 	bool previous_atmosphere_slice;
 	bool next_atmosphere_slice;
 	bool dump_shader_data;	/* X pressed (debug builds) */

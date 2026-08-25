@@ -238,6 +238,14 @@ int main(void)
 			camera.position = (WorldPosition){x, y, z};
 	}
 #endif
+	const vec3s sun_presets[3] = {
+		{{-0.4f, -1.0f, -0.3f}},
+		{{-1.0f, -0.08f, -0.15f}},
+		{{-0.1f, -1.0f, -0.05f}},
+	};
+	vec3s initial_to_sun = glms_vec3_scale(glms_vec3_normalize(sun_presets[sun_mode]), -1.0f);
+	float sun_azimuth = atan2f(initial_to_sun.z, initial_to_sun.x);
+	float sun_orbit_angle = asinf(fmaxf(-1.0f, fminf(1.0f, initial_to_sun.y)));
 	while (running)
 	{
 		input_poll(&input, window);
@@ -321,19 +329,17 @@ int main(void)
 			++atmosphere_slice;
 		if (input.previous_atmosphere_slice || input.next_atmosphere_slice)
 			printf("Atmosphere volume debug slice: %u/31\n", atmosphere_slice);
-		if (input.cycle_sun)
-		{
-			sun_mode = (sun_mode + 1u) % 3u;
-			const char *names[] = {"afternoon", "sunset", "high sun"};
-			printf("Atmosphere sun: %s\n", names[sun_mode]);
-			history_valid = false;
-		}
-
 		uint64_t ticks = SDL_GetTicksNS();
 		float dt = (float)(ticks - previous_ticks) / 1000000000.0f;
 		previous_ticks = ticks;
 		if (dt > 0.1f)
 			dt = 0.1f;
+		if (input.rotate_sun)
+		{
+			const float sun_rotation_speed = 0.35f;
+			sun_orbit_angle = fmodf(sun_orbit_angle + sun_rotation_speed * dt, 2.0f * GLM_PI);
+			history_valid = false;
+		}
 
 		camera_update(&camera, input.move_forward, input.move_right, input.look_dx, input.look_dy,
 					  input.sprint, dt);
@@ -493,12 +499,10 @@ int main(void)
 		current_to_previous_camera.raw[3][2] =
 			(float)(camera.position.z - previous_camera_position.z);
 
-		const vec3s sun_directions[3] = {
-			{{-0.4f, -1.0f, -0.3f}},
-			{{-1.0f, -0.08f, -0.15f}},
-			{{-0.1f, -1.0f, -0.05f}},
-		};
-		vec3s sun_direction = glms_vec3_normalize(sun_directions[sun_mode]);
+		float sun_horizontal = cosf(sun_orbit_angle);
+		vec3s to_sun = {{sun_horizontal * cosf(sun_azimuth), sinf(sun_orbit_angle),
+						  sun_horizontal * sinf(sun_azimuth)}};
+		vec3s sun_direction = glms_vec3_scale(to_sun, -1.0f);
 		ShadowCascadeConfig shadow_config =
 			shadow_cascade_default_config(renderer_aspect(&renderer));
 		shadow_config.resolution = renderer.shadow_resolution;
