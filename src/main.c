@@ -14,6 +14,7 @@
 #include "quarry.h"
 #include "renderer.h"
 #include "temporal.h"
+#include "terrain_runtime.h"
 
 #define WINDOW_WIDTH 1280
 #define WINDOW_HEIGHT 720
@@ -72,12 +73,13 @@ static_material_push(LocalToWorldTransform transform, WorldPosition camera_posit
 int main(void)
 {
 	const char *scene = getenv("TERRAIN_SCENE");
+	bool use_terrain = !scene || strcmp(scene, "terrain") == 0;
 	bool use_quarry = scene && strcmp(scene, "quarry") == 0;
 	bool use_phase_d_demo = scene && strcmp(scene, "phase_d_demo") == 0;
 	const char *gltf_path = NULL;
-	/* The large benchmark is intentionally not in git.  Check before Vulkan so
-	 * a no-argument invocation never quietly falls back to Quarry. */
-	if (!scene || strcmp(scene, "coastal_cliff") == 0)
+	/* The large benchmark is intentionally not in git. Terrain is the normal
+	 * no-argument scene; validate the benchmark only when explicitly selected. */
+	if (scene && strcmp(scene, "coastal_cliff") == 0)
 	{
 		gltf_path = BENCHMARK_DIR "/coastal_cliff_01/coastal_cliff_01_4k.gltf";
 		if (access(gltf_path, R_OK) != 0)
@@ -87,7 +89,7 @@ int main(void)
 			return EXIT_FAILURE;
 		}
 	}
-	else if (!use_quarry && !use_phase_d_demo && strcmp(scene, "gltf") == 0)
+	else if (scene && strcmp(scene, "gltf") == 0)
 	{
 		gltf_path = getenv("TERRAIN_GLTF_PATH");
 		if (!gltf_path || !*gltf_path)
@@ -96,10 +98,10 @@ int main(void)
 			return EXIT_FAILURE;
 		}
 	}
-	else if (!use_quarry && !use_phase_d_demo)
+	else if (!use_terrain && !use_quarry && !use_phase_d_demo)
 	{
 		fprintf(stderr,
-				"Supported scene selectors: coastal_cliff, quarry, phase_d_demo, or gltf.\n");
+				"Supported scene selectors: terrain, coastal_cliff, quarry, phase_d_demo, or gltf.\n");
 		return EXIT_FAILURE;
 	}
 	if (!SDL_Init(SDL_INIT_VIDEO))
@@ -124,33 +126,53 @@ int main(void)
 	renderer_init(&renderer, window,
 				  &(RendererConfig){.environment_path = getenv("TERRAIN_ENV_HDR"),
 									.shadow_quality = shadow_quality});
+	TerrainRuntime *terrain = NULL;
 	Quarry quarry = {0};
 	BenchmarkGround ground = {0};
 	GltfScene gltf = {0};
 	GltfLoadError gltf_error = {0};
 	MaterialStabilityDemo demo = {0};
-	GltfLoadResult load_result =
-		use_phase_d_demo
-			? GLTF_LOAD_OK
-			: (use_quarry
-				   ? (quarry_create(&renderer, &quarry, QUARRY_DIR) ? GLTF_LOAD_OK
-																	: GLTF_LOAD_IO_ERROR)
-				   : gltf_scene_create(
+	GltfLoadResult load_result = GLTF_LOAD_OK;
+	if (use_terrain)
+	{
+		const char *dataset_root = getenv("TERRAIN_DATASET");
+		if (!dataset_root || !*dataset_root)
+			dataset_root = TRN_DIR;
+		TerrainRuntimeSettings settings = terrain_runtime_default_settings();
+		settings.quadtree.split_threshold_px = 2.5f;
+		settings.quadtree.merge_threshold_px = 1.75f;
+		settings.quadtree.max_nodes = 8192;
+		settings.quadtree.max_resident_tiles = 512;
+		settings.quadtree.max_cpu_bytes = UINT64_C(512) * 1024u * 1024u;
+		settings.quadtree.max_gpu_bytes = UINT64_C(1024) * 1024u * 1024u;
+		settings.skirt_ratio = 0.01f;
+		terrain = terrain_runtime_create(&renderer, dataset_root, &settings);
+		if (!terrain)
+			fprintf(stderr, "Could not create terrain quadtree from %s\n", dataset_root);
+	}
+	else if (use_phase_d_demo)
+		load_result = GLTF_LOAD_OK;
+	else if (use_quarry)
+		load_result = quarry_create(&renderer, &quarry, QUARRY_DIR) ? GLTF_LOAD_OK
+																	 : GLTF_LOAD_IO_ERROR;
+	else
+		load_result = gltf_scene_create(
 						 &renderer, gltf_path,
 						 &(GltfLoadOptions){
 							 .use_metallic_roughness_red_as_occlusion =
-								 !scene || strcmp(scene, "coastal_cliff") == 0,
+								 strcmp(scene, "coastal_cliff") == 0,
 							 /* Poly Haven's authored front faces +Z; the benchmark camera is
 							  * placed on -Z, so turn only this named benchmark toward it. */
-							 .placement = (!scene || strcmp(scene, "coastal_cliff") == 0)
-											  ? coordinate_rotation_y(3.14159265358979323846,
-																	  (WorldPosition){0})
-											  : coordinate_identity_transform((WorldPosition){0})},
-						 &gltf, &gltf_error));
-	if (load_result != GLTF_LOAD_OK)
+							 .placement = strcmp(scene, "coastal_cliff") == 0
+										  ? coordinate_rotation_y(3.14159265358979323846,
+																			  (WorldPosition){0})
+										  : coordinate_identity_transform((WorldPosition){0})},
+						 &gltf, &gltf_error);
+	if ((use_terrain && !terrain) || load_result != GLTF_LOAD_OK)
 	{
-		fprintf(stderr, "Could not load %s: %s\n", use_quarry ? QUARRY_DIR : gltf_path,
-				use_quarry ? "Quarry loader failed" : gltf_error.message);
+		if (!use_terrain)
+			fprintf(stderr, "Could not load %s: %s\n", use_quarry ? QUARRY_DIR : gltf_path,
+					use_quarry ? "Quarry loader failed" : gltf_error.message);
 		renderer_shutdown(&renderer);
 		SDL_DestroyWindow(window);
 		SDL_Quit();
@@ -173,13 +195,22 @@ int main(void)
 		SDL_Quit();
 		return EXIT_FAILURE;
 	}
-	Camera camera = {
-		.position = use_phase_d_demo ? (WorldPosition){0.0, 1.0, -18.0}
-									 : (use_quarry ? (WorldPosition){0.0, 8.0, -25.0}
-												   : (WorldPosition){0.0, 6.0, -45.0}),
-		.yaw = 90.0f,
-		.pitch = use_quarry ? -3.0f : -2.0f,
-	};
+	LocalToWorldTransform terrain_root = terrain
+		? terrain_runtime_root_transform(terrain)
+		: coordinate_identity_transform((WorldPosition){0});
+	float terrain_span = terrain ? terrain_runtime_root_span(terrain) : 0.0f;
+	Camera camera = use_terrain
+		? (Camera){.position = coordinate_local_to_world(
+				  &terrain_root,
+				  (TileLocalPosition){0.0f, terrain_span * 0.75f, -terrain_span * 1.15f}),
+				   .yaw = 90.0f,
+				   .pitch = -27.0f}
+		: (Camera){.position = use_phase_d_demo
+								 ? (WorldPosition){0.0, 1.0, -18.0}
+								 : (use_quarry ? (WorldPosition){0.0, 8.0, -25.0}
+														: (WorldPosition){0.0, 6.0, -45.0}),
+				   .yaw = 90.0f,
+				   .pitch = use_quarry ? -3.0f : -2.0f};
 
 	Input input = {.mouse_captured = true};
 	uint64_t start_ticks = SDL_GetTicksNS();
@@ -235,7 +266,10 @@ int main(void)
 	{
 		double x = 0, y = 0, z = 0;
 		if (sscanf(getenv("TERRAIN_DUMP_POS"), "%lf %lf %lf", &x, &y, &z) == 3)
-			camera.position = (WorldPosition){x, y, z};
+			camera.position = use_terrain
+				? coordinate_local_to_world(
+					  &terrain_root, (TileLocalPosition){(float)x, (float)y, (float)z})
+				: (WorldPosition){x, y, z};
 	}
 #endif
 	const vec3s sun_presets[3] = {
@@ -306,14 +340,28 @@ int main(void)
 		}
 		if (input.cycle_surface_debug)
 		{
-			debug_mode = debug_mode >= 3u && debug_mode < 6u ? debug_mode + 1u
-															 : (debug_mode == 6u ? 21u : (debug_mode == 21u ? 0u : 3u));
-			const char *names[] = {"Mapped normal", "Authored roughness", "Curvature roughness",
-								   "Effective roughness (R authored, G effective, B curvature)",
-								   "Phase D activation ×20", "off"};
-			printf("Static-mesh material view: %s\n",
-				   debug_mode >= 3u && debug_mode <= 6u ? names[debug_mode - 3u] :
-				   (debug_mode == 21u ? names[4] : names[5]));
+			if (use_terrain)
+			{
+				debug_mode = debug_mode >= 3u && debug_mode < 5u ? debug_mode + 1u
+															 : (debug_mode == 5u ? 0u : 3u);
+				const char *names[] = {"Height-field normal", "Placeholder roughness",
+									   "Macro colour", "off"};
+				printf("Terrain material view: %s\n",
+					   debug_mode >= 3u ? names[debug_mode - 3u] : names[3]);
+			}
+			else
+			{
+				debug_mode = debug_mode >= 3u && debug_mode < 6u
+					? debug_mode + 1u
+					: (debug_mode == 6u ? 21u : (debug_mode == 21u ? 0u : 3u));
+				const char *names[] = {
+					"Mapped normal", "Authored roughness", "Curvature roughness",
+					"Effective roughness (R authored, G effective, B curvature)",
+					"Phase D activation ×20", "off"};
+				printf("Static-mesh material view: %s\n",
+					   debug_mode >= 3u && debug_mode <= 6u ? names[debug_mode - 3u]
+																	   : (debug_mode == 21u ? names[4] : names[5]));
+			}
 		}
 		if (input.cycle_shadow_debug)
 			debug_mode = debug_mode >= 7u && debug_mode < 11u ? debug_mode + 1u
@@ -377,6 +425,27 @@ int main(void)
 		bool use_history = history_valid && !input.resized && !camera_cut;
 
 		vec3s camera_forward_direction = camera_forward(&camera);
+		const RendererDraw *terrain_draws = NULL;
+		const RendererDraw *terrain_shadow_draws = NULL;
+		uint32_t terrain_draw_count = 0;
+		uint32_t terrain_shadow_draw_count = 0;
+		if (use_terrain)
+		{
+			TerrainQuadtreeView terrain_view = {
+				.camera_world = camera.position,
+				.forward = {camera_forward_direction.x, camera_forward_direction.y,
+							camera_forward_direction.z},
+				.up = {0.0, 1.0, 0.0},
+				.vertical_fov_radians = glm_rad(60.0f),
+				.aspect = renderer_aspect(&renderer),
+				.near_plane_m = CAMERA_NEAR_PLANE,
+				.viewport_height_px = renderer.swapchain_extent.height,
+			};
+			terrain_runtime_update(terrain, &terrain_view, temporal_frame);
+			terrain_draws = terrain_runtime_draws(terrain, &terrain_draw_count);
+			terrain_shadow_draws =
+				terrain_runtime_shadow_draws(terrain, &terrain_shadow_draw_count);
+		}
 		bool default_lit = static_mesh_shading_mode != 0u;
 		bool diffuse_ibl_enabled = static_mesh_shading_mode >= 2u;
 		bool specular_ibl_enabled = static_mesh_shading_mode >= 3u;
@@ -406,27 +475,33 @@ int main(void)
 										   shadows_enabled, phase_d_enabled ? 1.f : 0.f);
 		ground_push.debug.y = 0.0f; /* ground retains the neutral cavity descriptor */
 		RendererDraw ground_draw = {.mesh = &ground.mesh, .push = ground_push, .static_mesh = true};
-		RendererDraw *active_draws = &quarry_draw;
-		uint32_t active_draw_count = 1;
-		RendererDraw *active_shadow_draws = &quarry_draw;
-		uint32_t active_shadow_draw_count = 1;
+		const RendererDraw *active_draws = use_terrain ? terrain_draws : &quarry_draw;
+		uint32_t active_draw_count = use_terrain ? terrain_draw_count : 1u;
+		const RendererDraw *active_shadow_draws =
+			use_terrain ? terrain_shadow_draws : active_draws;
+		uint32_t active_shadow_draw_count =
+			use_terrain ? terrain_shadow_draw_count : active_draw_count;
+		RendererDraw *allocated_draws = NULL;
 		if (use_quarry)
 		{
-			active_draws = calloc(2, sizeof(*active_draws));
-			if (!active_draws)
+			allocated_draws = calloc(2, sizeof(*allocated_draws));
+			if (!allocated_draws)
 			{
 				running = false;
 				continue;
 			}
-			active_draws[0] = quarry_draw;
-			active_draws[1] = ground_draw;
+			allocated_draws[0] = quarry_draw;
+			allocated_draws[1] = ground_draw;
+			active_draws = allocated_draws;
+			active_shadow_draws = allocated_draws;
 			active_draw_count = 2;
+			active_shadow_draw_count = 2;
 		}
-		if (!use_quarry)
+		if (!use_terrain && !use_quarry)
 		{
 			active_draw_count = use_phase_d_demo ? (demo_split ? 2u : 1u) : gltf.primitive_count;
-			active_draws = calloc(active_draw_count, sizeof(*active_draws));
-			if (!active_draws)
+			allocated_draws = calloc(active_draw_count, sizeof(*allocated_draws));
+			if (!allocated_draws)
 			{
 				fprintf(stderr, "Out of memory building glTF draw list\n");
 				running = false;
@@ -445,7 +520,7 @@ int main(void)
 												  .ao_strength = 1.f,
 												  .cavity_strength = 0.f,
 												  .displacement_scale = 0.f};
-					active_draws[i] = (RendererDraw){
+					allocated_draws[i] = (RendererDraw){
 						.mesh = &demo.panels[i],
 						/* Stability demo never binds cavity: it would confound C/D. */
 						.material_set = demo.neutral_set,
@@ -457,7 +532,7 @@ int main(void)
 				}
 				GltfPrimitive *primitive = &gltf.primitives[i];
 				GltfMaterial *material = &gltf.materials[primitive->material_index];
-				active_draws[i] = (RendererDraw){
+				allocated_draws[i] = (RendererDraw){
 					.mesh = &primitive->mesh,
 					.material_set = material->descriptor_set,
 					.static_mesh = true,
@@ -473,7 +548,8 @@ int main(void)
 						default_lit, diffuse_ibl_enabled, specular_ibl_enabled, shadows_enabled,
 						phase_d_enabled ? 1.f : 0.f)};
 			}
-			active_shadow_draws = active_draws;
+			active_draws = allocated_draws;
+			active_shadow_draws = allocated_draws;
 			active_shadow_draw_count = active_draw_count;
 		}
 
@@ -579,7 +655,9 @@ int main(void)
 #endif
 		renderer_draw_frame(&renderer, &frame, active_draws, active_draw_count, active_shadow_draws,
 							active_shadow_draw_count, input.resized);
-		free(active_draws);
+		free(allocated_draws);
+		if (use_terrain)
+			terrain_runtime_collect_evictions(terrain);
 #ifdef DEBUG_SHADER_DUMP
 		/* Dump reads the buffer the frame above just populated. Clear first so a
 		   same-frame C+X starts a fresh file. */
@@ -590,7 +668,8 @@ int main(void)
 			char metadata[160];
 			snprintf(metadata, sizeof(metadata),
 					 "scene=%s static_mesh_mode=%u demo_split=%u flyby_replay=%u phase=%c",
-					 use_phase_d_demo ? "phase_d_demo" : (use_quarry ? "quarry" : "gltf"),
+					 use_terrain ? "terrain"
+							 : (use_phase_d_demo ? "phase_d_demo" : (use_quarry ? "quarry" : "gltf")),
 					 static_mesh_shading_mode, demo_split ? 1u : 0u, demo_flyby_phase_d ? 1u : 0u,
 					 phase_d_enabled ? 'D' : 'C');
 			renderer_dump_shader_data(&renderer, SHADER_DUMP_PATH, camera.position, camera.yaw,
@@ -602,7 +681,9 @@ int main(void)
 				char metadata[160];
 				snprintf(metadata, sizeof(metadata),
 						 "scene=%s static_mesh_mode=%u demo_split=%u flyby_replay=%u phase=%c",
-						 use_phase_d_demo ? "phase_d_demo" : (use_quarry ? "quarry" : "gltf"),
+						 use_terrain ? "terrain"
+								 : (use_phase_d_demo ? "phase_d_demo"
+													 : (use_quarry ? "quarry" : "gltf")),
 						 static_mesh_shading_mode, demo_split ? 1u : 0u,
 						 demo_flyby_phase_d ? 1u : 0u, phase_d_enabled ? 'D' : 'C');
 				renderer_dump_shader_data(&renderer, SHADER_DUMP_PATH, camera.position, camera.yaw,
@@ -623,7 +704,9 @@ int main(void)
 	}
 
 	renderer_wait_idle(&renderer);
-	if (use_quarry)
+	if (use_terrain)
+		terrain_runtime_destroy(terrain);
+	else if (use_quarry)
 	{
 		benchmark_ground_destroy(&renderer, &ground);
 		quarry_destroy(&renderer, &quarry);

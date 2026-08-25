@@ -22,6 +22,11 @@ cmake --build build
 ./build/terrain_renderer
 ```
 
+The no-argument scene is the streamed 1 km terrain. The benchmark scenes remain
+available with `TERRAIN_SCENE=coastal_cliff`, `quarry`, `phase_d_demo`, or
+`gltf` (with `TERRAIN_GLTF_PATH`). Use `TERRAIN_DATASET=/path/to/trn` to point
+the terrain scene at a different tile pyramid.
+
 ## Offline terrain tiles
 
 Phase 3 provides a deterministic, versioned terrain-tile pipeline. Inputs must
@@ -45,6 +50,31 @@ tile inherits `Mesh`, but projected tiles share one grid and displace it from
 per-tile elevation textures. Generate the dataset before running the renderer.
 The previous C-array implementation was removed after its deprecation commit;
 `.trn` is the only terrain path.
+
+### Macro colour map
+
+The texture-mapping worktree contains a full patch-indexing and Alpine-exemplar
+synthesis pipeline. This checkout intentionally keeps only its useful output
+contract: a very low-frequency colour field beneath a future authored
+stone/grass material. Build the 64 x 64 map from the checked-in Swiss imagery,
+then use it as the `.trn` imagery source:
+
+```sh
+python3 tools/build_terrain_macro.py
+python3 tools/terrain_tiles.py build \
+  --dem alps-data/swissalti3d_2025_2647-1160_0.5m.tif \
+  --imagery assets/terrain_macro.png --output trn \
+  --extent 2647000 1160000 2648000 1161000 --profile EPSG:2056 \
+  --levels 3 --samples 65 --imagery-size 256 --gutter 1 \
+  --height-encoding f32 --source "Swiss Alps 64px macro colour"
+python3 tools/terrain_tiles.py validate trn
+```
+
+At this scale one source texel covers about 15.6 metres; a 1.5-texel blur removes
+photographic stone/grass detail while retaining the broad rock, vegetation,
+water, and snow colours. `terrain_base_color()` in `shaders/terrain.frag` is the
+deliberately small insertion point for multiplying that macro tint over the
+eventual close-range material blend.
 
 The Phase 4 architecture, Rocky provenance, and runtime workflow are documented
 in [`docs/phase4_terrain_quadtree.md`](docs/phase4_terrain_quadtree.md).
@@ -75,8 +105,8 @@ building any natural-only `.trn` dataset.
 - F6: toggle logarithmic linear-depth debug view
 - F7: toggle quadtree LOD colours
 - F8: cycle unlit, subtle relight, and full material lighting
-- F9: cycle static-mesh mapped normal, authored roughness, curvature roughness,
-  and effective roughness (R=authored, G=effective, B=curvature floor)
+- F9: cycle height-field normal, placeholder roughness, and macro colour for
+  terrain; static-mesh material diagnostics in benchmark scenes
 - F10: cycle cascade, shadow-coordinate, visibility, bias, and raw-map views
 
 - F11: cycle atmosphere LUT and aerial-volume debug views

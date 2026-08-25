@@ -163,6 +163,11 @@ if(BUILD_TESTING)
     add_test(NAME phase2_projection_and_precision COMMAND phase2_tests)
 
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME terrain_macro_colour_map
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_terrain_macro_tests.py"
+                --tool "${CMAKE_CURRENT_SOURCE_DIR}/tools/build_terrain_macro.py")
+
     add_executable(phase3_tile_loader_tests
         tests/phase3_tile_loader_tests.c
         src/terrain_tile.c)

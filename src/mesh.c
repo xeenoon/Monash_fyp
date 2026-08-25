@@ -91,6 +91,6 @@ const VkVertexInputAttributeDescription *mesh_attribute_descriptions(uint32_t *c
 		{2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(Vertex, texcoord)},
 		{3, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(Vertex, tangent)},
 		{4, 0, VK_FORMAT_R32_SFLOAT, offsetof(Vertex, untextured)}};
-	*count = 4;
+	*count = 5;
 	return attributes;
 }

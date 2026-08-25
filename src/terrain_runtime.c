@@ -482,6 +482,16 @@ LocalToWorldTransform terrain_runtime_root_transform(const TerrainRuntime *terra
 	return root->tile.header.local_to_world;
 }
 
+float terrain_runtime_root_span(const TerrainRuntime *terrain)
+{
+	if (!terrain || !terrain->tree.nodes || !terrain->tree.nodes[0].payload)
+		return 0.0f;
+	RuntimeTile *root = terrain->tree.nodes[0].payload;
+	double span_x = root->tile.header.extent[2] - root->tile.header.extent[0];
+	double span_z = root->tile.header.extent[3] - root->tile.header.extent[1];
+	return (float)fmax(span_x, span_z);
+}
+
 TerrainRuntimeStats terrain_runtime_stats(const TerrainRuntime *terrain)
 {
 	if (!terrain)

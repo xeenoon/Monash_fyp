@@ -1977,7 +1977,8 @@ void renderer_clear_shader_dump(const char *path)
    with the shader_dump() call in each instrumented .frag file. */
 static const char *const SHADER_DUMP_LEGEND[] = {
 	"# legend: terrain/mesh f0-1=uv f2=roughness f3=NoL f4-6=base_color f7=visibility "
-	"f8-10=N f11=metallic f12-14=cam_rel_pos f15=default_lit f16-18=irradiance f19=AO(orm.r)\n",
+	"f8-10=N f11=metallic f12-14=cam_rel_pos f15=relight/default_lit "
+	"f16-18=irradiance f19=AO\n",
 	"# legend: cube f0-2=normal f3=diffuse f4=lighting f5-7=out_color f8-19=_\n",
 	"# legend: atmosphere_composite f0-1=texcoord f2=depth f3=branch(1=lut,2=pass,3=sky,4=aerial) "
 	"f4-6=out_color f7=_ f8-10=view_dir f11=distance_km f12-14=scattering f15=near_weight "
