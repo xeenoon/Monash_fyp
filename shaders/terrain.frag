@@ -170,20 +170,23 @@ MicroMaterial sample_micro(uint index, vec2 world_xz) {
     vec3 detail = textureGrad(micro_albedo_atlas, atlas_uv, dx, dy).rgb;
     vec3 normal = textureGrad(micro_normal_atlas, atlas_uv, dx, dy).xyz * 2.0 - 1.0;
     vec4 ormh = textureGrad(micro_ormh_atlas, atlas_uv, dx, dy);
-    /* Once the footprint exceeds one repeat the tangent normal is unreliable
-       (possibly bled from another cell), so fade its lateral tilt toward flat.
-       The sample then contributes no spurious dark facet; the surface keeps its
-       smooth geometric normal where the scan can no longer be resolved. */
-    float detail_confidence = 1.0 - smoothstep(0.7, 1.6, footprint_ratio);
+    /* Once the footprint approaches one repeat the sample can no longer resolve
+       the scan: the tangent normal may be bled from an adjacent cell, and with
+       isotropic minification (no anisotropy) the per-material roughness/AO
+       collapse to flat blocks that read as a checkerboard at grazing angles.
+       Fade the ENTIRE micro layer toward its neutral (flat normal, unit albedo
+       multiplier, the macro roughness 0.82, full AO) with one confidence, so
+       the surface cleanly returns to the smooth macro where detail is
+       unresolvable -- no dark speckle and no bright squares. */
+    const float macro_roughness = 0.82;
+    float detail_confidence = 1.0 - smoothstep(0.45, 1.2, footprint_ratio);
     normal.xy *= detail_confidence;
     MicroMaterial result;
-    /* Bled cells also drag albedo dark; fade the high-pass luminance to neutral
-       (1.0, an identity multiplier on macro_tint) with the same confidence. */
     result.luminance_factor = mix(1.0, detail.r * 2.0, detail_confidence);
     result.tangent_normal = normalize(normal);
-    result.ao = ormh.r;
-    result.roughness = ormh.g;
-    result.height = ormh.a;
+    result.ao = mix(1.0, ormh.r, detail_confidence);
+    result.roughness = mix(macro_roughness, ormh.g, detail_confidence);
+    result.height = ormh.a * detail_confidence;
     return result;
 }
 
