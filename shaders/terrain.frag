@@ -293,7 +293,13 @@ void main() {
        at the same 20% priority as the other authored scan channels. */
     vec3 base_color = macro_tint * mix(1.0, micro.luminance_factor,
                                        weighted_detail);
-    base_color = mix(base_color, vec3(0.18), step(0.5, untextured));
+    /* Skirts (untextured > 0.5) are crack-fillers extruded straight down from a
+       tile edge. Their vertices are copies of the edge surface vertex, so they
+       carry the same imagery/tile UVs and world phase and therefore sample the
+       exact edge material above -- letting them texture normally makes the wall
+       blend into the terrain. Previously they were forced to flat grey (0.18),
+       which painted a dark untextured stripe wherever a skirt showed through at
+       an LOD crack. Do NOT reintroduce that override. */
 
     float roughness = mix(0.82, micro.roughness, weighted_detail);
     const float metallic = 0.0;

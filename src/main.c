@@ -19,6 +19,27 @@
 #define WINDOW_WIDTH 1280
 #define WINDOW_HEIGHT 720
 
+/* Compile-time terrain start camera. These are absolute WORLD coordinates (the
+   `camera pos=` value printed in a shader dump / replay hint), NOT tile-local.
+   Override any of them on the CMake command line, e.g.
+   -DTERRAIN_START_YAW=85.6, to boot straight into a viewpoint that reproduces a
+   bug so repeated dumps compare against the exact same frame. */
+#ifndef TERRAIN_START_POS_X
+#define TERRAIN_START_POS_X 2641555.948770
+#endif
+#ifndef TERRAIN_START_POS_Y
+#define TERRAIN_START_POS_Y 2164.176855
+#endif
+#ifndef TERRAIN_START_POS_Z
+#define TERRAIN_START_POS_Z -1160110.084046
+#endif
+#ifndef TERRAIN_START_YAW
+#define TERRAIN_START_YAW 85.600f
+#endif
+#ifndef TERRAIN_START_PITCH
+#define TERRAIN_START_PITCH -12.320f
+#endif
+
 typedef enum TerrainTextureSet {
 	TERRAIN_TEXTURES_UNSHADOWED,
 	TERRAIN_TEXTURES_SHADOWED,
@@ -233,18 +254,47 @@ int main(int argc, char *argv[])
 		? terrain_runtime_root_transform(terrain)
 		: coordinate_identity_transform((WorldPosition){0});
 	float terrain_span = terrain ? terrain_runtime_root_span(terrain) : 0.0f;
+	(void)terrain_span;
 	Camera camera = use_terrain
-		? (Camera){.position = coordinate_local_to_world(
-				  &terrain_root,
-				  (TileLocalPosition){0.0f, terrain_span * 0.75f, -terrain_span * 1.15f}),
-				   .yaw = 90.0f,
-				   .pitch = -27.0f}
+		? (Camera){.position = (WorldPosition){TERRAIN_START_POS_X, TERRAIN_START_POS_Y,
+											   TERRAIN_START_POS_Z},
+				   .yaw = TERRAIN_START_YAW,
+				   .pitch = TERRAIN_START_PITCH}
 		: (Camera){.position = use_phase_d_demo
 								 ? (WorldPosition){0.0, 1.0, -18.0}
 								 : (use_quarry ? (WorldPosition){0.0, 8.0, -25.0}
 														: (WorldPosition){0.0, 6.0, -45.0}),
 				   .yaw = 90.0f,
 				   .pitch = use_quarry ? -3.0f : -2.0f};
+
+	/* Runtime override of the start camera in absolute WORLD coordinates -- the
+	   exact triple printed as "camera pos=" in a shader dump. Unlike
+	   TERRAIN_DUMP_POS (which is interpreted as tile-local and converted), these
+	   are fed straight in, so pasting a dump's replay numbers reproduces its
+	   framing. Lets us boot into a bug viewpoint without recompiling. */
+	if (use_terrain)
+	{
+		if (getenv("TERRAIN_START_POS"))
+		{
+			double sx = 0, sy = 0, sz = 0;
+			if (sscanf(getenv("TERRAIN_START_POS"), "%lf %lf %lf", &sx, &sy, &sz) == 3)
+				camera.position = (WorldPosition){sx, sy, sz};
+		}
+		if (getenv("TERRAIN_START_YAW"))
+			camera.yaw = (float)atof(getenv("TERRAIN_START_YAW"));
+		if (getenv("TERRAIN_START_PITCH"))
+			camera.pitch = (float)atof(getenv("TERRAIN_START_PITCH"));
+	}
+	if (use_terrain)
+	{
+		WorldPosition ro = coordinate_local_to_world(&terrain_root,
+													 (TileLocalPosition){0.0f, 0.0f, 0.0f});
+		printf("[boot] terrain_root world origin = %.3f %.3f %.3f  span=%.3f\n", ro.x, ro.y, ro.z,
+			   terrain_span);
+		printf("[boot] camera pos = %.3f %.3f %.3f  yaw=%.3f pitch=%.3f\n", camera.position.x,
+			   camera.position.y, camera.position.z, camera.yaw, camera.pitch);
+		fflush(stdout);
+	}
 
 	Input input = {.mouse_captured = true};
 	uint64_t start_ticks = SDL_GetTicksNS();
