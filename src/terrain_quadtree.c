@@ -337,10 +337,15 @@ static bool all_children_resident(const TerrainQuadtree *tree, const TerrainQuad
 {
 	if (node->children[0] == TERRAIN_QUADTREE_INVALID_NODE)
 		return false;
+	uint32_t unavailable = 0;
 	for (uint32_t i = 0; i < 4; ++i)
-		if (tree->nodes[node->children[i]].state != TERRAIN_TILE_RESIDENT)
+	{
+		TerrainTileLifecycleState state = tree->nodes[node->children[i]].state;
+		unavailable += state == TERRAIN_TILE_UNAVAILABLE;
+		if (state != TERRAIN_TILE_RESIDENT && state != TERRAIN_TILE_UNAVAILABLE)
 			return false;
-	return true;
+	}
+	return unavailable < 4u;
 }
 
 /* Adapted from rocky/TerrainTileNode.cpp::accept (Pelican Mapping, MIT).

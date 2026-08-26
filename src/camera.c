@@ -45,9 +45,28 @@ void camera_update(Camera *cam, float move_forward, float move_right, float look
 	vec3s right = glms_vec3_normalize(glms_vec3_cross(forward, (vec3s){{0, 1, 0}}));
 	vec3s movement =
 		glms_vec3_add(glms_vec3_scale(forward, move_forward), glms_vec3_scale(right, move_right));
-	if (glms_vec3_norm2(movement) > 0.0f)
+	bool moving = glms_vec3_norm2(movement) > 0.0f;
+
+	/* Hold-to-accelerate: the longer shift is held while moving, the faster we
+	   go, from a gentle tap up to a hard cap. Releasing shift resets the ramp so
+	   the next sprint starts slow again. */
+	const float sprint_base_speed = 120.0f;    /* metres/s the instant shift is pressed */
+	const float sprint_acceleration = 500.0f;  /* extra metres/s gained per second held */
+	const float sprint_max_speed = 4500.0f;    /* enough to cross the 16 km map in a few seconds */
+	if (sprint && moving)
+		cam->sprint_charge += dt;
+	else if (!sprint)
+		cam->sprint_charge = 0.0f;
+
+	if (moving)
 	{
-		float speed = sprint ? 200.0f : 60.0f;
+		float speed = 60.0f;
+		if (sprint)
+		{
+			speed = sprint_base_speed + sprint_acceleration * cam->sprint_charge;
+			if (speed > sprint_max_speed)
+				speed = sprint_max_speed;
+		}
 		vec3s step = glms_vec3_scale(glms_vec3_normalize(movement), speed * dt);
 		cam->position.x += (double)step.x;
 		cam->position.y += (double)step.y;

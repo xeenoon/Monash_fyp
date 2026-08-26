@@ -10,6 +10,9 @@ typedef struct
 {
 	WorldPosition position;
 	float yaw, pitch;
+	/* Seconds shift has been held while moving; ramps sprint speed. Reset on
+	   release. Zero-initialized by the designated initializers in main. */
+	float sprint_charge;
 } Camera;
 
 vec3s camera_forward(const Camera *cam);

@@ -164,10 +164,48 @@ static void test_quadtree(void)
 	terrain_quadtree_destroy(&tree);
 }
 
+static void test_unavailable_child_fallback(void)
+{
+	TerrainQuadtreeSettings settings = terrain_quadtree_default_settings();
+	settings.split_threshold_px = 4.0f;
+	settings.merge_threshold_px = 2.0f;
+
+	TerrainQuadtree tree;
+	require(terrain_quadtree_init(&tree, &settings), "quadtree init failed");
+	require(terrain_quadtree_request_root(&tree), "root request failed");
+	make_resident(&tree, 0, bounds(0, 0, 0, 500, 1.0f));
+
+	TerrainQuadtreeView near = view_at(-900.0, 1.0);
+	terrain_quadtree_select(&tree, &near, 1);
+	require(tree.node_count == 5, "child quad was not created for fallback test");
+	for (uint32_t quadrant = 0; quadrant < 4; ++quadrant)
+	{
+		uint32_t child = tree.nodes[0].children[quadrant];
+		require(tree.nodes[child].state == TERRAIN_TILE_REQUESTED,
+				"fallback child was not requested");
+		uint32_t generation = tree.nodes[child].generation;
+		require(terrain_quadtree_unavailable(&tree, child, generation),
+				"missing child was not marked unavailable");
+	}
+
+	terrain_quadtree_select(&tree, &near, 2);
+	require(tree.draw_count == 1 && tree.draw_nodes[0] == 0,
+			"resident parent was not retained when children are missing");
+
+	terrain_quadtree_select(&tree, &near, 3);
+	for (uint32_t quadrant = 0; quadrant < 4; ++quadrant)
+		require(tree.nodes[tree.nodes[0].children[quadrant]].state ==
+					TERRAIN_TILE_UNAVAILABLE,
+				"missing child was requested repeatedly");
+
+	terrain_quadtree_destroy(&tree);
+}
+
 int main(void)
 {
 	test_grid();
 	test_quadtree();
+	test_unavailable_child_fallback();
 	puts("phase 4 quadtree tests passed");
 	return EXIT_SUCCESS;
 }
