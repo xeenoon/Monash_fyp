@@ -63,14 +63,19 @@ HeightSurface height_surface() {
 
     /* Once one fragment spans many height samples, the rasterized geometric
        derivative is both cheaper and more representative than a fine central
-       difference. */
+       difference. Blend between the two across a footprint range instead of a
+       hard switch: a hard threshold on this per-quad footprint drew a dashed
+       normal-discontinuity line along the iso-footprint contour (grazing
+       ridges). */
     float footprint = max(length(dFdxCoarse(uv) * size),
                           length(dFdyCoarse(uv) * size));
-    if (footprint > 8.0) {
-        result.local_normal = normalize(cross(dFdyCoarse(local_position),
-                                              dFdxCoarse(local_position)));
-        if (result.local_normal.y < 0.0)
-            result.local_normal = -result.local_normal;
+    float geo_blend = smoothstep(6.0, 12.0, footprint);
+    if (geo_blend > 0.0) {
+        vec3 geo = normalize(cross(dFdyCoarse(local_position),
+                                   dFdxCoarse(local_position)));
+        if (geo.y < 0.0)
+            geo = -geo;
+        result.local_normal = normalize(mix(result.local_normal, geo, geo_blend));
     }
     return result;
 }
@@ -155,14 +160,13 @@ MicroMaterial sample_micro(uint index, vec2 world_xz) {
        that distance the pattern aliases instead of blending in other scans. */
     float dx_len = length(dx);
     float dy_len = length(dy);
-    /* footprint_ratio = tile repeats covered by one fragment. Below 1 the sample
-       is trustworthy; above 1 we clamp the derivative to keep mip selection
-       inside this cell, but the atlas only has 4 mip levels and 16x anisotropy,
-       so the clamped-yet-cell-wide footprint still lets aniso taps reach across
-       the 8px gutter into the neighbouring (or empty black 16th) cell. That
-       bleed reads a steep, unrelated tangent normal on scattered fragments and
-       shades them nearly sunless -- the black speckle/crosshatch. */
-    float footprint_ratio = max(dx_len, dy_len) / derivative_scale;
+    /* Clamp the footprint so mip selection stays inside this cell (never bleeds
+       the neighbouring or empty black 16th cell). The confidence fade that hides
+       residual bleed/aliasing is applied ONCE in main() from a world-space
+       footprint -- NOT per-material here: each material has a different width_dm,
+       so a per-material footprint fade crosses its threshold in a patchy
+       per-32m-cell way that reads as dashed lines along the iso-footprint
+       contour. */
     if (dx_len > derivative_scale)
         dx *= derivative_scale / dx_len;
     if (dy_len > derivative_scale)
@@ -170,23 +174,20 @@ MicroMaterial sample_micro(uint index, vec2 world_xz) {
     vec3 detail = textureGrad(micro_albedo_atlas, atlas_uv, dx, dy).rgb;
     vec3 normal = textureGrad(micro_normal_atlas, atlas_uv, dx, dy).xyz * 2.0 - 1.0;
     vec4 ormh = textureGrad(micro_ormh_atlas, atlas_uv, dx, dy);
-    /* Once the footprint approaches one repeat the sample can no longer resolve
-       the scan: the tangent normal may be bled from an adjacent cell, and with
-       isotropic minification (no anisotropy) the per-material roughness/AO
-       collapse to flat blocks that read as a checkerboard at grazing angles.
-       Fade the ENTIRE micro layer toward its neutral (flat normal, unit albedo
-       multiplier, the macro roughness 0.82, full AO) with one confidence, so
-       the surface cleanly returns to the smooth macro where detail is
-       unresolvable -- no dark speckle and no bright squares. */
-    const float macro_roughness = 0.82;
-    float detail_confidence = 1.0 - smoothstep(0.45, 1.2, footprint_ratio);
-    normal.xy *= detail_confidence;
+    /* Cap the lateral tilt of the tangent normal. Residual atlas bleed at cell
+       edges yields steep off-axis normals that shade isolated fragments sunless
+       (the last speckle at grazing silhouettes); genuine subordinate scan detail
+       stays well under this, so the cap is invisible on normal terrain. Applied
+       per-fragment on the normal value, not on position/footprint, so it never
+       forms a spatial contour/dashed line. */
+    float lateral = length(normal.xy);
+    normal.xy *= min(1.0, 0.5 / max(lateral, 1e-4));
     MicroMaterial result;
-    result.luminance_factor = mix(1.0, detail.r * 2.0, detail_confidence);
+    result.luminance_factor = detail.r * 2.0;
     result.tangent_normal = normalize(normal);
-    result.ao = mix(1.0, ormh.r, detail_confidence);
-    result.roughness = mix(macro_roughness, ormh.g, detail_confidence);
-    result.height = ormh.a * detail_confidence;
+    result.ao = ormh.r;
+    result.roughness = ormh.g;
+    result.height = ormh.a;
     return result;
 }
 
@@ -286,7 +287,17 @@ void main() {
     float view_distance = length(camera_relative_position);
     float detail_fade = 1.0 - smoothstep(4000.0, 12000.0, view_distance);
     const float detail_weight = 0.65;
-    float weighted_detail = detail_weight * detail_fade;
+    /* Fade the whole micro layer out as one pixel comes to cover more ground
+       than the scans can resolve. Driven by the WORLD-space footprint (metres of
+       terrain per pixel), which is material-independent, so the fade is a smooth
+       gradient rather than the per-material dashed contour a per-scan footprint
+       produces. This is where residual atlas bleed and grazing-angle aliasing
+       (the black speckle) get cleaned -- without it, distant/grazing micro
+       normals shade scattered fragments sunless. */
+    float world_footprint_m = max(length(dFdx(local_position.xz)),
+                                  length(dFdy(local_position.xz)));
+    float footprint_confidence = 1.0 - smoothstep(0.8, 4.0, world_footprint_m);
+    float weighted_detail = detail_weight * detail_fade * footprint_confidence;
     /* Scan normals are tangent-space data. Reorient them around the terrain
        normal; treating their Z component as world-up made steep close-range
        cells falsely face the sun. Keep the original flat-ground orientation
