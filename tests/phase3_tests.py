@@ -33,8 +33,9 @@ def main() -> None:
         dem.putdata(elevations)
         dem_path = root / "dem.tiff"
         dem.save(dem_path)
-        imagery = Image.new("RGB", (17, 17))
-        imagery.putdata([(x * 15, y * 15, (x * 11 + y * 7) & 255)
+        imagery = Image.new("RGBA", (17, 17))
+        imagery.putdata([(x * 15, y * 15, (x * 11 + y * 7) & 255,
+                          round(255 * x / 16))
                          for y in range(17) for x in range(17)])
         imagery_path = root / "imagery.png"
         imagery.save(imagery_path)
@@ -50,6 +51,9 @@ def main() -> None:
             run("python3", args.tool, "validate", str(output))
         if digest_tree(outputs[0]) != digest_tree(outputs[1]):
             raise SystemExit("tile output is not deterministic")
+        root_imagery = Image.open(outputs[0] / "imagery" / "0" / "0" / "0.png")
+        if root_imagery.mode != "RGBA" or root_imagery.getchannel("A").getextrema() == (255, 255):
+            raise SystemExit("material blend alpha was not preserved")
 
         atlas = root / "atlas.png"
         run("python3", args.tool, "inspect", str(outputs[0]),

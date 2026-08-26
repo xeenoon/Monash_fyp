@@ -155,21 +155,24 @@ VkDescriptorSet renderer_allocate_terrain_set(Renderer *r, VkImageView albedo_vi
 										 .pSetLayouts = &r->material_set_layout};
 	VkDescriptorSet set;
 	VK_CHECK(vkAllocateDescriptorSets(r->device, &alloc, &set));
-	VkDescriptorImageInfo images[4] = {
+	VkDescriptorImageInfo images[5] = {
 		{.sampler = albedo_sampler,
 		 .imageView = albedo_view,
 		 .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
 		{.sampler = elevation_sampler,
 		 .imageView = elevation_view,
 		 .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-		{.sampler = r->terrain_detail_texture.sampler,
-		 .imageView = r->terrain_detail_texture.view,
+		{.sampler = r->terrain_micro_albedo.sampler,
+		 .imageView = r->terrain_micro_albedo.view,
 		 .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-		{.sampler = elevation_sampler,
-		 .imageView = elevation_view,
+		{.sampler = r->terrain_micro_normal.sampler,
+		 .imageView = r->terrain_micro_normal.view,
+		 .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+		{.sampler = r->terrain_micro_ormh.sampler,
+		 .imageView = r->terrain_micro_ormh.view,
 		 .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
 	};
-	VkWriteDescriptorSet writes[4] = {
+	VkWriteDescriptorSet writes[5] = {
 		{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 		 .dstSet = set,
 		 .dstBinding = 0,
@@ -194,8 +197,14 @@ VkDescriptorSet renderer_allocate_terrain_set(Renderer *r, VkImageView albedo_vi
 		 .descriptorCount = 1,
 		 .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		 .pImageInfo = &images[3]},
+		{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+		 .dstSet = set,
+		 .dstBinding = 4,
+		 .descriptorCount = 1,
+		 .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+		 .pImageInfo = &images[4]},
 	};
-	vkUpdateDescriptorSets(r->device, 4, writes, 0, NULL);
+	vkUpdateDescriptorSets(r->device, 5, writes, 0, NULL);
 	return set;
 }
 
@@ -535,8 +544,12 @@ static void create_descriptors(Renderer *r)
 							  linear_white, false);
 	texture_create_solid_rgba8(r->device, r->allocator, r->upload, &r->fallback_normal_texture,
 							  flat_normal, false);
-	texture_create_terrain_detail(r->device, r->allocator, r->upload, &r->terrain_detail_texture,
-								  r->max_anisotropy);
+	texture_load_linear(r->device, r->allocator, r->upload, &r->terrain_micro_albedo,
+					TEXTURE_DIR "/runtime/terrain_micro_albedo.png", r->max_anisotropy);
+	texture_load_linear(r->device, r->allocator, r->upload, &r->terrain_micro_normal,
+					TEXTURE_DIR "/runtime/terrain_micro_normal.png", r->max_anisotropy);
+	texture_load_linear(r->device, r->allocator, r->upload, &r->terrain_micro_ormh,
+					TEXTURE_DIR "/runtime/terrain_micro_ormh.png", r->max_anisotropy);
 	r->fallback_material_set = renderer_allocate_pbr5_set(r, &r->fallback_texture,
 		&r->fallback_linear_texture, &r->fallback_normal_texture, &r->fallback_linear_texture,
 		&r->fallback_linear_texture);
@@ -2600,7 +2613,9 @@ void renderer_shutdown(Renderer *r)
 	texture_destroy(r->device, r->allocator, &r->fallback_texture);
 	texture_destroy(r->device, r->allocator, &r->fallback_linear_texture);
 	texture_destroy(r->device, r->allocator, &r->fallback_normal_texture);
-	texture_destroy(r->device, r->allocator, &r->terrain_detail_texture);
+	texture_destroy(r->device, r->allocator, &r->terrain_micro_ormh);
+	texture_destroy(r->device, r->allocator, &r->terrain_micro_normal);
+	texture_destroy(r->device, r->allocator, &r->terrain_micro_albedo);
 	texture_destroy(r->device, r->allocator, &r->environment_cube);
 	texture_destroy(r->device, r->allocator, &r->atmosphere_aerial_transmittance);
 	texture_destroy(r->device, r->allocator, &r->atmosphere_aerial_scattering);

@@ -32,11 +32,17 @@ void main() {
     if (index == 0u && histogram_count[0] > 0u) {
         float average = exp2(weighted_log_luminance[0] /
                              float(histogram_count[0]));
-        float target = clamp(0.18 / max(average, 1e-5), 0.03, 32.0);
-        float speed = target > exposure_state.exposure ? 1.25 : 3.5;
-        float weight = 1.0 - exp(-speed * max(frame.temporal_parameters.y, 0.0));
-        exposure_state.exposure = frame.temporal_parameters.x > 0.5
-            ? mix(exposure_state.exposure, target, weight) : target;
         exposure_state.average_luminance = average;
+        /* E toggles this off at runtime: hold a fixed exposure instead of
+           adapting to scene luminance. */
+        if (frame.temporal_parameters.w > 0.5) {
+            float target = clamp(0.18 / max(average, 1e-5), 0.03, 32.0);
+            float speed = target > exposure_state.exposure ? 1.25 : 3.5;
+            float weight = 1.0 - exp(-speed * max(frame.temporal_parameters.y, 0.0));
+            exposure_state.exposure = frame.temporal_parameters.x > 0.5
+                ? mix(exposure_state.exposure, target, weight) : target;
+        } else {
+            exposure_state.exposure = 1.0;
+        }
     }
 }

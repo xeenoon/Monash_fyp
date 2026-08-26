@@ -27,6 +27,24 @@ available with `TERRAIN_SCENE=coastal_cliff`, `quarry`, `phase_d_demo`, or
 `gltf` (with `TERRAIN_GLTF_PATH`). Use `TERRAIN_DATASET=/path/to/trn` to point
 the terrain scene at a different tile pyramid.
 
+The old example-synthesis algorithm running through the modern renderer is
+preserved in `trn-golden/` and is the default. Its RGB is the exact
+`trn.golden-albedo` dataset from commit `145a86b` on branch
+`modern-render-old-texture-sampling`: the tagged `golden/91746cf` albedo at 1:1
+coverage with procedural synthesis only for overflow. The PNG alpha channel is
+the newer Alpine rock/grass classification and does not alter golden colour.
+Build it with:
+
+```sh
+cmake -S . -B build -DTERRAIN_GOLDEN=ON
+cmake --build build
+./build/terrain_renderer
+```
+
+Configure with `-DTERRAIN_GOLDEN=OFF` to return to `trn/`. An explicit
+`-DTERRAIN_DATASET_DIR=/path/to/trn` takes precedence over either choice, and
+the runtime `TERRAIN_DATASET` environment variable still overrides the build.
+
 ## Offline terrain tiles
 
 Phase 3 provides a deterministic, versioned terrain-tile pipeline. Inputs must
@@ -43,7 +61,7 @@ python3 tools/terrain_tiles.py inspect trn --output trn/tile_atlas.png
 The binary format and validation contract are documented in
 [`docs/offline_terrain_tile_format.md`](docs/offline_terrain_tile_format.md).
 
-The renderer makes `trn/tiles/0/0/0.trn` its always-resident fallback, then pages
+The renderer makes the selected dataset's `tiles/0/0/0.trn` its always-resident fallback, then pages
 the remaining quadtree using screen-space error, hysteresis, frustum culling,
 explicit lifecycle/memory budgets, and complete-child-quad replacement. Every
 tile inherits `Mesh`, but projected tiles share one grid and displace it from
@@ -53,11 +71,9 @@ The previous C-array implementation was removed after its deprecation commit;
 
 ### Macro colour map
 
-The texture-mapping worktree contains a full patch-indexing and Alpine-exemplar
-synthesis pipeline. This checkout intentionally keeps only its useful output
-contract: a very low-frequency colour field beneath a future authored
-stone/grass material. Build the 64 x 64 map from the checked-in Swiss imagery,
-then use it as the `.trn` imagery source:
+The golden dataset owns runtime RGB. The 64 x 64 Swiss macro builder remains as
+the source of its labelled rock/grass alpha and as the non-golden fallback.
+Rebuild that classifier from the checked-in Swiss imagery with:
 
 ```sh
 python3 tools/build_terrain_macro.py
@@ -70,11 +86,46 @@ python3 tools/terrain_tiles.py build \
 python3 tools/terrain_tiles.py validate trn
 ```
 
-At this scale one source texel covers about 15.6 metres; a 1.5-texel blur removes
-photographic stone/grass detail while retaining the broad rock, vegetation,
-water, and snow colours. `terrain_base_color()` in `shaders/terrain.frag` is the
-deliberately small insertion point for multiplying that macro tint over the
-eventual close-range material blend.
+At this scale one source texel covers about 15.6 metres. The builder labels
+grass and rock first, blurs those two sample populations independently, and
+fills water/snow/unclassified holes from the nearest accepted material texel.
+`assets/terrain_macro_labels.png` records the decision as R=rock, G=grass,
+B=rejected, so water can be audited without allowing it to tint the material.
+The macro PNG's alpha channel carries the resulting blurred grass coverage.
+`trn-golden/imagery` combines that alpha with untouched golden RGB, preventing
+the blurred classifier colour from entering the rendered material.
+
+### Terrain micro materials
+
+Nine CC0 rock scans are represented in `textures/manifest.json`: Rock 01,
+Rock 06, Rock 2, Rock055, Rock040, Marble Cliff 01/03, Rocky Mountain Cliff
+Face, and Layered Cliff Rock. Six Alpine-matched grass/vegetated-ground sets
+are represented in `textures/grass_manifest.json`. Fetch both source banks and
+generate the compact runtime maps with:
+
+```sh
+python3 tools/download_terrain_materials.py
+python3 tools/download_terrain_materials.py \
+  --manifest textures/grass_manifest.json \
+  --source textures/grass-source
+python3 tools/build_terrain_micro_atlas.py
+```
+
+The 4 x 4 runtime atlases preserve all fifteen materials, add wrap gutters,
+remove diffuse chroma, and high-pass the remaining luminance. Within each bank
+the terrain shader stochastically blends nearby samples across 32 m regions;
+the macro alpha then blends the rock and grass banks at Alpine scale. Only the
+neutral scan luminance multiplies golden colour. Golden has 80% priority; one
+true-scale authored layer contributes 20% albedo luminance, normal, roughness,
+and AO. Mip filtering and a far-horizon fade suppress sub-pixel detail, with
+slope used only as a modest near-vertical correction to the classified blend.
+Terrain mode starts at fixed exposure so the surrounding dark sky does not
+meter the material to white; `E` still toggles adaptation.
+
+For an arbitrary non-periodic source, `tools/make_texture_tileable.py` moves the
+old boundary to the centre and repairs it with a multiband cross blend. Run it
+with identical options for each registered PBR channel (and `--normal-map` for
+the normal map) before atlas generation.
 
 The Phase 4 architecture, Rocky provenance, and runtime workflow are documented
 in [`docs/phase4_terrain_quadtree.md`](docs/phase4_terrain_quadtree.md).
@@ -105,14 +156,16 @@ building any natural-only `.trn` dataset.
 - F6: toggle logarithmic linear-depth debug view
 - F7: toggle quadtree LOD colours
 - F8: cycle unlit, subtle relight, and full material lighting
-- F9: cycle height-field normal, placeholder roughness, and macro colour for
-  terrain; static-mesh material diagnostics in benchmark scenes
+- F9: cycle material normal, authored roughness, macro colour, and the
+  red=rock/green=grass Alpine blend for terrain; static-mesh material
+  diagnostics in benchmark scenes
 - F10: cycle cascade, shadow-coordinate, visibility, bias, and raw-map views
 
 - F11: cycle atmosphere LUT and aerial-volume debug views
 - `[` / `]`: select the aerial-volume debug slice
 - F12 (hold): rotate the visible sun and opposing moon through the sky
 - F5: reload shaders
+- E: toggle auto-exposure (eye adaptation) on/off
 - Escape: quit
 
 Shadows default to stable eight-tap rotated PCF on four 2048² cascades. Set

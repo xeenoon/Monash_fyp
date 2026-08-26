@@ -64,7 +64,7 @@ typedef struct
 	vec4s atmosphere_absorption;
 	vec4s atmosphere_ground;
 	vec4s atmosphere_options;
-	vec4s temporal_parameters; /* history valid, dt, sRGB swapchain, reserved */
+	vec4s temporal_parameters; /* history valid, dt, sRGB swapchain, auto-exposure enabled */
 	vec4s temporal_jitter;	   /* current NDC xy, previous NDC xy */
 	vec4s shader_dump;		   /* dump enabled (x), reserved */
 	/* D1 geometric curvature: scale, bias, exponent, reserved. */
@@ -184,7 +184,11 @@ typedef struct Renderer
 	Texture fallback_texture; /* white sRGB albedo; retained name for terrain callers */
 	Texture fallback_linear_texture; /* white linear ORM/AO/cavity */
 	Texture fallback_normal_texture; /* flat linear tangent normal */
-	Texture terrain_detail_texture;
+	/* Shared terrain material atlases: neutral high-pass luminance, OpenGL
+	   tangent normal, and AO/roughness/metallic/height. */
+	Texture terrain_micro_albedo;
+	Texture terrain_micro_normal;
+	Texture terrain_micro_ormh;
 	VkDescriptorSet fallback_material_set;
 	VkDescriptorSet display_set;
 	VkDescriptorSet temporal_set[2];

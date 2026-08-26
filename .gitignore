@@ -1,5 +1,4 @@
-/build/
-/build-dump/
+/build*/
 /trn/
 /alps-data/
 /inspo/
@@ -8,6 +7,9 @@
 /tools/*.txt
 /.claude/
 /debug_dumps/
+/textures/.downloads/
+/textures/source/
+/textures/grass-source/
 
 # Python bytecode caches.
 __pycache__/

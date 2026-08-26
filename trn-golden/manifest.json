@@ -1,0 +1,31 @@
+{
+  "axis_convention": "XYZ: x east, y south; y=0 is north",
+  "extent": [
+    2647000.0,
+    1160000.0,
+    2648000.0,
+    1161000.0
+  ],
+  "format": "terrain-tile-dataset",
+  "gutter": 1,
+  "height_encoding": "f32",
+  "height_samples": 65,
+  "imagery_extent": [
+    2647000.0,
+    1160000.0,
+    2648000.0,
+    1161000.0
+  ],
+  "imagery_size": 256,
+  "levels": 3,
+  "natural_mask": null,
+  "procedural_imagery": "assets/terrain_synth_top.png",
+  "material_alpha": "Swiss Alpine rock/grass classifier; RGB remains golden 145a86b",
+  "profile": "EPSG:2056",
+  "root_geometric_error_m": 15.625,
+  "source": {
+    "dataset": "terrain_albedo 1:1 with procedural overflow",
+    "version": "golden-91746cf-coverage"
+  },
+  "version": 1
+}

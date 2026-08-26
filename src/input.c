@@ -34,6 +34,7 @@ void input_poll(Input *in, SDL_Window *window)
 	in->next_atmosphere_slice = false;
 	in->dump_shader_data = false;
 	in->clear_shader_dump = false;
+	in->toggle_auto_exposure = false;
 
 	SDL_Event event;
 	while (SDL_PollEvent(&event))
@@ -72,6 +73,9 @@ void input_poll(Input *in, SDL_Window *window)
 			in->dump_shader_data = true;
 		if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_C)
 			in->clear_shader_dump = true;
+		/* E toggles auto-exposure (eye adaptation); off holds a fixed exposure. */
+		if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_E)
+			in->toggle_auto_exposure = true;
 		if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
 			(event.key.key == SDLK_LCTRL || event.key.key == SDLK_RCTRL))
 			set_mouse_capture(in, window, !in->mouse_captured);

@@ -1,0 +1,15 @@
+{
+  "license": "CC0-1.0",
+  "runtime_cell_size": 512,
+  "materials": [
+    {"id": "rock_01", "provider": "polyhaven", "resolution": "4k", "width_m": 1.5, "page": "https://polyhaven.com/a/rock_01"},
+    {"id": "rock_06", "provider": "polyhaven", "resolution": "4k", "width_m": 1.5, "page": "https://polyhaven.com/a/rock_06"},
+    {"id": "rock_2", "provider": "polyhaven", "resolution": "4k", "width_m": 1.5, "page": "https://polyhaven.com/a/rock_2"},
+    {"id": "rock055", "provider": "ambientcg", "resolution": "8k", "runtime_width_m": 2.0, "page": "https://ambientcg.com/view?id=Rock055", "archive": "https://ambientcg.com/get?file=Rock055_8K-JPG.zip"},
+    {"id": "rock040", "provider": "ambientcg", "resolution": "8k", "runtime_width_m": 2.0, "page": "https://ambientcg.com/view?id=Rock040", "archive": "https://ambientcg.com/get?file=Rock040_8K-JPG.zip"},
+    {"id": "marble_cliff_01", "provider": "polyhaven", "resolution": "4k", "width_m": 4.3, "page": "https://polyhaven.com/a/marble_cliff_01"},
+    {"id": "marble_cliff_03", "provider": "polyhaven", "resolution": "4k", "width_m": 5.7, "page": "https://polyhaven.com/a/marble_cliff_03"},
+    {"id": "rocky_mountain_cliff_face", "provider": "polyscan", "resolution": "4k", "runtime_width_m": 4.0, "page": "https://polyscann.com/asset/rocky-mountain-cliff-face-f45464", "archive": "https://cdn.polyscann.com/PBR+TEXTURE/9eaa45492802767e/Rugged_Natural_Rock_Surface_Texture_01_4k.rar"},
+    {"id": "layered_cliff_rock", "provider": "polyscan", "resolution": "4k", "runtime_width_m": 5.0, "page": "https://polyscann.com/asset/layered-cliff-rock-texture-618839", "archive": "https://cdn.polyscann.com/PBR+TEXTURE/1a1629873d2c531f/4K.rar"}
+  ]
+}

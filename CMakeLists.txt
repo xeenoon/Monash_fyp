@@ -8,6 +8,8 @@ include(CTest)
 # with 'C' or a clean build). Off by default; enable with -DDEBUG_SHADER_DUMP=ON.
 # See renderer_dump_shader_data.
 option(DEBUG_SHADER_DUMP "Enable the 'X'-key per-fragment shader data dump" OFF)
+option(TERRAIN_GOLDEN
+    "Boot the modern-render/legacy-sampling golden terrain dataset by default" ON)
 set(SHADER_DUMP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/debug_dumps")
 
 set(CMAKE_C_STANDARD 11)
@@ -24,10 +26,29 @@ find_program(GLSLC glslc REQUIRED)
 set(SHADER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/shaders")
 set(SHADER_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/shaders")
 
-if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/trn/tiles/0/0/0.trn")
+set(TERRAIN_DATASET_DIR "" CACHE PATH
+    "Override the runtime terrain tile dataset (takes precedence over TERRAIN_GOLDEN)")
+if(TERRAIN_DATASET_DIR)
+    set(ACTIVE_TERRAIN_DATASET_DIR "${TERRAIN_DATASET_DIR}")
+    set(ACTIVE_TERRAIN_DATASET_NAME "custom")
+elseif(TERRAIN_GOLDEN)
+    set(ACTIVE_TERRAIN_DATASET_DIR "${CMAKE_CURRENT_SOURCE_DIR}/trn-golden")
+    set(ACTIVE_TERRAIN_DATASET_NAME "modern legacy sampling/145a86b")
+else()
+    set(ACTIVE_TERRAIN_DATASET_DIR "${CMAKE_CURRENT_SOURCE_DIR}/trn")
+    set(ACTIVE_TERRAIN_DATASET_NAME "current")
+endif()
+message(STATUS "Terrain dataset: ${ACTIVE_TERRAIN_DATASET_NAME} (${ACTIVE_TERRAIN_DATASET_DIR})")
+
+if(NOT EXISTS "${ACTIVE_TERRAIN_DATASET_DIR}/tiles/0/0/0.trn")
     message(WARNING
-        "The runtime terrain tile is missing. Generate it with "
-        "'python3 tools/terrain_tiles.py build ... --output trn' before running.")
+        "The selected runtime terrain tile is missing under "
+        "'${ACTIVE_TERRAIN_DATASET_DIR}'. Generate or restore that dataset before running.")
+endif()
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/textures/runtime/terrain_micro_albedo.png")
+    message(WARNING
+        "Terrain micro atlases are missing. Download both manifests as documented in "
+        "textures/README.md, then run 'python3 tools/build_terrain_micro_atlas.py'.")
 endif()
 
 # Debug builds keep symbols and stay unoptimised for readable RenderDoc/validation
@@ -123,9 +144,10 @@ endif()
 target_compile_definitions(terrain_renderer PRIVATE
     SHADER_DIR="${SHADER_OUTPUT_DIR}"
     ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets"
+    TEXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/textures"
     BENCHMARK_DIR="${CMAKE_CURRENT_SOURCE_DIR}/benchmark-assets"
     QUARRY_DIR="${CMAKE_CURRENT_SOURCE_DIR}/valley-of-the-ancient"
-    TRN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/trn"
+    TRN_DIR="${ACTIVE_TERRAIN_DATASET_DIR}"
     ENV_HDR_PATH="${CMAKE_CURRENT_SOURCE_DIR}/assets/env.hdr"
     CGLM_FORCE_DEPTH_ZERO_TO_ONE)
 if(DEBUG_SHADER_DUMP)
@@ -167,6 +189,16 @@ if(BUILD_TESTING)
         COMMAND "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_terrain_macro_tests.py"
                 --tool "${CMAKE_CURRENT_SOURCE_DIR}/tools/build_terrain_macro.py")
+
+    add_test(NAME texture_periodic_conversion
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/make_texture_tileable_tests.py"
+                --tool "${CMAKE_CURRENT_SOURCE_DIR}/tools/make_texture_tileable.py")
+
+    add_test(NAME terrain_micro_material_atlas
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_terrain_micro_atlas_tests.py"
+                --tool "${CMAKE_CURRENT_SOURCE_DIR}/tools/build_terrain_micro_atlas.py")
 
     add_executable(phase3_tile_loader_tests
         tests/phase3_tile_loader_tests.c

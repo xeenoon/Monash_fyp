@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from PIL import Image, ImageDraw, ImageStat
+from PIL import Image, ImageChops, ImageDraw, ImageStat
 
 Image.MAX_IMAGE_PIXELS = None
 
@@ -237,7 +237,13 @@ def _resize_srgb(image: Image.Image, size: tuple[int, int]) -> Image.Image:
         linear = _linear_channel(channel)
         linear = linear.resize(size, Image.Resampling.LANCZOS)
         channels.append(_encode_srgb(linear))
-    return Image.merge("RGB", channels)
+    resized_rgb = Image.merge("RGB", channels)
+    if "A" not in image.getbands():
+        return resized_rgb
+    # Alpha is material coverage, not colour: filter it linearly and preserve
+    # it through every imagery LOD so the shader sees the same macro blend.
+    alpha = image.getchannel("A").resize(size, Image.Resampling.LANCZOS)
+    return Image.merge("RGBA", (*resized_rgb.split(), alpha))
 
 
 def _slice_grid(values: list, valid: list[bool], global_size: int,
@@ -261,7 +267,7 @@ def _slice_grid(values: list, valid: list[bool], global_size: int,
 def _slice_image(image: Image.Image, key: Key, tile_size: int,
                  gutter: int) -> Image.Image:
     start_x, start_y = key.x * tile_size, key.y * tile_size
-    output = Image.new("RGB", (tile_size + 2 * gutter,) * 2)
+    output = Image.new(image.mode, (tile_size + 2 * gutter,) * 2)
     pixels = output.load()
     source = image.load()
     for y in range(-gutter, tile_size + gutter):
@@ -417,7 +423,8 @@ def _close_height(a: float, b: float, first: Tile, second: Tile) -> bool:
 def _image(dataset: Path, tile: Tile) -> Image.Image:
     if tile.imagery:
         raise ValueError("inline imagery inspection is not implemented")
-    return Image.open(dataset / tile.imagery_uri).convert("RGB")
+    image = Image.open(dataset / tile.imagery_uri)
+    return image.convert("RGBA" if "A" in image.getbands() else "RGB")
 
 
 def validate_dataset(dataset: Path) -> list[Tile]:
@@ -537,16 +544,15 @@ def validate_dataset(dataset: Path) -> list[Tile]:
         # Orientation check: the four XYZ children must form NW, NE, SW, SE.
         g = parent.gutter
         size = _image(dataset, parent).width - 2 * g
-        mosaic = Image.new("RGB", (size * 2, size * 2))
+        parent_image = _image(dataset, parent)
+        mosaic = Image.new(parent_image.mode, (size * 2, size * 2))
         for child in children:
             image = _image(dataset, child).crop((g, g, g + size, g + size))
             mosaic.paste(image, ((child.key.x & 1) * size,
                                  (child.key.y & 1) * size))
         expected = _resize_srgb(mosaic, (size, size))
-        actual = _image(dataset, parent).crop((g, g, g + size, g + size))
-        difference = ImageStat.Stat(Image.frombytes(
-            "RGB", actual.size,
-            bytes(abs(a - b) for a, b in zip(actual.tobytes(), expected.tobytes()))))
+        actual = parent_image.crop((g, g, g + size, g + size))
+        difference = ImageStat.Stat(ImageChops.difference(actual, expected))
         if max(difference.mean) > 8.0:
             raise ValueError(f"{parent.key}: child imagery orientation disagrees")
     return tiles
@@ -570,7 +576,7 @@ def inspect(args: argparse.Namespace) -> None:
     draw = ImageDraw.Draw(atlas)
     for tile in selected:
         g = tile.gutter
-        imagery = _image(dataset, tile)
+        imagery = _image(dataset, tile).convert("RGB")
         imagery = imagery.resize((card, card), Image.Resampling.NEAREST)
         x0, y0 = tile.key.x * card * 2, tile.key.y * card
         atlas.paste(imagery, (x0, y0))

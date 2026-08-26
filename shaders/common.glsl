@@ -34,7 +34,7 @@ layout(set = 0, binding = 0) uniform FrameUniforms {
     vec4  atmosphere_absorption;  /* ozone extinction RGB */
     vec4  atmosphere_ground;      /* albedo RGB, multiple-scattering factor */
     vec4  atmosphere_options;     /* aerial max km, debug slice, reserved */
-    vec4  temporal_parameters;    /* history valid, dt, sRGB swapchain, reserved */
+    vec4  temporal_parameters;    /* history valid, dt, sRGB swapchain, auto-exposure enabled */
     vec4  temporal_jitter;        /* current NDC xy, previous NDC xy */
     vec4  shader_dump;            /* dump enabled (x), reserved */
     vec4  material_curvature;       /* scale, bias, exponent */

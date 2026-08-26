@@ -240,6 +240,10 @@ int main(void)
 	/* F3 exposes the delivery sequence: legacy -> A (Default Lit) -> B1
 	   (diffuse IBL) -> B2 (specular IBL) -> C (shadowing) -> legacy. */
 	unsigned static_mesh_shading_mode = 5u;
+	/* The terrain overview occupies a small part of a much darker sky frame;
+	 * scene-average adaptation otherwise overexposes it and hides the material
+	 * frequencies. E can still enable adaptation interactively. */
+	bool auto_exposure_enabled = !use_terrain;
 	AtmosphereParameters atmosphere = atmosphere_earth();
 	bool running = true;
 #ifdef DEBUG_SHADER_DUMP
@@ -342,12 +346,12 @@ int main(void)
 		{
 			if (use_terrain)
 			{
-				debug_mode = debug_mode >= 3u && debug_mode < 5u ? debug_mode + 1u
-															 : (debug_mode == 5u ? 0u : 3u);
-				const char *names[] = {"Height-field normal", "Placeholder roughness",
-									   "Macro colour", "off"};
+				debug_mode = debug_mode >= 3u && debug_mode < 6u ? debug_mode + 1u
+														 : (debug_mode == 6u ? 0u : 3u);
+				const char *names[] = {"Material normal", "Authored roughness",
+									   "Macro colour", "Rock/grass blend", "off"};
 				printf("Terrain material view: %s\n",
-					   debug_mode >= 3u ? names[debug_mode - 3u] : names[3]);
+					   debug_mode >= 3u ? names[debug_mode - 3u] : names[4]);
 			}
 			else
 			{
@@ -369,6 +373,11 @@ int main(void)
 		if (input.cycle_atmosphere_debug)
 			debug_mode = debug_mode >= 12u && debug_mode < 16u ? debug_mode + 1u
 															   : (debug_mode == 16u ? 0u : 12u);
+		if (input.toggle_auto_exposure)
+		{
+			auto_exposure_enabled = !auto_exposure_enabled;
+			printf("Auto-exposure: %s\n", auto_exposure_enabled ? "on" : "off");
+		}
 		if (debug_mode != previous_debug_mode)
 			history_valid = false;
 		if (input.previous_atmosphere_slice && atmosphere_slice > 0u)
@@ -637,7 +646,8 @@ int main(void)
 						 atmosphere.ground_albedo[2], atmosphere.multiple_scattering_factor}},
 			.atmosphere_options =
 				(vec4s){{atmosphere.aerial_max_distance_km, (float)atmosphere_slice, 0.0f, 0.0f}},
-			.temporal_parameters = (vec4s){{use_history ? 1.0f : 0.0f, dt, 0.0f, 0.0f}},
+			.temporal_parameters =
+				(vec4s){{use_history ? 1.0f : 0.0f, dt, 0.0f, auto_exposure_enabled ? 1.0f : 0.0f}},
 			.temporal_jitter = (vec4s){{jitter.x, jitter.y, previous_jitter.x, previous_jitter.y}},
 			.material_curvature = (vec4s){{1.0f, 0.0f, 0.333f, 0.0f}},
 			.material_normal_filter = (vec4s){{1.0f, 0.20f, 0.0001f, 0.0f}},

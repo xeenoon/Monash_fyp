@@ -1,0 +1,63 @@
+{
+  "license": "CC0-1.0",
+  "selection_basis": {
+    "source": "assets/terrain_albedo.png pixels labelled grass by tools/build_terrain_macro.py",
+    "median_srgb": [69, 79, 56],
+    "mean_srgb": [70, 79, 60],
+    "percentile_20_srgb": [47, 56, 41],
+    "percentile_80_srgb": [93, 100, 79]
+  },
+  "materials": [
+    {
+      "id": "Grass001",
+      "provider": "ambientcg",
+      "resolution": "4k",
+      "width_m": 1.4,
+      "screened_mean_srgb": [68, 92, 41],
+      "page": "https://ambientcg.com/view?id=Grass001",
+      "archive": "https://ambientcg.com/get?file=Grass001_4K-JPG.zip"
+    },
+    {
+      "id": "Grass002",
+      "provider": "ambientcg",
+      "resolution": "4k",
+      "width_m": 1.4,
+      "screened_mean_srgb": [56, 75, 35],
+      "page": "https://ambientcg.com/view?id=Grass002",
+      "archive": "https://ambientcg.com/get?file=Grass002_4K-JPG.zip"
+    },
+    {
+      "id": "Grass003",
+      "provider": "ambientcg",
+      "resolution": "4k",
+      "width_m": 1.4,
+      "screened_mean_srgb": [65, 74, 30],
+      "page": "https://ambientcg.com/view?id=Grass003",
+      "archive": "https://ambientcg.com/get?file=Grass003_4K-JPG.zip"
+    },
+    {
+      "id": "sparse_grass",
+      "provider": "polyhaven",
+      "resolution": "4k",
+      "width_m": 2.0,
+      "screened_mean_srgb": [78, 61, 21],
+      "page": "https://polyhaven.com/a/sparse_grass"
+    },
+    {
+      "id": "grass_path_3",
+      "provider": "polyhaven",
+      "resolution": "4k",
+      "width_m": 1.0,
+      "screened_mean_srgb": [114, 102, 76],
+      "page": "https://polyhaven.com/a/grass_path_3"
+    },
+    {
+      "id": "forrest_ground_01",
+      "provider": "polyhaven",
+      "resolution": "4k",
+      "width_m": 2.0,
+      "screened_mean_srgb": [144, 135, 92],
+      "page": "https://polyhaven.com/a/forrest_ground_01"
+    }
+  ]
+}

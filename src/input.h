@@ -25,6 +25,7 @@ typedef struct
 	bool next_atmosphere_slice;
 	bool dump_shader_data;	/* X pressed (debug builds) */
 	bool clear_shader_dump; /* C pressed (debug builds) */
+	bool toggle_auto_exposure; /* E pressed */
 } Input;
 
 /* Pumps SDL events + keyboard/mouse state into `in`. */

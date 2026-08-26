@@ -6,9 +6,9 @@
 #include "environment_lighting.glsl"
 #include "shader_dump.glsl"
 
-/* Minimal terrain material path: the streamed image is deliberately only a
-   low-frequency Alpine colour field. A later stone/grass layer should produce
-   detail_albedo first, then multiply it by macro_tint in terrain_base_color(). */
+/* The streamed image is a low-frequency, water-free Alpine material field:
+   RGB is cross-sampled macro colour and alpha is its grass-vs-rock coverage.
+   Fifteen authored scans supply sub-metre detail without replacing RGB. */
 layout(early_fragment_tests) in;
 
 layout(location = 0) in vec2 imagery_uv;
@@ -23,9 +23,9 @@ layout(location = 1) out vec2 out_motion;
 
 layout(set = 1, binding = 0) uniform sampler2D macro_color_map;
 layout(set = 1, binding = 1) uniform sampler2D elevation_map;
-/* Binding 2 remains the shared terrain-detail slot for the future close-range
-   stone/grass material. It is intentionally not sampled by this macro pass. */
-layout(set = 1, binding = 2) uniform sampler2D material_detail_map;
+layout(set = 1, binding = 2) uniform sampler2D micro_albedo_atlas;
+layout(set = 1, binding = 3) uniform sampler2D micro_normal_atlas;
+layout(set = 1, binding = 4) uniform sampler2D micro_ormh_atlas;
 
 layout(push_constant) uniform DrawData {
     mat4 local_to_camera_relative;
@@ -82,12 +82,114 @@ vec3 lod_color(float level) {
     return colors[int(abs(level)) % 6];
 }
 
-vec3 terrain_base_color(vec3 macro_tint) {
-    /* Placeholder for the close-range material layer:
-         vec3 detail_albedo = blend_stone_and_grass(...);
-         return detail_albedo * macro_tint / neutral_macro;
-       Until those authored textures arrive, show the macro field directly. */
-    return macro_tint;
+uint material_hash(ivec2 cell) {
+    uvec2 value = uvec2(cell);
+    uint hash = value.x * 0x8da6b343u ^ value.y * 0xd8163841u;
+    hash ^= hash >> 13u;
+    hash *= 0xcb1ab31fu;
+    return hash ^ (hash >> 16u);
+}
+
+uint material_index(ivec2 cell, uint first, uint count) {
+    return first + material_hash(cell) % count;
+}
+
+float material_width_metres(uint index) {
+const float widths[15] = float[15](
+    6.0, 6.0, 6.0, 8.0, 8.0,
+    17.2, 22.8, 16.0, 20.0,
+    5.6, 5.6, 5.6, 8.0, 4.0,
+    8.0
+);
+    return widths[index];
+}
+
+vec2 material_atlas_uv(uint index, vec2 tiled_uv) {
+    vec2 atlas_size = vec2(textureSize(micro_albedo_atlas, 0));
+    vec2 cell_size = atlas_size / 4.0;
+    vec2 gutter = vec2(8.0) / cell_size;
+    vec2 interior = mix(gutter, vec2(1.0) - gutter, fract(tiled_uv));
+    vec2 cell = vec2(float(index % 4u), float(index / 4u));
+    return (cell + interior) / 4.0;
+}
+
+struct MicroMaterial {
+    float luminance_factor;
+    vec3 tangent_normal;
+    float ao;
+    float roughness;
+    float height;
+};
+
+MicroMaterial sample_micro(uint index, vec2 world_xz) {
+    float width_m = material_width_metres(index);
+    vec2 tiled_uv = world_xz / width_m;
+    vec2 atlas_uv = material_atlas_uv(index, tiled_uv);
+    /* The per-cell wrap gutter occupies 8/528 of a cell. Scale derivatives to
+       the atlas interior so implicit filtering never sees a 3x3 cell jump. */
+    float derivative_scale = (512.0 / 528.0) / 4.0;
+    vec2 dx = dFdxCoarse(tiled_uv) * derivative_scale;
+    vec2 dy = dFdyCoarse(tiled_uv) * derivative_scale;
+    vec3 detail = textureGrad(micro_albedo_atlas, atlas_uv, dx, dy).rgb;
+    vec3 normal = textureGrad(micro_normal_atlas, atlas_uv, dx, dy).xyz * 2.0 - 1.0;
+    vec4 ormh = textureGrad(micro_ormh_atlas, atlas_uv, dx, dy);
+    MicroMaterial result;
+    result.luminance_factor = detail.r * 2.0;
+    result.tangent_normal = normalize(normal);
+    result.ao = ormh.r;
+    result.roughness = ormh.g;
+    result.height = ormh.a;
+    return result;
+}
+
+MicroMaterial blend_micro_bank(vec2 world_xz, uint first, uint count) {
+    const float region_m = 32.0;
+    vec2 region = world_xz / region_m;
+    ivec2 base = ivec2(floor(region));
+    vec2 blend = smoothstep(vec2(0.20), vec2(0.80), fract(region));
+    float weights[4] = float[4]((1.0-blend.x)*(1.0-blend.y),
+                                blend.x*(1.0-blend.y),
+                                (1.0-blend.x)*blend.y, blend.x*blend.y);
+    ivec2 offsets[4] = ivec2[4](ivec2(0,0), ivec2(1,0),
+                                ivec2(0,1), ivec2(1,1));
+    MicroMaterial result = MicroMaterial(0.0, vec3(0.0), 0.0, 0.0, 0.0);
+    for (int i = 0; i < 4; ++i) {
+        MicroMaterial sample_value = sample_micro(
+            material_index(base + offsets[i], first, count), world_xz);
+        result.luminance_factor += sample_value.luminance_factor * weights[i];
+        result.tangent_normal += sample_value.tangent_normal * weights[i];
+        result.ao += sample_value.ao * weights[i];
+        result.roughness += sample_value.roughness * weights[i];
+        result.height += sample_value.height * weights[i];
+    }
+    result.tangent_normal = normalize(result.tangent_normal);
+    return result;
+}
+
+MicroMaterial mix_micro(MicroMaterial rock, MicroMaterial grass,
+                        float grass_weight);
+
+MicroMaterial classified_micro(vec2 world_xz, float grass_weight) {
+    if (grass_weight < 0.015)
+        return blend_micro_bank(world_xz, 0u, 9u);
+    if (grass_weight > 0.985 && false)
+        return blend_micro_bank(world_xz, 9u, 6u);
+    MicroMaterial rock = blend_micro_bank(world_xz, 0u, 9u);
+    MicroMaterial grass = blend_micro_bank(world_xz, 9u, 6u);
+    return mix_micro(rock, grass, grass_weight);
+}
+
+MicroMaterial mix_micro(MicroMaterial rock, MicroMaterial grass,
+                        float grass_weight) {
+    MicroMaterial result;
+    result.luminance_factor = mix(rock.luminance_factor,
+                                  grass.luminance_factor, grass_weight);
+    result.tangent_normal = normalize(mix(rock.tangent_normal,
+                                          grass.tangent_normal, grass_weight));
+    result.ao = mix(rock.ao, grass.ao, grass_weight);
+    result.roughness = mix(rock.roughness, grass.roughness, grass_weight);
+    result.height = mix(rock.height, grass.height, grass_weight);
+    return result;
 }
 
 void main() {
@@ -103,21 +205,47 @@ void main() {
     }
 
     HeightSurface surface = height_surface();
+    vec4 macro_sample = textureGrad(macro_color_map, imagery_uv,
+                                    dFdxCoarse(imagery_uv),
+                                    dFdyCoarse(imagery_uv));
+    vec3 macro_tint = macro_sample.rgb;
+    /* Golden synthesis owns RGB. Alpha is the separately composed Alpine
+       rock/grass classification, so material selection remains water-free
+       without feeding the blurred classifier colour into the result. */
+    float grass_weight = smoothstep(0.08, 0.55, macro_sample.a);
+    float steepness = smoothstep(0.42, 0.78, 1.0 - surface.local_normal.y);
+    grass_weight *= 1.0 - 0.40 * steepness;
+    float rock_weight = 1.0 - grass_weight;
+
+    vec3 world_phase = local_position + draw.debug.yzw;
+    /* Golden already supplies macro and meso structure. The authored scans are
+       a deliberately subordinate, true-scale PBR layer. */
+    MicroMaterial micro = classified_micro(world_phase.xz, grass_weight);
+    float view_distance = length(camera_relative_position);
+    float detail_fade = 1.0 - smoothstep(4000.0, 12000.0, view_distance);
+    const float detail_weight = 0.65;
+    float weighted_detail = detail_weight * detail_fade;
+    vec3 micro_local_normal = vec3(micro.tangent_normal.x,
+                                   micro.tangent_normal.z,
+                                   micro.tangent_normal.y);
+    vec3 material_local_normal = normalize(mix(surface.local_normal,
+                                                micro_local_normal,
+                                                weighted_detail));
     vec3 geometric_normal = normalize(mat3(draw.local_to_camera_relative) *
-                                      surface.local_normal);
+                                      material_local_normal);
     vec3 V = normalize(-camera_relative_position);
     if (dot(geometric_normal, V) < 0.0)
         geometric_normal = -geometric_normal;
 
-    vec3 macro_tint = textureGrad(macro_color_map, imagery_uv,
-                                  dFdxCoarse(imagery_uv),
-                                  dFdyCoarse(imagery_uv)).rgb;
-    vec3 base_color = terrain_base_color(macro_tint);
+    /* Neutral high-pass luminance cannot replace golden chroma and is capped
+       at the same 20% priority as the other authored scan channels. */
+    vec3 base_color = macro_tint * mix(1.0, micro.luminance_factor,
+                                       weighted_detail);
     base_color = mix(base_color, vec3(0.18), step(0.5, untextured));
 
-    const float roughness = 0.82;
+    float roughness = mix(0.82, micro.roughness, weighted_detail);
     const float metallic = 0.0;
-    const float ao = 1.0;
+    float ao = mix(1.0, micro.ao, weighted_detail);
     vec3 L = normalize(-frame.sun_direction.xyz);
     float NoL = max(dot(geometric_normal, L), 0.0);
     vec3 F0 = vec3(0.04);
@@ -140,6 +268,10 @@ void main() {
     }
     if (frame.debug_view > 4.5 && frame.debug_view < 5.5) {
         out_color = vec4(macro_tint, 1.0);
+        return;
+    }
+    if (frame.debug_view > 5.5 && frame.debug_view < 6.5) {
+        out_color = vec4(rock_weight, grass_weight, 0.0, 1.0);
         return;
     }
     if (frame.debug_view > 6.5 && frame.debug_view < 7.5) {
