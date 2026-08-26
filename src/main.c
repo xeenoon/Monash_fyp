@@ -183,8 +183,14 @@ int main(int argc, char *argv[])
 	GltfLoadResult load_result = GLTF_LOAD_OK;
 	if (use_terrain)
 	{
+		/* Terrain defaults to the 16 km Swiss-Alps set -- the real dataset the
+		   camera coordinates (world x ~2.64e6) live in and where the surface
+		   artifacts reproduce. TRN_DIR is a tiny 1 km test pyramid whose world
+		   origin is elsewhere, so booting there shows empty sky at these
+		   coordinates. Override with TERRAIN_DATASET=... (e.g. TRN_DIR) or the
+		   shadowed set via --terrain-textures=shadowed. */
 		const char *dataset_root = terrain_textures == TERRAIN_TEXTURES_SHADOWED
-			? SHADOWED_TERRAIN_DIR : TRN_DIR;
+			? SHADOWED_TERRAIN_DIR : UNSHADOWED_ALPS_DIR;
 		if (terrain_textures == TERRAIN_TEXTURES_UNSHADOWED)
 		{
 			const char *override_root = getenv("TERRAIN_DATASET");

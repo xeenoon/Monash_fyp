@@ -1,0 +1,10 @@
+{
+  "atlas": "/home/ccw100/terrain_gen/textures/runtime/shadowed_cliff_detail.png",
+  "mask": "/home/ccw100/terrain_gen/textures/runtime/shadowed_cliff_mask.png",
+  "atlas_size": 1024,
+  "cell_size": 128,
+  "source_images": 1024,
+  "source_patches": 64,
+  "seed": 91746,
+  "operation": "add_high_frequency_detail_only"
+}

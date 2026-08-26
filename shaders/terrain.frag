@@ -155,6 +155,14 @@ MicroMaterial sample_micro(uint index, vec2 world_xz) {
        that distance the pattern aliases instead of blending in other scans. */
     float dx_len = length(dx);
     float dy_len = length(dy);
+    /* footprint_ratio = tile repeats covered by one fragment. Below 1 the sample
+       is trustworthy; above 1 we clamp the derivative to keep mip selection
+       inside this cell, but the atlas only has 4 mip levels and 16x anisotropy,
+       so the clamped-yet-cell-wide footprint still lets aniso taps reach across
+       the 8px gutter into the neighbouring (or empty black 16th) cell. That
+       bleed reads a steep, unrelated tangent normal on scattered fragments and
+       shades them nearly sunless -- the black speckle/crosshatch. */
+    float footprint_ratio = max(dx_len, dy_len) / derivative_scale;
     if (dx_len > derivative_scale)
         dx *= derivative_scale / dx_len;
     if (dy_len > derivative_scale)
@@ -162,8 +170,16 @@ MicroMaterial sample_micro(uint index, vec2 world_xz) {
     vec3 detail = textureGrad(micro_albedo_atlas, atlas_uv, dx, dy).rgb;
     vec3 normal = textureGrad(micro_normal_atlas, atlas_uv, dx, dy).xyz * 2.0 - 1.0;
     vec4 ormh = textureGrad(micro_ormh_atlas, atlas_uv, dx, dy);
+    /* Once the footprint exceeds one repeat the tangent normal is unreliable
+       (possibly bled from another cell), so fade its lateral tilt toward flat.
+       The sample then contributes no spurious dark facet; the surface keeps its
+       smooth geometric normal where the scan can no longer be resolved. */
+    float detail_confidence = 1.0 - smoothstep(0.7, 1.6, footprint_ratio);
+    normal.xy *= detail_confidence;
     MicroMaterial result;
-    result.luminance_factor = detail.r * 2.0;
+    /* Bled cells also drag albedo dark; fade the high-pass luminance to neutral
+       (1.0, an identity multiplier on macro_tint) with the same confidence. */
+    result.luminance_factor = mix(1.0, detail.r * 2.0, detail_confidence);
     result.tangent_normal = normalize(normal);
     result.ao = ormh.r;
     result.roughness = ormh.g;

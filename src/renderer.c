@@ -560,20 +560,27 @@ static void create_descriptors(Renderer *r)
 							  flat_normal, false);
 	/* Atlas cells have an 8-pixel wrap gutter.  Four levels (0..3) preserve at
 	   least one gutter texel; lower global mips blend the 4x4 atlas cells and
-	   the intentionally empty black sixteenth cell into terrain samples. */
+	   the intentionally empty black sixteenth cell into terrain samples.
+	   Anisotropy is deliberately disabled (1x): the shader hand-clamps the
+	   textureGrad footprint to one cell, but anisotropic filtering still takes
+	   taps along the long footprint axis that reach across the 8px gutter into
+	   the neighbouring (or empty black) cell, reading a steep unrelated normal
+	   on scattered fragments -- the black speckle. Isotropic trilinear keeps
+	   every tap inside the clamped, gutter-protected cell. */
 	const uint32_t micro_atlas_mip_levels = 4u;
+	const float micro_atlas_anisotropy = 1.0f;
 	texture_load_linear_mip_limited(r->device, r->allocator, r->upload,
 									 &r->terrain_micro_albedo,
 									 TEXTURE_DIR "/runtime/terrain_micro_albedo.png",
-									 r->max_anisotropy, micro_atlas_mip_levels);
+									 micro_atlas_anisotropy, micro_atlas_mip_levels);
 	texture_load_linear_mip_limited(r->device, r->allocator, r->upload,
 									 &r->terrain_micro_normal,
 									 TEXTURE_DIR "/runtime/terrain_micro_normal.png",
-									 r->max_anisotropy, micro_atlas_mip_levels);
+									 micro_atlas_anisotropy, micro_atlas_mip_levels);
 	texture_load_linear_mip_limited(r->device, r->allocator, r->upload,
 									 &r->terrain_micro_ormh,
 									 TEXTURE_DIR "/runtime/terrain_micro_ormh.png",
-									 r->max_anisotropy, micro_atlas_mip_levels);
+									 micro_atlas_anisotropy, micro_atlas_mip_levels);
 	r->fallback_material_set = renderer_allocate_pbr5_set(r, &r->fallback_texture,
 		&r->fallback_linear_texture, &r->fallback_normal_texture, &r->fallback_linear_texture,
 		&r->fallback_linear_texture);
