@@ -227,6 +227,12 @@ if(BUILD_TESTING)
                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/download_swiss_alps_tests.py"
                 --tool "${CMAKE_CURRENT_SOURCE_DIR}/tools/download_swiss_alps.py")
 
+    add_test(NAME scscts_shadow_correction_pilot
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/scscts_checkpoint_demo_tests.py"
+                --tool "${CMAKE_CURRENT_SOURCE_DIR}/tools/scscts_checkpoint_demo.py"
+                --terrain-tool "${CMAKE_CURRENT_SOURCE_DIR}/tools/terrain_tiles.py")
+
     add_executable(phase4_quadtree_tests
         tests/phase4_quadtree_tests.c
         src/terrain_quadtree.c

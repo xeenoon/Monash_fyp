@@ -121,7 +121,9 @@ def _encode_tile(tile: Tile) -> bytes:
     return bytes(header) + payload
 
 
-def _read_tile(path: Path) -> Tile:
+def read_tile(path: Path) -> Tile:
+    """Decode a `.trn` v1 file into a `Tile`. Public API: also used by
+    offline tools outside this module (see docs/offline_terrain_tile_format.md)."""
     data = path.read_bytes()
     if len(data) < HEADER_BYTES:
         raise ValueError(f"{path}: truncated header")
@@ -157,6 +159,9 @@ def _read_tile(path: Path) -> Tile:
                 height_range, error, valid_count, extent, transform, flags,
                 heights, validity, imagery, profile.decode("utf-8"),
                 source.decode("utf-8"), imagery_uri.decode("utf-8"))
+
+
+_read_tile = read_tile  # compatibility alias for existing importers
 
 
 def _validity_bytes(valid: Iterable[bool]) -> tuple[bytes, int]:
@@ -432,7 +437,7 @@ def validate_dataset(dataset: Path) -> list[Tile]:
     paths = sorted((dataset / "tiles").glob("*/*/*.trn"),
                    key=lambda path: tuple(map(int, path.parts[-3:-1])) +
                    (int(path.stem),))
-    tiles = [_read_tile(path) for path in paths]
+    tiles = [read_tile(path) for path in paths]
     by_key = {tile.key: tile for tile in tiles}
     expected_count = sum(4 ** level for level in range(manifest["levels"]))
     if len(tiles) != expected_count or len(by_key) != len(tiles):

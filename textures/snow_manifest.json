@@ -1,0 +1,50 @@
+{
+  "license": "CC0-1.0",
+  "materials": [
+    {
+      "id": "Snow005",
+      "provider": "ambientcg",
+      "resolution": "4k",
+      "runtime_width_m": 2.0,
+      "page": "https://ambientcg.com/view?id=Snow005",
+      "archive": "https://ambientcg.com/get?file=Snow005_4K-JPG.zip"
+    },
+    {
+      "id": "Snow001",
+      "provider": "ambientcg",
+      "resolution": "4k",
+      "runtime_width_m": 2.0,
+      "page": "https://ambientcg.com/view?id=Snow001",
+      "archive": "https://ambientcg.com/get?file=Snow001_4K-JPG.zip"
+    },
+    {
+      "id": "Snow010A",
+      "provider": "ambientcg",
+      "resolution": "4k",
+      "runtime_width_m": 2.0,
+      "page": "https://ambientcg.com/view?id=Snow010A",
+      "archive": "https://ambientcg.com/get?file=Snow010A_4K-JPG.zip"
+    },
+    {
+      "id": "snow_02",
+      "provider": "polyhaven",
+      "resolution": "4k",
+      "width_m": 2.0,
+      "page": "https://polyhaven.com/a/snow_02"
+    },
+    {
+      "id": "snow_03",
+      "provider": "polyhaven",
+      "resolution": "4k",
+      "width_m": 2.0,
+      "page": "https://polyhaven.com/a/snow_03"
+    },
+    {
+      "id": "snow_01",
+      "provider": "polyhaven",
+      "resolution": "4k",
+      "width_m": 2.0,
+      "page": "https://polyhaven.com/a/snow_01"
+    }
+  ]
+}

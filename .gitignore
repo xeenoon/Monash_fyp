@@ -10,6 +10,8 @@
 /textures/.downloads/
 /textures/source/
 /textures/grass-source/
+/textures/snow-source/
+/textures/.snow-downloads/
 
 # Python bytecode caches.
 __pycache__/
@@ -17,3 +19,4 @@ __pycache__/
 # Repository-root notes and plans. Keep the public README tracked.
 /*.md
 !/readme.md
+/out/

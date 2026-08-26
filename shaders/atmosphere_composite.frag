@@ -21,6 +21,15 @@ float celestial_disk(vec3 view_direction, vec3 direction, float radius) {
     return smoothstep(outer, inner, dot(view_direction, direction));
 }
 
+/* There is no bloom pass in this renderer, so a physically-sized HDR sun disk
+   (~0.27 deg radius) reads as a near-invisible dot once tonemapped. This term
+   fakes the halation a bloom pass would add, tightly clamped so it stays a
+   small glow rather than washing out the sky. */
+float celestial_glow(vec3 view_direction, vec3 direction) {
+    float cosine = max(dot(view_direction, direction), 0.0);
+    return pow(cosine, 5000.0);
+}
+
 vec3 sky_with_celestials(vec3 view_direction) {
     vec3 to_sun = normalize(-frame.sun_direction.xyz);
     vec3 sky = textureLod(atmosphere_skyview_lut,
@@ -28,11 +37,12 @@ vec3 sky_with_celestials(vec3 view_direction) {
     vec3 transmittance = atmosphere_transmittance_to_sun(
         atmosphere_transmittance_lut, atmosphere_camera_position(), view_direction);
     float sun_disk = celestial_disk(
-        view_direction, to_sun, frame.atmosphere_radii.w * 1.35);
+        view_direction, to_sun, frame.atmosphere_radii.w * 2.7);
+    float sun_glow = celestial_glow(view_direction, to_sun);
     vec3 to_moon = -to_sun;
     float moon_disk = celestial_disk(
         view_direction, to_moon, frame.atmosphere_radii.w * 1.25);
-    vec3 sun = sun_disk * frame.sun_radiance.rgb * 8.0 * transmittance;
+    vec3 sun = (sun_disk + sun_glow * 0.25) * frame.sun_radiance.rgb * 8.0 * transmittance;
     vec3 moon = moon_disk * vec3(0.10, 0.12, 0.16) * transmittance;
     return sky + sun + moon;
 }
