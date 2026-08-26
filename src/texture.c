@@ -119,7 +119,8 @@ static Texture create_sampled(VkDevice device, GpuAllocator *allocator, VkFormat
 
 static void texture_load_format(VkDevice device, GpuAllocator *allocator,
 								struct UploadContext *upload, Texture *t, const char *path,
-								float max_anisotropy, VkFormat format)
+								float max_anisotropy, VkFormat format,
+								uint32_t max_mip_levels)
 {
 	int width, height, channels;
 	stbi_uc *pixels = stbi_load(path, &width, &height, &channels, STBI_rgb_alpha);
@@ -129,6 +130,8 @@ static void texture_load_format(VkDevice device, GpuAllocator *allocator,
 		exit(EXIT_FAILURE);
 	}
 	uint32_t mips = texture_mip_levels((uint32_t)width, (uint32_t)height);
+	if (max_mip_levels && mips > max_mip_levels)
+		mips = max_mip_levels;
 	*t = create_sampled(device, allocator, format, (uint32_t)width, (uint32_t)height, mips,
 						VK_SAMPLER_ADDRESS_MODE_REPEAT, max_anisotropy);
 	upload_pixels(upload, t, pixels, 4);
@@ -139,14 +142,22 @@ void texture_load(VkDevice device, GpuAllocator *allocator, struct UploadContext
 				  Texture *t, const char *path, float max_anisotropy)
 {
 	texture_load_format(device, allocator, upload, t, path, max_anisotropy,
-						VK_FORMAT_R8G8B8A8_SRGB);
+						VK_FORMAT_R8G8B8A8_SRGB, 0);
 }
 
 void texture_load_linear(VkDevice device, GpuAllocator *allocator, struct UploadContext *upload,
 						 Texture *t, const char *path, float max_anisotropy)
 {
 	texture_load_format(device, allocator, upload, t, path, max_anisotropy,
-						VK_FORMAT_R8G8B8A8_UNORM);
+						VK_FORMAT_R8G8B8A8_UNORM, 0);
+}
+
+void texture_load_linear_mip_limited(VkDevice device, GpuAllocator *allocator,
+								 struct UploadContext *upload, Texture *t, const char *path,
+								 float max_anisotropy, uint32_t max_mip_levels)
+{
+	texture_load_format(device, allocator, upload, t, path, max_anisotropy,
+						VK_FORMAT_R8G8B8A8_UNORM, max_mip_levels);
 }
 
 void texture_create_white(VkDevice device, GpuAllocator *allocator, struct UploadContext *upload,

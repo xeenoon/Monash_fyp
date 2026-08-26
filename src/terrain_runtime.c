@@ -242,9 +242,13 @@ static bool upload_node(TerrainRuntime *terrain, uint32_t index)
 							 terrain->renderer->upload, &runtime_tile->elevation, elevation,
 							 tile->header.sample_width, tile->header.sample_height);
 	free(elevation);
+	TerrainQuadNode *parent = node->parent != TERRAIN_QUADTREE_INVALID_NODE
+		? &terrain->tree.nodes[node->parent] : node;
+	RuntimeTile *parent_tile = parent->payload ? parent->payload : runtime_tile;
 	tile->base.material_set = renderer_allocate_terrain_set(
 		terrain->renderer, tile->base.texture.view, tile->base.texture.sampler,
-		runtime_tile->elevation.view, runtime_tile->elevation.sampler);
+		runtime_tile->elevation.view, runtime_tile->elevation.sampler,
+		parent_tile->tile.base.texture.view, parent_tile->tile.base.texture.sampler);
 	runtime_tile->upload = upload_last_ticket(terrain->renderer->upload);
 	return true;
 }
@@ -307,14 +311,34 @@ static bool fill_draw(TerrainRuntime *terrain, const TerrainQuadtreeView *view, 
 								   fmaxf(span_x, span_z) * terrain->settings.skirt_ratio}};
 	raster_uv(tile->header.sample_width, tile->header.gutter, &draw->push.elevation_uv);
 	raster_uv(tile->base.texture.extent.width, tile->header.gutter, &draw->push.imagery_uv);
-	/* A 4096 m phase is exactly periodic for every power-of-two surface
-	   scale used by terrain.frag. Reducing in double on the CPU preserves
-	   close-detail continuity at Earth-sized projected coordinates. */
+	/* The exact least-common-repeat of every scan width and the 32 m
+	   material grid is 2,745,120 m, but reducing to that magnitude and
+	   narrowing to float leaves only ~0.2 m of precision near typical
+	   camera positions (float32 ULP at ~2.6e6 is ~0.25) -- far coarser than
+	   the sub-metre decimetre math terrain.frag does with it, which showed
+	   up as per-fragment micro-normal/albedo noise (a dense dark crosshatch
+	   over grass). 4096 m keeps the reduced phase small enough to retain
+	   sub-centimetre precision; it is not an exact divisor of every scan
+	   width, so the micro-material phase can reseam at 4096 m world-space
+	   multiples, but that is a rare, thin seam far from any given tile
+	   rather than an everywhere-visible artifact. */
 	const double phase_period_m = 4096.0;
+	TerrainQuadNode *parent = node->parent != TERRAIN_QUADTREE_INVALID_NODE
+		? &terrain->tree.nodes[node->parent] : node;
+	float split = terrain->settings.quadtree.split_threshold_px;
+	float lod_fade = 1.0f;
+	if (node != parent)
+	{
+		float t = ((float)parent->error_px - split) / split;
+		t = fmaxf(0.0f, fminf(1.0f, t));
+		lod_fade = t * t * (3.0f - 2.0f * t);
+	}
+	uint32_t quadrant = node == parent ? 0u : terrain_tile_key_quadrant(node->key);
+	(void)temporal_valid;
 	draw->push.debug = (vec4s){{
-		temporal_valid ? (float)node->key.level : -(float)(node->key.level + 1u),
+		(float)node->key.level,
 		surface_detail_phase(tile->header.local_to_world.translation.x, phase_period_m),
-		surface_detail_phase(tile->header.local_to_world.translation.y, phase_period_m),
+		(float)quadrant + lod_fade * 0.125f,
 		surface_detail_phase(tile->header.local_to_world.translation.z, phase_period_m),
 	}};
 	return true;

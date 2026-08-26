@@ -16,6 +16,8 @@ from pathlib import Path
 
 from PIL import Image
 
+from terrain_tiles import Key, _resize_srgb, _slice_image
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DATASET = ROOT / "alps-data" / "trn-alps-16km"
@@ -83,7 +85,7 @@ def pixel_from_dataset(imagery_root: Path,
                                 global_y - tile_y * TILE_SIZE))
 
 
-def write_guttered_tile(imagery_root: Path,
+def write_guttered_tile(source_imagery_root: Path, output_imagery_root: Path,
                         masters: dict[tuple[int, int], tuple[Image.Image, int, int]],
                         tile_x: int, tile_y: int,
                         source_cache: dict[tuple[int, int], Image.Image]) -> None:
@@ -93,9 +95,42 @@ def write_guttered_tile(imagery_root: Path,
         for local_x in range(-GUTTER, TILE_SIZE + GUTTER):
             global_x = max(0, min(31 * TILE_SIZE + TILE_SIZE - 1, tile_x * TILE_SIZE + local_x))
             output.putpixel((local_x + GUTTER, local_y + GUTTER),
-                            pixel_from_dataset(imagery_root, masters, global_x, global_y,
+                            pixel_from_dataset(source_imagery_root, masters, global_x, global_y,
                                                source_cache))
-    output.save(imagery_root / str(tile_x) / f"{tile_y}.png")
+    output_path = output_imagery_root / str(tile_x) / f"{tile_y}.png"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output.save(output_path)
+
+
+def rebuild_ancestor_imagery(level5_root: Path) -> None:
+    """Regenerate levels 0--4 from the completed level-5 imagery mosaic.
+
+    Edited shadow-free masters replace level-5 interiors. Ancestors must be
+    regenerated from those replacements too: retaining the original imagery at
+    lower levels makes the quadtree switch between different colour datasets at
+    an LOD boundary.
+    """
+    if level5_root.name != "5":
+        raise ValueError(f"expected a level-5 imagery directory, got {level5_root}")
+    finest_size = TILE_SIZE * 32
+    finest = Image.new("RGB", (finest_size, finest_size))
+    for tile_y in range(32):
+        for tile_x in range(32):
+            finest.paste(source_interior(level5_root, tile_x, tile_y),
+                         (tile_x * TILE_SIZE, tile_y * TILE_SIZE))
+
+    imagery_root = level5_root.parent
+    for level in range(5):
+        count = 1 << level
+        level_image = _resize_srgb(finest, (TILE_SIZE * count, TILE_SIZE * count))
+        for tile_y in range(count):
+            for tile_x in range(count):
+                tile = _slice_image(level_image, Key(level, tile_x, tile_y),
+                                    TILE_SIZE, GUTTER)
+                path = imagery_root / str(level) / str(tile_x) / f"{tile_y}.png"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                tile.save(path)
+        print(f"rebuilt imagery level {level} from level-5 shadow-free imagery")
 
 
 def main() -> None:
@@ -108,11 +143,23 @@ def main() -> None:
                         help="coordinate-labelled 1024-pixel swatches, defining the order")
     parser.add_argument("--base-dir", type=Path, default=None,
                         help="persistent directory for coordinate-labelled 1024-pixel masters")
+    parser.add_argument("--source-imagery-root", type=Path, default=None,
+                        help="level-5 imagery used for unchanged pixels and edge gutters")
+    parser.add_argument("--output-imagery-root", type=Path, default=None,
+                        help="level-5 imagery directory to update (defaults to the source root)")
+    parser.add_argument("--rebuild-ancestors-only", action="store_true",
+                        help="regenerate imagery levels 0--4 from the existing level-5 imagery")
     args = parser.parse_args()
 
-    imagery_root = args.dataset / "imagery" / "5"
-    if not imagery_root.is_dir():
-        raise ValueError(f"missing level-5 imagery directory: {imagery_root}")
+    source_imagery_root = args.source_imagery_root or args.dataset / "imagery" / "5"
+    output_imagery_root = args.output_imagery_root or source_imagery_root
+    if not source_imagery_root.is_dir():
+        raise ValueError(f"missing source level-5 imagery directory: {source_imagery_root}")
+
+    if args.rebuild_ancestors_only:
+        rebuild_ancestor_imagery(output_imagery_root)
+        return
+
     coordinate_files = coordinate_masters(args.swatches_dir)
     edited_files = numbered_masters(args.masters_dir, len(coordinate_files))
     base_dir = args.base_dir or args.dataset / "shadowfree-masters"
@@ -145,10 +192,12 @@ def main() -> None:
 
     source_cache: dict[tuple[int, int], Image.Image] = {}
     for tile_x, tile_y in sorted(tiles_to_write, key=lambda key: (key[1], key[0])):
-        write_guttered_tile(imagery_root, masters, tile_x, tile_y, source_cache)
+        write_guttered_tile(source_imagery_root, output_imagery_root, masters,
+                            tile_x, tile_y, source_cache)
 
     for edited_file, base_path, master_x0, master_y0 in master_details:
         print(f"{edited_file.name} -> {base_path.name} -> level-5 tiles {master_x0}:{master_x0 + 3}, {master_y0}:{master_y0 + 3}")
+    rebuild_ancestor_imagery(output_imagery_root)
 
 
 if __name__ == "__main__":

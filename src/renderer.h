@@ -108,7 +108,8 @@ typedef struct
 		vec4s imagery_uv; /* terrain: scale U/V, bias U/V into imagery */
 		vec4s material;	  /* static mesh: metallic factor, shading mode */
 	};
-	vec4s debug; /* LOD and XYZ surface-texture world phase */
+	/* x: LOD, y/w: X/Z surface-texture phase, z: parent quadrant + LOD fade */
+	vec4s debug;
 } DrawPushConstants;
 
 typedef struct
@@ -276,8 +277,9 @@ VkDescriptorSet renderer_allocate_pbr5_set(Renderer *r, const Texture *albedo, c
 									   const Texture *normal_map, const Texture *occlusion,
 									   const Texture *cavity);
 VkDescriptorSet renderer_allocate_terrain_set(Renderer *r, VkImageView albedo_view,
-											  VkSampler albedo_sampler, VkImageView elevation_view,
-											  VkSampler elevation_sampler);
+												  VkSampler albedo_sampler, VkImageView elevation_view,
+												  VkSampler elevation_sampler, VkImageView parent_albedo_view,
+												  VkSampler parent_albedo_sampler);
 void renderer_free_material_set(Renderer *r, VkDescriptorSet set);
 
 /* Manual shader reload: rebuild the graphics pipeline from the current .spv on

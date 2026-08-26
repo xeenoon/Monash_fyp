@@ -146,8 +146,9 @@ _Static_assert(sizeof(EnvironmentUniforms) == 160, "EnvironmentUniforms std140 s
 #define ENV_FACE_SIZE 128u
 
 VkDescriptorSet renderer_allocate_terrain_set(Renderer *r, VkImageView albedo_view,
-											  VkSampler albedo_sampler, VkImageView elevation_view,
-											  VkSampler elevation_sampler)
+												  VkSampler albedo_sampler, VkImageView elevation_view,
+												  VkSampler elevation_sampler, VkImageView parent_albedo_view,
+												  VkSampler parent_albedo_sampler)
 {
 	VkDescriptorSetAllocateInfo alloc = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
 										 .descriptorPool = r->descriptor_pool,
@@ -155,7 +156,7 @@ VkDescriptorSet renderer_allocate_terrain_set(Renderer *r, VkImageView albedo_vi
 										 .pSetLayouts = &r->material_set_layout};
 	VkDescriptorSet set;
 	VK_CHECK(vkAllocateDescriptorSets(r->device, &alloc, &set));
-	VkDescriptorImageInfo images[5] = {
+	VkDescriptorImageInfo images[6] = {
 		{.sampler = albedo_sampler,
 		 .imageView = albedo_view,
 		 .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
@@ -171,8 +172,11 @@ VkDescriptorSet renderer_allocate_terrain_set(Renderer *r, VkImageView albedo_vi
 		{.sampler = r->terrain_micro_ormh.sampler,
 		 .imageView = r->terrain_micro_ormh.view,
 		 .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+		{.sampler = parent_albedo_sampler,
+		 .imageView = parent_albedo_view,
+		 .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
 	};
-	VkWriteDescriptorSet writes[5] = {
+	VkWriteDescriptorSet writes[6] = {
 		{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 		 .dstSet = set,
 		 .dstBinding = 0,
@@ -203,8 +207,14 @@ VkDescriptorSet renderer_allocate_terrain_set(Renderer *r, VkImageView albedo_vi
 		 .descriptorCount = 1,
 		 .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		 .pImageInfo = &images[4]},
+		{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+		 .dstSet = set,
+		 .dstBinding = 5,
+		 .descriptorCount = 1,
+		 .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+		 .pImageInfo = &images[5]},
 	};
-	vkUpdateDescriptorSets(r->device, 5, writes, 0, NULL);
+	vkUpdateDescriptorSets(r->device, 6, writes, 0, NULL);
 	return set;
 }
 
@@ -379,7 +389,7 @@ static void create_descriptors(Renderer *r)
 		.pBindings = frame_bindings};
 	VK_CHECK(vkCreateDescriptorSetLayout(r->device, &frame_layout, NULL, &r->frame_set_layout));
 
-	VkDescriptorSetLayoutBinding material_bindings[5] = {
+	VkDescriptorSetLayoutBinding material_bindings[6] = {
 		{.binding = 0,
 		 .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		 .descriptorCount = 1,
@@ -400,10 +410,14 @@ static void create_descriptors(Renderer *r)
 		 .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		 .descriptorCount = 1,
 		 .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+		{.binding = 5,
+		 .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+		 .descriptorCount = 1,
+		 .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
 	};
 	VkDescriptorSetLayoutCreateInfo material_layout = {
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-		.bindingCount = 5,
+		.bindingCount = 6,
 		.pBindings = material_bindings};
 	VK_CHECK(
 		vkCreateDescriptorSetLayout(r->device, &material_layout, NULL, &r->material_set_layout));
@@ -462,7 +476,7 @@ static void create_descriptors(Renderer *r)
 		 .descriptorCount = MAX_FRAMES_IN_FLIGHT * 2u /* frame UBO + environment UBO */},
 		{.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		 .descriptorCount =
-			 MAX_TEXTURE_SETS * 5u + MAX_FRAMES_IN_FLIGHT * 2u + 20u + ENV_CUBE_MIPS},
+			 MAX_TEXTURE_SETS * 6u + MAX_FRAMES_IN_FLIGHT * 2u + 20u + ENV_CUBE_MIPS},
 		{.type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = 5u + ENV_CUBE_MIPS},
 		{.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = MAX_FRAMES_IN_FLIGHT + 2u}};
 	uint32_t pool_size_count = 4;
@@ -544,12 +558,22 @@ static void create_descriptors(Renderer *r)
 							  linear_white, false);
 	texture_create_solid_rgba8(r->device, r->allocator, r->upload, &r->fallback_normal_texture,
 							  flat_normal, false);
-	texture_load_linear(r->device, r->allocator, r->upload, &r->terrain_micro_albedo,
-					TEXTURE_DIR "/runtime/terrain_micro_albedo.png", r->max_anisotropy);
-	texture_load_linear(r->device, r->allocator, r->upload, &r->terrain_micro_normal,
-					TEXTURE_DIR "/runtime/terrain_micro_normal.png", r->max_anisotropy);
-	texture_load_linear(r->device, r->allocator, r->upload, &r->terrain_micro_ormh,
-					TEXTURE_DIR "/runtime/terrain_micro_ormh.png", r->max_anisotropy);
+	/* Atlas cells have an 8-pixel wrap gutter.  Four levels (0..3) preserve at
+	   least one gutter texel; lower global mips blend the 4x4 atlas cells and
+	   the intentionally empty black sixteenth cell into terrain samples. */
+	const uint32_t micro_atlas_mip_levels = 4u;
+	texture_load_linear_mip_limited(r->device, r->allocator, r->upload,
+									 &r->terrain_micro_albedo,
+									 TEXTURE_DIR "/runtime/terrain_micro_albedo.png",
+									 r->max_anisotropy, micro_atlas_mip_levels);
+	texture_load_linear_mip_limited(r->device, r->allocator, r->upload,
+									 &r->terrain_micro_normal,
+									 TEXTURE_DIR "/runtime/terrain_micro_normal.png",
+									 r->max_anisotropy, micro_atlas_mip_levels);
+	texture_load_linear_mip_limited(r->device, r->allocator, r->upload,
+									 &r->terrain_micro_ormh,
+									 TEXTURE_DIR "/runtime/terrain_micro_ormh.png",
+									 r->max_anisotropy, micro_atlas_mip_levels);
 	r->fallback_material_set = renderer_allocate_pbr5_set(r, &r->fallback_texture,
 		&r->fallback_linear_texture, &r->fallback_normal_texture, &r->fallback_linear_texture,
 		&r->fallback_linear_texture);
@@ -1989,9 +2013,9 @@ void renderer_clear_shader_dump(const char *path)
 /* Per-shader documentation for the 20 generic f0..f19 columns. Keep in sync
    with the shader_dump() call in each instrumented .frag file. */
 static const char *const SHADER_DUMP_LEGEND[] = {
-	"# legend: terrain/mesh f0-1=uv f2=roughness f3=NoL f4-6=base_color f7=visibility "
-	"f8-10=N f11=metallic f12-14=cam_rel_pos f15=relight/default_lit "
-	"f16-18=irradiance f19=AO\n",
+	"# legend: terrain f0-2=macro_tint f3=micro_luminance f4-6=surface_N f7=detail_weight "
+	"f8-10=micro_tangent_N f11=grass_weight f12-14=base_color f15=roughness "
+	"f16-18=final_HDR f19=NoL; mesh retains legacy terrain/mesh layout\n",
 	"# legend: cube f0-2=normal f3=diffuse f4=lighting f5-7=out_color f8-19=_\n",
 	"# legend: atmosphere_composite f0-1=texcoord f2=depth f3=branch(1=lut,2=pass,3=sky,4=aerial) "
 	"f4-6=out_color f7=_ f8-10=view_dir f11=distance_km f12-14=scattering f15=near_weight "

@@ -68,6 +68,12 @@ void texture_load(VkDevice device, GpuAllocator *allocator, struct UploadContext
    such as metallic/roughness/AO and tangent-space normals. */
 void texture_load_linear(VkDevice device, GpuAllocator *allocator, struct UploadContext *upload,
 						 Texture *t, const char *path, float max_anisotropy);
+/* Linear image loading with a capped mip chain.  Use this for atlases whose
+   per-cell gutters are valid only through a fixed mip level; generating the
+   remaining global mips would blend neighbouring atlas cells. */
+void texture_load_linear_mip_limited(VkDevice device, GpuAllocator *allocator,
+								 struct UploadContext *upload, Texture *t, const char *path,
+								 float max_anisotropy, uint32_t max_mip_levels);
 
 /* 1x1 opaque-white sRGB texture used as the fallback for untextured meshes. */
 void texture_create_white(VkDevice device, GpuAllocator *allocator, struct UploadContext *upload,

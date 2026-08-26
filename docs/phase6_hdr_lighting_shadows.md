@@ -31,8 +31,10 @@ transmittance.
 
 ## Cascaded shadows
 
-`shadow_cascade.c` builds four camera-relative matrices with 120, 350, 1000,
-and 3000 metre splits. Each frustum slice is enclosed by a light-space sphere,
+`shadow_cascade.c` builds four camera-relative matrices with 120, 500, 2500,
+and 12000 m splits. The first three stay dense for nearby terrain; the broad
+last cascade prevents visible terrain beyond 3 km from silently falling back to
+fully lit while relighting is enabled. Each frustum slice is enclosed by a light-space sphere,
 the radius is quantised, and its XY centre is snapped to the 2048-pixel shadow
 grid (2048² by default; 4096² is an explicit benchmark option). The snap is calculated from the absolute double-precision camera position
 before being reduced back to a small float matrix. This keeps the grid fixed in

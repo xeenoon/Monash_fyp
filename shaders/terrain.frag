@@ -26,6 +26,7 @@ layout(set = 1, binding = 1) uniform sampler2D elevation_map;
 layout(set = 1, binding = 2) uniform sampler2D micro_albedo_atlas;
 layout(set = 1, binding = 3) uniform sampler2D micro_normal_atlas;
 layout(set = 1, binding = 4) uniform sampler2D micro_ormh_atlas;
+layout(set = 1, binding = 5) uniform sampler2D parent_macro_color_map;
 
 layout(push_constant) uniform DrawData {
     mat4 local_to_camera_relative;
@@ -91,15 +92,24 @@ uint material_hash(ivec2 cell) {
 }
 
 uint material_index(ivec2 cell, uint first, uint count) {
+    /* The detail coordinate repeats every phase_period_m (terrain_runtime.c),
+       currently 4096 m / 32 m-per-cell = 128 cells. Wrap the hashed cell to
+       match, otherwise the selected material jumps when that coordinate
+       wraps. Kept small (not the exact LCM of every scan width) so the CPU
+       phase stays float32-precise near the camera -- see the comment on
+       phase_period_m. */
+    const int material_region_period = 128;
+    cell = ivec2((cell.x % material_region_period + material_region_period) % material_region_period,
+                 (cell.y % material_region_period + material_region_period) % material_region_period);
     return first + material_hash(cell) % count;
 }
 
-float material_width_metres(uint index) {
+float material_width_decimetres(uint index) {
 const float widths[15] = float[15](
-    6.0, 6.0, 6.0, 8.0, 8.0,
-    17.2, 22.8, 16.0, 20.0,
-    5.6, 5.6, 5.6, 8.0, 4.0,
-    8.0
+    60.0, 60.0, 60.0, 80.0, 80.0,
+    172.0, 228.0, 160.0, 200.0,
+    56.0, 56.0, 56.0, 80.0, 40.0,
+    80.0
 );
     return widths[index];
 }
@@ -122,14 +132,33 @@ struct MicroMaterial {
 };
 
 MicroMaterial sample_micro(uint index, vec2 world_xz) {
-    float width_m = material_width_metres(index);
-    vec2 tiled_uv = world_xz / width_m;
-    vec2 atlas_uv = material_atlas_uv(index, tiled_uv);
+    float width_dm = material_width_decimetres(index);
+    /* Keep the texture coordinate derivative unwrapped, but form the sampled
+       fraction in decimetres. DETAIL_PHASE_PERIOD_M is an exact common repeat
+       of every scan width, so this avoids a float rounding seam at tile edges. */
+    vec2 tiled_uv = world_xz * (10.0 / width_dm);
+    vec2 tile_fraction = mod(world_xz * 10.0, width_dm) / width_dm;
+    vec2 atlas_uv = material_atlas_uv(index, tile_fraction);
     /* The per-cell wrap gutter occupies 8/528 of a cell. Scale derivatives to
        the atlas interior so implicit filtering never sees a 3x3 cell jump. */
     float derivative_scale = (512.0 / 528.0) / 4.0;
     vec2 dx = dFdxCoarse(tiled_uv) * derivative_scale;
     vec2 dy = dFdyCoarse(tiled_uv) * derivative_scale;
+    /* derivative_scale only maps up to one tile repeat per fragment into the
+       cell interior. At grazing/distant view a fragment's footprint can span
+       several repeats of a narrow (down to 4 m) scan, pushing dx/dy past the
+       cell boundary; textureGrad's implicit mip then bleeds neighbouring
+       atlas cells' unrelated materials into the sample -- occasional
+       fragments read a wildly different normal/roughness than their
+       neighbours, seen as a dark crosshatch. Clamp the footprint to the cell
+       interior so mip selection never leaves this material's cell; beyond
+       that distance the pattern aliases instead of blending in other scans. */
+    float dx_len = length(dx);
+    float dy_len = length(dy);
+    if (dx_len > derivative_scale)
+        dx *= derivative_scale / dx_len;
+    if (dy_len > derivative_scale)
+        dy *= derivative_scale / dy_len;
     vec3 detail = textureGrad(micro_albedo_atlas, atlas_uv, dx, dy).rgb;
     vec3 normal = textureGrad(micro_normal_atlas, atlas_uv, dx, dy).xyz * 2.0 - 1.0;
     vec4 ormh = textureGrad(micro_ormh_atlas, atlas_uv, dx, dy);
@@ -205,9 +234,19 @@ void main() {
     }
 
     HeightSurface surface = height_surface();
-    vec4 macro_sample = textureGrad(macro_color_map, imagery_uv,
-                                    dFdxCoarse(imagery_uv),
-                                    dFdyCoarse(imagery_uv));
+    vec4 child_macro = textureGrad(macro_color_map, imagery_uv,
+                                   dFdxCoarse(imagery_uv),
+                                   dFdyCoarse(imagery_uv));
+    float parent_quadrant = floor(draw.debug.z);
+    vec2 parent_tile_uv = tile_uv * 0.5 + 0.5 * vec2(
+        mod(parent_quadrant, 2.0), floor(parent_quadrant * 0.5));
+    vec2 parent_imagery_uv = parent_tile_uv * draw.imagery_uv_transform.xy +
+                             draw.imagery_uv_transform.zw;
+    vec4 parent_macro = textureGrad(parent_macro_color_map, parent_imagery_uv,
+                                    dFdxCoarse(parent_imagery_uv),
+                                    dFdyCoarse(parent_imagery_uv));
+    float lod_fade = clamp(fract(draw.debug.z) * 8.0, 0.0, 1.0);
+    vec4 macro_sample = mix(parent_macro, child_macro, lod_fade);
     vec3 macro_tint = macro_sample.rgb;
     /* Golden synthesis owns RGB. Alpha is the separately composed Alpine
        rock/grass classification, so material selection remains water-free
@@ -217,17 +256,30 @@ void main() {
     grass_weight *= 1.0 - 0.40 * steepness;
     float rock_weight = 1.0 - grass_weight;
 
-    vec3 world_phase = local_position + draw.debug.yzw;
+    /* draw.debug.yw is the tile's world-space origin reduced modulo
+       phase_period_m (4096 m, terrain_runtime.c) in double on the CPU, so it
+       stays small enough here to keep full float32 precision once added to
+       the small tile-local coordinate below. */
+    vec2 world_phase = local_position.xz + draw.debug.yw;
     /* Golden already supplies macro and meso structure. The authored scans are
        a deliberately subordinate, true-scale PBR layer. */
-    MicroMaterial micro = classified_micro(world_phase.xz, grass_weight);
+    MicroMaterial micro = classified_micro(world_phase, grass_weight);
     float view_distance = length(camera_relative_position);
     float detail_fade = 1.0 - smoothstep(4000.0, 12000.0, view_distance);
     const float detail_weight = 0.65;
     float weighted_detail = detail_weight * detail_fade;
-    vec3 micro_local_normal = vec3(micro.tangent_normal.x,
-                                   micro.tangent_normal.z,
-                                   micro.tangent_normal.y);
+    /* Scan normals are tangent-space data. Reorient them around the terrain
+       normal; treating their Z component as world-up made steep close-range
+       cells falsely face the sun. Keep the original flat-ground orientation
+       (tangent +X, bitangent +Z) for visual continuity. */
+    vec3 tangent_reference = abs(surface.local_normal.x) < 0.95
+        ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 0.0, 1.0);
+    vec3 tangent = normalize(tangent_reference - surface.local_normal *
+                             dot(tangent_reference, surface.local_normal));
+    vec3 bitangent = normalize(cross(tangent, surface.local_normal));
+    vec3 micro_local_normal = normalize(tangent * micro.tangent_normal.x +
+                                        bitangent * micro.tangent_normal.y +
+                                        surface.local_normal * micro.tangent_normal.z);
     vec3 material_local_normal = normalize(mix(surface.local_normal,
                                                 micro_local_normal,
                                                 weighted_detail));
@@ -308,11 +360,11 @@ void main() {
     out_color = vec4(final_color, 1.0);
 
     shader_dump(DUMP_SHADER_TERRAIN,
-                vec4(imagery_uv, roughness, NoL),
-                vec4(base_color, shadow.visibility),
-                vec4(geometric_normal, metallic),
-                vec4(camera_relative_position, frame.relight_strength),
-                vec4(environment.irradiance, ao));
+                vec4(macro_tint, micro.luminance_factor),
+                vec4(surface.local_normal, weighted_detail),
+                vec4(micro.tangent_normal, grass_weight),
+                vec4(base_color, roughness),
+                vec4(final_color, NoL));
     shader_dump(DUMP_SHADER_ENVIRONMENT_IBL,
                 vec4(environment.reflection_direction, environment.mip),
                 vec4(environment.sampled_reflection_radiance, environment.NoV),

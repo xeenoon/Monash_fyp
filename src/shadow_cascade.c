@@ -52,7 +52,13 @@ ShadowCascadeConfig shadow_cascade_default_config(float aspect)
 {
 	return (ShadowCascadeConfig){
 		.near_plane_m = 0.5f,
-		.split_m = {120.0f, 350.0f, 1000.0f, 3000.0f},
+		/* Keep the first three maps tight for crisp local contact shadows.  The
+		   final map is deliberately broad: terrain imagery is visible well past
+		   the old 3 km limit, and receivers outside every cascade are (correctly
+		   for an unshadowed area) treated as fully lit by the shader.  With fully
+		   relit aerial imagery that fallback looked like lighting followed the
+		   camera. */
+		.split_m = {120.0f, 500.0f, 2500.0f, 12000.0f},
 		.vertical_fov_radians = glm_rad(60.0f),
 		.aspect = aspect,
 		.resolution = SHADOW_MAP_RESOLUTION_DEFAULT,

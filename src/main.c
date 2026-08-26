@@ -19,6 +19,26 @@
 #define WINDOW_WIDTH 1280
 #define WINDOW_HEIGHT 720
 
+typedef enum TerrainTextureSet {
+	TERRAIN_TEXTURES_UNSHADOWED,
+	TERRAIN_TEXTURES_SHADOWED,
+} TerrainTextureSet;
+
+static bool terrain_texture_set_from_arguments(int argc, char *argv[], TerrainTextureSet *out)
+{
+	*out = TERRAIN_TEXTURES_UNSHADOWED;
+	for (int i = 1; i < argc; ++i)
+	{
+		if (strcmp(argv[i], "--terrain-textures=unshadowed") == 0)
+			*out = TERRAIN_TEXTURES_UNSHADOWED;
+		else if (strcmp(argv[i], "--terrain-textures=shadowed") == 0)
+			*out = TERRAIN_TEXTURES_SHADOWED;
+		else if (strncmp(argv[i], "--terrain-textures=", 19) == 0)
+			return false;
+	}
+	return true;
+}
+
 static ShadowQualitySettings shadow_quality_from_environment(void)
 {
 	ShadowQualitySettings q = {.filter_mode = SHADOW_FILTER_PCF,
@@ -70,8 +90,15 @@ static_material_push(LocalToWorldTransform transform, WorldPosition camera_posit
 				   curvature_strength}}};
 }
 
-int main(void)
+int main(int argc, char *argv[])
 {
+	TerrainTextureSet terrain_textures;
+	if (!terrain_texture_set_from_arguments(argc, argv, &terrain_textures))
+	{
+		fprintf(stderr, "Terrain textures must be unshadowed or shadowed. Example: "
+				"--terrain-textures=shadowed\n");
+		return EXIT_FAILURE;
+	}
 	const char *scene = getenv("TERRAIN_SCENE");
 	bool use_terrain = !scene || strcmp(scene, "terrain") == 0;
 	bool use_quarry = scene && strcmp(scene, "quarry") == 0;
@@ -135,9 +162,16 @@ int main(void)
 	GltfLoadResult load_result = GLTF_LOAD_OK;
 	if (use_terrain)
 	{
-		const char *dataset_root = getenv("TERRAIN_DATASET");
-		if (!dataset_root || !*dataset_root)
-			dataset_root = TRN_DIR;
+		const char *dataset_root = terrain_textures == TERRAIN_TEXTURES_SHADOWED
+			? SHADOWED_TERRAIN_DIR : TRN_DIR;
+		if (terrain_textures == TERRAIN_TEXTURES_UNSHADOWED)
+		{
+			const char *override_root = getenv("TERRAIN_DATASET");
+			if (override_root && *override_root)
+				dataset_root = override_root;
+		}
+		printf("Terrain textures: %s\n", terrain_textures == TERRAIN_TEXTURES_SHADOWED
+			? "shadowed" : "unshadowed");
 		TerrainRuntimeSettings settings = terrain_runtime_default_settings();
 		settings.quadtree.split_threshold_px = 2.5f;
 		settings.quadtree.merge_threshold_px = 1.75f;
@@ -234,7 +268,10 @@ int main(void)
 		SDL_SetWindowTitle(window, "Phase D demo — LEFT: Phase C/raw | RIGHT: Phase D/stabilized");
 	bool demo_flyby_phase_d = false;
 	unsigned debug_mode = 0;
-	unsigned relight_mode = 1;
+	/* Shadow-free footage is an illumination-neutral terrain source. Starting it
+	   in the subtle 35% blend leaves a 65% unlit floor in every shadow, so it
+	   cannot reproduce the contrast of the baked-light reference imagery. */
+	unsigned relight_mode = terrain_textures == TERRAIN_TEXTURES_UNSHADOWED ? 2u : 1u;
 	unsigned sun_mode = 0;
 	unsigned atmosphere_slice = 15;
 	/* F3 exposes the delivery sequence: legacy -> A (Default Lit) -> B1
