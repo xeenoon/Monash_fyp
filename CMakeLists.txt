@@ -155,6 +155,7 @@ target_compile_definitions(terrain_renderer PRIVATE
     TRN_DIR="${ACTIVE_TERRAIN_DATASET_DIR}"
     SHADOWED_TERRAIN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/alps-data/trn-alps-16km-shadowed"
     UNSHADOWED_ALPS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/alps-data/trn-alps-16km"
+    GRADED_ALPS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/alps-data/trn-alps-16km-graded"
     ENV_HDR_PATH="${CMAKE_CURRENT_SOURCE_DIR}/assets/env.hdr"
     CGLM_FORCE_DEPTH_ZERO_TO_ONE)
 if(DEBUG_SHADER_DUMP)

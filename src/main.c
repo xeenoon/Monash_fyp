@@ -228,17 +228,35 @@ int main(int argc, char *argv[])
 		   artifacts reproduce. TRN_DIR is a tiny 1 km test pyramid whose world
 		   origin is elsewhere, so booting there shows empty sky at these
 		   coordinates. Override with TERRAIN_DATASET=... (e.g. TRN_DIR) or the
-		   shadowed set via --terrain-textures=shadowed. */
+		   shadowed set via --terrain-textures=shadowed.
+
+		   Within the unshadowed set, GRADED_ALPS_DIR (built by
+		   tools/build_graded_alps_dataset.py) is UNSHADOWED_ALPS_DIR's imagery/
+		   regenerated from colour-graded AI shadow-removal masters -- the
+		   ungraded masters in shadowfree-masters/ read as washed-out/chalky in
+		   full sun once exposure was fixed to stop masking it (macro_tint /
+		   base_color luminance in sunlit rock was averaging ~1.8x the shader's
+		   own neutral-rock reference, material_macro_reference_luminance(7u) in
+		   shaders/terrain.frag). GRADED_ALPS_DIR shares tiles/ and manifest.json
+		   with UNSHADOWED_ALPS_DIR via symlink (geometry is unchanged) and is now
+		   the default; ATLAS=OLD reverts to the ungraded imagery for comparison. */
 		const char *dataset_root = terrain_textures == TERRAIN_TEXTURES_SHADOWED
-			? SHADOWED_TERRAIN_DIR : UNSHADOWED_ALPS_DIR;
+			? SHADOWED_TERRAIN_DIR : GRADED_ALPS_DIR;
+		const char *atlas = "new";
 		if (terrain_textures == TERRAIN_TEXTURES_UNSHADOWED)
 		{
+			const char *atlas_env = getenv("ATLAS");
+			if (atlas_env && strcmp(atlas_env, "OLD") == 0)
+			{
+				dataset_root = UNSHADOWED_ALPS_DIR;
+				atlas = "old";
+			}
 			const char *override_root = getenv("TERRAIN_DATASET");
 			if (override_root && *override_root)
 				dataset_root = override_root;
 		}
-		printf("Terrain textures: %s\n", terrain_textures == TERRAIN_TEXTURES_SHADOWED
-			? "shadowed" : "unshadowed");
+		printf("Terrain textures: %s (atlas=%s)\n", terrain_textures == TERRAIN_TEXTURES_SHADOWED
+			? "shadowed" : "unshadowed", atlas);
 		TerrainRuntimeSettings settings = terrain_runtime_default_settings();
 		settings.quadtree.split_threshold_px = 2.5f;
 		settings.quadtree.merge_threshold_px = 1.75f;
