@@ -8,6 +8,8 @@ include(CTest)
 # with 'C' or a clean build). Off by default; enable with -DDEBUG_SHADER_DUMP=ON.
 # See renderer_dump_shader_data.
 option(DEBUG_SHADER_DUMP "Enable the 'X'-key per-fragment shader data dump" OFF)
+option(TERRAIN_STRETCH_OVERLAY
+    "Compile the diagnostic red terrain texture-stretch overlay" OFF)
 option(TERRAIN_GOLDEN
     "Boot the modern-render/legacy-sampling golden terrain dataset by default" ON)
 set(SHADER_DUMP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/debug_dumps")
@@ -60,6 +62,9 @@ else()
 endif()
 if(DEBUG_SHADER_DUMP)
     list(APPEND GLSLC_FLAGS -DDEBUG_SHADER_DUMP)
+endif()
+if(TERRAIN_STRETCH_OVERLAY)
+    list(APPEND GLSLC_FLAGS -DTERRAIN_STRETCH_OVERLAY)
 endif()
 
 # Explicit shader permutation list. Add permutations here rather than growing
@@ -159,6 +164,9 @@ if(DEBUG_SHADER_DUMP)
     # A clean build wipes accumulated dumps, as does the in-app 'C' key.
     set_directory_properties(PROPERTIES ADDITIONAL_CLEAN_FILES "${SHADER_DUMP_DIR}")
 endif()
+if(TERRAIN_STRETCH_OVERLAY)
+    target_compile_definitions(terrain_renderer PRIVATE TERRAIN_STRETCH_OVERLAY)
+endif()
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(terrain_renderer PRIVATE -Wall -Wextra -Wpedantic)
@@ -201,6 +209,12 @@ if(BUILD_TESTING)
         COMMAND "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_terrain_micro_atlas_tests.py"
                 --tool "${CMAKE_CURRENT_SOURCE_DIR}/tools/build_terrain_micro_atlas.py")
+
+    add_test(NAME terrain_texture_stretch_detection
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/detect_texture_stretch_tests.py"
+                --tool "${CMAKE_CURRENT_SOURCE_DIR}/tools/detect_texture_stretch.py"
+                --terrain-tool "${CMAKE_CURRENT_SOURCE_DIR}/tools/terrain_tiles.py")
 
     add_executable(phase3_tile_loader_tests
         tests/phase3_tile_loader_tests.c

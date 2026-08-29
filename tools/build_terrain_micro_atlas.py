@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build compact rock + grass runtime atlases from the CC0 PBR library."""
+"""Build compact rock + grass + snow runtime atlases from the CC0 PBR library."""
 
 from __future__ import annotations
 
@@ -55,9 +55,7 @@ def _scalar(path: Path | None, size: int, default: float) -> np.ndarray:
 
 
 def _highpass_luminance(albedo: np.ndarray) -> np.ndarray:
-    srgb = albedo
-    linear = np.where(srgb <= 0.04045, srgb / 12.92,
-                      ((srgb + 0.055) / 1.055) ** 2.4)
+    linear = _linear_albedo(albedo)
     luminance = linear @ np.array((0.2126, 0.7152, 0.0722), dtype=np.float32)
     low = ndimage.gaussian_filter(luminance, sigma=max(3.0, albedo.shape[0] / 24.0),
                                   mode="wrap")
@@ -65,6 +63,12 @@ def _highpass_luminance(albedo: np.ndarray) -> np.ndarray:
     # Stored in a linear UNORM texture: 0.5 is the exact multiplicative neutral.
     encoded = ratio * 0.5
     return np.repeat(encoded[..., None], 3, axis=-1)
+
+
+def _linear_albedo(srgb: np.ndarray) -> np.ndarray:
+    """Decode source sRGB for the runtime atlas' linear UNORM sampler."""
+    return np.where(srgb <= 0.04045, srgb / 12.92,
+                    ((srgb + 0.055) / 1.055) ** 2.4)
 
 
 def _normal(path: Path | None, directx: bool, size: int) -> np.ndarray:
@@ -112,11 +116,13 @@ def _load_bank(manifest_path: Path, source_root: Path, bank: str,
 
 
 def build(rock_manifest: Path, rock_source: Path,
-          grass_manifest: Path, grass_source: Path, output: Path,
+          grass_manifest: Path, grass_source: Path,
+          snow_manifest: Path, snow_source: Path, output: Path,
           cell_size: int, gutter: int) -> None:
     entries = (
         _load_bank(rock_manifest, rock_source, "rock", 9)
         + _load_bank(grass_manifest, grass_source, "grass", 6)
+        + _load_bank(snow_manifest, snow_source, "snow", 6)
     )
     if cell_size < 16 or gutter < 1 or gutter * 2 >= cell_size:
         raise ValueError("invalid cell size/gutter")
@@ -140,12 +146,14 @@ def build(rock_manifest: Path, rock_source: Path,
         if albedo_path is None:
             raise FileNotFoundError(f"no albedo found for {material['id']} under {directory}")
         print(f"{index}: {bank}/{material['id']} ({albedo_path.name})", flush=True)
-        albedo = _gutter(_highpass_luminance(_rgb(albedo_path, cell_size)), gutter)
+        source_albedo = _rgb(albedo_path, cell_size)
+        albedo = _gutter(_linear_albedo(source_albedo), gutter)
+        micro_luminance = _highpass_luminance(source_albedo)[..., 0]
         normal = _gutter(_normal(normal_path, directx, cell_size), gutter)
         ao = _scalar(ao_path, cell_size, 1.0)
         roughness = _scalar(roughness_path, cell_size, 0.82)
         height = _normalized_height(height_path, cell_size)
-        ormh = _gutter(np.stack((ao, roughness, np.zeros_like(ao), height), axis=-1), gutter)
+        ormh = _gutter(np.stack((ao, roughness, micro_luminance, height), axis=-1), gutter)
         row, column = divmod(index, grid)
         ys, xs = slice(row * padded, (row + 1) * padded), slice(column * padded, (column + 1) * padded)
         albedo_atlas[ys, xs] = albedo
@@ -163,7 +171,8 @@ def build(rock_manifest: Path, rock_source: Path,
         "cell_size": cell_size,
         "gutter": gutter,
         "banks": {"rock": {"first": 0, "count": 9},
-                  "grass": {"first": 9, "count": 6}},
+                  "grass": {"first": 9, "count": 6},
+                  "snow": {"first": 15, "count": 6}},
         "materials": layout,
     }
     (output / "atlas.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
@@ -179,14 +188,19 @@ def main() -> int:
                         default=ROOT / "textures" / "grass_manifest.json")
     parser.add_argument("--grass-source", type=Path,
                         default=ROOT / "textures" / "grass-source")
+    parser.add_argument("--snow-manifest", type=Path,
+                        default=ROOT / "textures" / "snow_manifest.json")
+    parser.add_argument("--snow-source", type=Path,
+                        default=ROOT / "textures" / "snow-source")
     parser.add_argument("--output", type=Path, default=ROOT / "textures" / "runtime")
     parser.add_argument("--cell-size", type=int, default=512)
     parser.add_argument("--gutter", type=int, default=8)
     args = parser.parse_args()
     build(args.rock_manifest, args.rock_source,
           args.grass_manifest, args.grass_source,
+          args.snow_manifest, args.snow_source,
           args.output, args.cell_size, args.gutter)
-    print(f"wrote 4 x 4 rock + grass runtime atlases under {args.output}")
+    print(f"wrote 5 x 5 rock + grass + snow runtime atlases under {args.output}")
     return 0
 
 

@@ -1,6 +1,9 @@
 /build*/
 /trn/
 /alps-data/
+# Pre-overlay backup of alps-data/trn-alps-16km/imagery (already covered by
+# /alps-data/ above; listed explicitly since it's a generated backup, not data).
+/alps-data/trn-alps-16km-imagery-backup/
 /inspo/
 /valley-of-the-ancient/
 /benchmark-assets/

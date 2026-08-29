@@ -1,5 +1,5 @@
 {
-  "grid": 4,
+  "grid": 5,
   "cell_size": 512,
   "gutter": 8,
   "banks": {
@@ -9,6 +9,10 @@
     },
     "grass": {
       "first": 9,
+      "count": 6
+    },
+    "snow": {
+      "first": 15,
       "count": 6
     }
   },
@@ -49,8 +53,8 @@
       "index": 4,
       "bank": "rock",
       "id": "rock040",
-      "row": 1,
-      "column": 0,
+      "row": 0,
+      "column": 4,
       "width_m": 2.0
     },
     {
@@ -58,7 +62,7 @@
       "bank": "rock",
       "id": "marble_cliff_01",
       "row": 1,
-      "column": 1,
+      "column": 0,
       "width_m": 4.3
     },
     {
@@ -66,7 +70,7 @@
       "bank": "rock",
       "id": "marble_cliff_03",
       "row": 1,
-      "column": 2,
+      "column": 1,
       "width_m": 5.7
     },
     {
@@ -74,23 +78,23 @@
       "bank": "rock",
       "id": "rocky_mountain_cliff_face",
       "row": 1,
-      "column": 3,
+      "column": 2,
       "width_m": 4.0
     },
     {
       "index": 8,
       "bank": "rock",
       "id": "layered_cliff_rock",
-      "row": 2,
-      "column": 0,
+      "row": 1,
+      "column": 3,
       "width_m": 5.0
     },
     {
       "index": 9,
       "bank": "grass",
       "id": "Grass001",
-      "row": 2,
-      "column": 1,
+      "row": 1,
+      "column": 4,
       "width_m": 1.4
     },
     {
@@ -98,7 +102,7 @@
       "bank": "grass",
       "id": "Grass002",
       "row": 2,
-      "column": 2,
+      "column": 0,
       "width_m": 1.4
     },
     {
@@ -106,31 +110,79 @@
       "bank": "grass",
       "id": "Grass003",
       "row": 2,
-      "column": 3,
+      "column": 1,
       "width_m": 1.4
     },
     {
       "index": 12,
       "bank": "grass",
       "id": "sparse_grass",
-      "row": 3,
-      "column": 0,
+      "row": 2,
+      "column": 2,
       "width_m": 2.0
     },
     {
       "index": 13,
       "bank": "grass",
       "id": "grass_path_3",
-      "row": 3,
-      "column": 1,
+      "row": 2,
+      "column": 3,
       "width_m": 1.0
     },
     {
       "index": 14,
       "bank": "grass",
       "id": "forrest_ground_01",
+      "row": 2,
+      "column": 4,
+      "width_m": 2.0
+    },
+    {
+      "index": 15,
+      "bank": "snow",
+      "id": "Snow005",
+      "row": 3,
+      "column": 0,
+      "width_m": 2.0
+    },
+    {
+      "index": 16,
+      "bank": "snow",
+      "id": "Snow001",
+      "row": 3,
+      "column": 1,
+      "width_m": 2.0
+    },
+    {
+      "index": 17,
+      "bank": "snow",
+      "id": "Snow010A",
       "row": 3,
       "column": 2,
+      "width_m": 2.0
+    },
+    {
+      "index": 18,
+      "bank": "snow",
+      "id": "snow_02",
+      "row": 3,
+      "column": 3,
+      "width_m": 2.0
+    },
+    {
+      "index": 19,
+      "bank": "snow",
+      "id": "snow_03",
+      "row": 3,
+      "column": 4,
+      "width_m": 2.0
+    },
+    {
+      "index": 20,
+      "bank": "snow",
+      "id": "snow_01",
+      "row": 4,
+      "column": 0,
       "width_m": 2.0
     }
   ]

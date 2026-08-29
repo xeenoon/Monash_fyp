@@ -2,29 +2,33 @@
 
 This library contains the nine CC0 rock materials listed in
 [`manifest.json`](manifest.json). The large original packages are deliberately
-ignored by Git under `source/`; fetch both banks and build the compact runtime atlas:
+ignored by Git under `source/`; fetch all three banks and build the compact runtime atlas:
 
 ```sh
 python3 tools/download_terrain_materials.py
 python3 tools/download_terrain_materials.py \
   --manifest textures/grass_manifest.json \
   --source textures/grass-source
+python3 tools/download_terrain_materials.py \
+  --manifest textures/snow_manifest.json \
+  --source textures/snow-source
 python3 tools/build_terrain_micro_atlas.py
 ```
 
 Poly Haven source maps are fetched at 4K, ambientCG's public JPG bundles at 8K,
 and PolyScan at 4K because its advertised 8K download endpoints currently
 return 404 while the 4K packages are public. Generated runtime maps use all
-nine rocks followed by all six grass materials in a guttered 4 x 4 atlas:
+nine rocks, six grass materials, and six snow materials in a guttered 5 x 5 atlas:
 
-- `runtime/terrain_micro_albedo.png`: neutral high-pass luminance only;
+- `runtime/terrain_micro_albedo.png`: linear material luminance for the coarse layer;
 - `runtime/terrain_micro_normal.png`: OpenGL tangent normals;
-- `runtime/terrain_micro_ormh.png`: AO, roughness, zero metallic, height.
+- `runtime/terrain_micro_ormh.png`: AO, roughness, fine high-pass luminance, height.
 
-At runtime the shader samples the classified bank once at authored scale. The
-golden terrain owns 80% of the result; scan luminance, normal, roughness, and AO
-are each capped at a 20% contribution. Scan albedo remains neutral, so golden
-RGB continues to own colour.
+At runtime the shader samples the classified bank at authored scale and again
+at a coarse material-macro scale. The coarse layer contributes normalized,
+achromatic structure and a restrained normal contribution, while roughness and
+AO remain authored-scale. Terrain imagery remains the sole RGB source, so the
+rock scans cannot tint cliffs brown/red. Fine scan luminance also remains neutral.
 
 All source licenses are CC0. Provider/page provenance remains in the manifest.
 

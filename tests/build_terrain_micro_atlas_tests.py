@@ -19,7 +19,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         runtime = root / "runtime"
-        banks = (("rock", 9), ("grass", 6))
+        banks = (("rock", 9), ("grass", 6), ("snow", 6))
         manifests = {}
         expected_ids = []
         for bank, count in banks:
@@ -47,19 +47,22 @@ def main() -> int:
                         "--rock-source", str(manifests["rock"][1]),
                         "--grass-manifest", str(manifests["grass"][0]),
                         "--grass-source", str(manifests["grass"][1]),
+                        "--snow-manifest", str(manifests["snow"][0]),
+                        "--snow-source", str(manifests["snow"][1]),
                         "--output", str(runtime),
                         "--cell-size", "16", "--gutter", "2"], check=True)
         for name, mode in (("terrain_micro_albedo.png", "RGB"),
                            ("terrain_micro_normal.png", "RGB"),
                            ("terrain_micro_ormh.png", "RGBA")):
             with Image.open(runtime / name) as image:
-                assert image.size == (80, 80)
+                assert image.size == (100, 100)
                 assert image.mode == mode
         metadata = json.loads((runtime / "atlas.json").read_text())
         assert [entry["id"] for entry in metadata["materials"]] == expected_ids
         assert metadata["banks"] == {
             "rock": {"first": 0, "count": 9},
             "grass": {"first": 9, "count": 6},
+            "snow": {"first": 15, "count": 6},
         }
     return 0
 

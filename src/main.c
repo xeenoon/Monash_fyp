@@ -13,6 +13,7 @@
 #include "material_stability_demo.h"
 #include "quarry.h"
 #include "renderer.h"
+#include "surface_detail.h"
 #include "temporal.h"
 #include "terrain_runtime.h"
 
@@ -58,6 +59,41 @@ static bool terrain_texture_set_from_arguments(int argc, char *argv[], TerrainTe
 			return false;
 	}
 	return true;
+}
+
+typedef struct StretchOverlaySettings
+{
+	bool enabled;
+	float threshold;
+	float opacity;
+} StretchOverlaySettings;
+
+/* In a TERRAIN_STRETCH_OVERLAY build, --show-texture-stretch enables the live
+   equivalent of tools/detect_texture_stretch.py's red overlay (terrain.frag).
+   Threshold/opacity default to the tool's values and can be tuned via
+   TERRAIN_STRETCH_THRESHOLD / TERRAIN_STRETCH_OPACITY. Ordinary builds retain
+   the uniform ABI but cannot enable or render the highlight. */
+static StretchOverlaySettings stretch_overlay_from_arguments(int argc, char *argv[])
+{
+	StretchOverlaySettings settings = {.enabled = false, .threshold = 1.5f, .opacity = 0.25f};
+#ifdef TERRAIN_STRETCH_OVERLAY
+	for (int i = 1; i < argc; ++i)
+		if (strcmp(argv[i], "--show-texture-stretch") == 0)
+			settings.enabled = true;
+	const char *threshold = getenv("TERRAIN_STRETCH_THRESHOLD");
+	if (threshold)
+		settings.threshold = (float)atof(threshold);
+	const char *opacity = getenv("TERRAIN_STRETCH_OPACITY");
+	if (opacity)
+		settings.opacity = (float)atof(opacity);
+#else
+	for (int i = 1; i < argc; ++i)
+		if (strcmp(argv[i], "--show-texture-stretch") == 0)
+			fprintf(stderr,
+					"--show-texture-stretch is unavailable in this build; "
+					"configure with -DTERRAIN_STRETCH_OVERLAY=ON\n");
+#endif
+	return settings;
 }
 
 static ShadowQualitySettings shadow_quality_from_environment(void)
@@ -120,6 +156,10 @@ int main(int argc, char *argv[])
 				"--terrain-textures=shadowed\n");
 		return EXIT_FAILURE;
 	}
+	StretchOverlaySettings stretch_overlay = stretch_overlay_from_arguments(argc, argv);
+	if (stretch_overlay.enabled)
+		printf("Texture stretch overlay: on (threshold %.2fx, opacity %.2f)\n",
+			   stretch_overlay.threshold, stretch_overlay.opacity);
 	const char *scene = getenv("TERRAIN_SCENE");
 	bool use_terrain = !scene || strcmp(scene, "terrain") == 0;
 	bool use_quarry = scene && strcmp(scene, "quarry") == 0;
@@ -303,6 +343,10 @@ int main(int argc, char *argv[])
 	}
 
 	Input input = {.mouse_captured = true};
+	/* Automated visual comparisons need to survive window focus and pointer
+	   motion without drifting away from the replayed dump camera. */
+	bool freeze_camera = getenv("TERRAIN_FREEZE_CAMERA") &&
+		atoi(getenv("TERRAIN_FREEZE_CAMERA")) != 0;
 	uint64_t start_ticks = SDL_GetTicksNS();
 	uint64_t previous_ticks = start_ticks;
 	mat4s previous_projection = GLMS_MAT4_IDENTITY_INIT;
@@ -324,6 +368,8 @@ int main(int argc, char *argv[])
 		SDL_SetWindowTitle(window, "Phase D demo — LEFT: Phase C/raw | RIGHT: Phase D/stabilized");
 	bool demo_flyby_phase_d = false;
 	unsigned debug_mode = 0;
+	if (getenv("TERRAIN_START_DEBUG_VIEW"))
+		debug_mode = (unsigned)atoi(getenv("TERRAIN_START_DEBUG_VIEW"));
 	/* Shadow-free footage is an illumination-neutral terrain source. Starting it
 	   in the subtle 35% blend leaves a 65% unlit floor in every shadow, so it
 	   cannot reproduce the contrast of the baked-light reference imagery. */
@@ -377,6 +423,15 @@ int main(int argc, char *argv[])
 	vec3s initial_to_sun = glms_vec3_scale(glms_vec3_normalize(sun_presets[sun_mode]), -1.0f);
 	float sun_azimuth = atan2f(initial_to_sun.z, initial_to_sun.x);
 	float sun_orbit_angle = asinf(fmaxf(-1.0f, fminf(1.0f, initial_to_sun.y)));
+	/* Runtime override of the start sun position (radians), the exact pair
+	   printed in a shader dump's "sun azimuth=... orbit=..." line -- lets a
+	   dump's sun be reproduced without recompiling, same idea as
+	   TERRAIN_START_POS/YAW/PITCH above. F12 (hold) still rotates freely from
+	   there at runtime. */
+	if (getenv("TERRAIN_START_SUN_AZIMUTH"))
+		sun_azimuth = (float)atof(getenv("TERRAIN_START_SUN_AZIMUTH"));
+	if (getenv("TERRAIN_START_SUN_ORBIT"))
+		sun_orbit_angle = (float)atof(getenv("TERRAIN_START_SUN_ORBIT"));
 	while (running)
 	{
 		input_poll(&input, window);
@@ -491,8 +546,9 @@ int main(int argc, char *argv[])
 			history_valid = false;
 		}
 
-		camera_update(&camera, input.move_forward, input.move_right, input.look_dx, input.look_dy,
-					  input.sprint, dt);
+		if (!freeze_camera)
+			camera_update(&camera, input.move_forward, input.move_right, input.look_dx, input.look_dy,
+						  input.sprint, dt);
 		if (demo_flyby)
 		{
 			float seconds = fmodf((float)(ticks - start_ticks) / 1000000000.0f, 22.0f);
@@ -693,6 +749,14 @@ int main(int argc, char *argv[])
 			continue;
 		}
 
+		float shader_dump_enabled = 0.0f;
+#ifdef DEBUG_SHADER_DUMP
+		shader_dump_enabled = dump_this_frame ? 1.0f : 0.0f;
+#endif
+		/* Camera world phase lets side-projected terrain reconstruct a globally
+		   continuous Y coordinate from each tile's camera-relative transform.
+		   Keep the period equal to terrain_runtime.c's X/Z material phase. */
+		const double material_phase_period_m = 4096.0;
 		FrameUniforms frame = {
 			.projection = projection,
 			.view = view,
@@ -742,11 +806,14 @@ int main(int argc, char *argv[])
 			.temporal_parameters =
 				(vec4s){{use_history ? 1.0f : 0.0f, dt, 0.0f, auto_exposure_enabled ? 1.0f : 0.0f}},
 			.temporal_jitter = (vec4s){{jitter.x, jitter.y, previous_jitter.x, previous_jitter.y}},
+			.shader_dump = (vec4s){{shader_dump_enabled,
+									  surface_detail_phase(camera.position.x, material_phase_period_m),
+									  surface_detail_phase(camera.position.y, material_phase_period_m),
+									  surface_detail_phase(camera.position.z, material_phase_period_m)}},
 			.material_curvature = (vec4s){{1.0f, 0.0f, 0.333f, 0.0f}},
 			.material_normal_filter = (vec4s){{1.0f, 0.20f, 0.0001f, 0.0f}},
-#ifdef DEBUG_SHADER_DUMP
-			.shader_dump = (vec4s){{dump_this_frame ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f}},
-#endif
+			.stretch_overlay = (vec4s){{stretch_overlay.enabled ? 1.0f : 0.0f,
+										stretch_overlay.threshold, stretch_overlay.opacity, 0.0f}},
 		};
 		for (uint32_t i = 0; i < SHADOW_CASCADE_COUNT; ++i)
 			frame.shadow_view_projection[i] = shadow_cascades.view_projection[i];
@@ -768,27 +835,33 @@ int main(int argc, char *argv[])
 			renderer_clear_shader_dump(SHADER_DUMP_PATH);
 		if (input.dump_shader_data)
 		{
-			char metadata[160];
+			char metadata[256];
 			snprintf(metadata, sizeof(metadata),
-					 "scene=%s static_mesh_mode=%u demo_split=%u flyby_replay=%u phase=%c",
+					 "scene=%s static_mesh_mode=%u demo_split=%u flyby_replay=%u phase=%c "
+					 "sun_azimuth=%.6f sun_orbit=%.6f (replay: TERRAIN_START_SUN_AZIMUTH=%.6f "
+					 "TERRAIN_START_SUN_ORBIT=%.6f)",
 					 use_terrain ? "terrain"
 							 : (use_phase_d_demo ? "phase_d_demo" : (use_quarry ? "quarry" : "gltf")),
 					 static_mesh_shading_mode, demo_split ? 1u : 0u, demo_flyby_phase_d ? 1u : 0u,
-					 phase_d_enabled ? 'D' : 'C');
+					 phase_d_enabled ? 'D' : 'C', sun_azimuth, sun_orbit_angle, sun_azimuth,
+					 sun_orbit_angle);
 			renderer_dump_shader_data(&renderer, SHADER_DUMP_PATH, camera.position, camera.yaw,
 									  camera.pitch, metadata);
 		}
 		if (auto_dump_after && ++rendered_frames >= auto_dump_after)
 		{
 			{
-				char metadata[160];
+				char metadata[256];
 				snprintf(metadata, sizeof(metadata),
-						 "scene=%s static_mesh_mode=%u demo_split=%u flyby_replay=%u phase=%c",
+						 "scene=%s static_mesh_mode=%u demo_split=%u flyby_replay=%u phase=%c "
+						 "sun_azimuth=%.6f sun_orbit=%.6f (replay: TERRAIN_START_SUN_AZIMUTH=%.6f "
+						 "TERRAIN_START_SUN_ORBIT=%.6f)",
 						 use_terrain ? "terrain"
 								 : (use_phase_d_demo ? "phase_d_demo"
 													 : (use_quarry ? "quarry" : "gltf")),
 						 static_mesh_shading_mode, demo_split ? 1u : 0u,
-						 demo_flyby_phase_d ? 1u : 0u, phase_d_enabled ? 'D' : 'C');
+						 demo_flyby_phase_d ? 1u : 0u, phase_d_enabled ? 'D' : 'C', sun_azimuth,
+						 sun_orbit_angle, sun_azimuth, sun_orbit_angle);
 				renderer_dump_shader_data(&renderer, SHADER_DUMP_PATH, camera.position, camera.yaw,
 										  camera.pitch, metadata);
 			}

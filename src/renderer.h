@@ -66,11 +66,15 @@ typedef struct
 	vec4s atmosphere_options;
 	vec4s temporal_parameters; /* history valid, dt, sRGB swapchain, auto-exposure enabled */
 	vec4s temporal_jitter;	   /* current NDC xy, previous NDC xy */
-	vec4s shader_dump;		   /* dump enabled (x), reserved */
+	vec4s shader_dump; /* dump enabled (x), camera world material phase XYZ (yzw) */
 	/* D1 geometric curvature: scale, bias, exponent, reserved. */
 	vec4s material_curvature;
 	/* D1 normal-map filtering: variance scale, kernel cap, length epsilon. */
 	vec4s material_normal_filter;
+	/* Diagnostic top-down texture-stretch overlay: enabled, stretch threshold
+	   (1/|normal.y|), red blend opacity, reserved. Compiled only when
+	   TERRAIN_STRETCH_OVERLAY is enabled; retained in the UBO for stable ABI. */
+	vec4s stretch_overlay;
 } FrameUniforms;
 
 typedef struct
@@ -185,8 +189,8 @@ typedef struct Renderer
 	Texture fallback_texture; /* white sRGB albedo; retained name for terrain callers */
 	Texture fallback_linear_texture; /* white linear ORM/AO/cavity */
 	Texture fallback_normal_texture; /* flat linear tangent normal */
-	/* Shared terrain material atlases: neutral high-pass luminance, OpenGL
-	   tangent normal, and AO/roughness/metallic/height. */
+	/* Shared terrain material atlases: linear coarse colour, OpenGL tangent
+	   normal, and AO/roughness/fine-luminance/height. */
 	Texture terrain_micro_albedo;
 	Texture terrain_micro_normal;
 	Texture terrain_micro_ormh;

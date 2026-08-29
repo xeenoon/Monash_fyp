@@ -126,7 +126,8 @@ _Static_assert(offsetof(FrameUniforms, temporal_jitter) == 1088,
 _Static_assert(offsetof(FrameUniforms, shader_dump) == 1104, "FrameUniforms shader dump offset");
 _Static_assert(offsetof(FrameUniforms, material_curvature) == 1120, "FrameUniforms curvature offset");
 _Static_assert(offsetof(FrameUniforms, material_normal_filter) == 1136, "FrameUniforms normal filter offset");
-_Static_assert(sizeof(FrameUniforms) == 1152, "FrameUniforms std140 size");
+_Static_assert(offsetof(FrameUniforms, stretch_overlay) == 1152, "FrameUniforms stretch overlay offset");
+_Static_assert(sizeof(FrameUniforms) == 1168, "FrameUniforms std140 size");
 _Static_assert(sizeof(DrawPushConstants) == 128, "terrain push constant size");
 _Static_assert(offsetof(TemporalExposure, histogram) == 16,
 			   "TemporalExposure std430 histogram offset");
@@ -2021,7 +2022,7 @@ void renderer_clear_shader_dump(const char *path)
    with the shader_dump() call in each instrumented .frag file. */
 static const char *const SHADER_DUMP_LEGEND[] = {
 	"# legend: terrain f0-2=macro_tint f3=micro_luminance f4-6=surface_N f7=detail_weight "
-	"f8-10=micro_tangent_N f11=grass_weight f12-14=base_color f15=roughness "
+	"f8-10=projection_weight_XYZ f11=side_projection_weight f12-14=base_color f15=roughness "
 	"f16-18=final_HDR f19=NoL; mesh retains legacy terrain/mesh layout\n",
 	"# legend: cube f0-2=normal f3=diffuse f4=lighting f5-7=out_color f8-19=_\n",
 	"# legend: atmosphere_composite f0-1=texcoord f2=depth f3=branch(1=lut,2=pass,3=sky,4=aerial) "

@@ -50,9 +50,27 @@ static void large_coordinates_reduce_to_a_continuous_phase(void)
 	assert(surface_detail_phase(origin, 0.0) == 0.0f);
 }
 
+static void side_projection_phase_is_independent_of_tile_origin(void)
+{
+	const double period = 4096.0;
+	const double camera_y = 2651.622096;
+	const double surface_world_y = 2438.375;
+	const double fine_tile_origin_y = 707.602;
+	const double coarse_tile_origin_y = 512.0;
+	float camera_phase = surface_detail_phase(camera_y, period);
+	float fine_projected_y = (float)(surface_world_y - fine_tile_origin_y) +
+		(float)(fine_tile_origin_y - camera_y) + camera_phase;
+	float coarse_projected_y = (float)(surface_world_y - coarse_tile_origin_y) +
+		(float)(coarse_tile_origin_y - camera_y) + camera_phase;
+	assert(fabsf(fine_projected_y - coarse_projected_y) < 0.001f);
+	assert(fabsf(surface_detail_phase(fine_projected_y, period) -
+				 surface_detail_phase(surface_world_y, period)) < 0.001f);
+}
+
 int main(void)
 {
 	generated_texture_is_deterministic_and_nonflat();
 	large_coordinates_reduce_to_a_continuous_phase();
+	side_projection_phase_is_independent_of_tile_origin();
 	return 0;
 }

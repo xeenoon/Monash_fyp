@@ -8,7 +8,8 @@
 
 /* The streamed image is a low-frequency, water-free Alpine material field:
    RGB is cross-sampled macro colour and alpha is its grass-vs-rock coverage.
-   Fifteen authored scans supply sub-metre detail without replacing RGB. */
+   Twenty-one authored rock/grass/snow scans supply material-matched macro and
+   sub-metre detail without replacing RGB. */
 layout(early_fragment_tests) in;
 
 layout(location = 0) in vec2 imagery_uv;
@@ -39,6 +40,15 @@ layout(push_constant) uniform DrawData {
 struct HeightSurface {
     vec3 local_normal;
     vec2 gradient;
+    /* Pure DEM central-difference normal, before the geometric-derivative
+       blend below mixes in a screen-space estimate for distant/grazing
+       fragments. Slope-driven effects (top-down stretch compensation/overlay)
+       key off this one: the geometric blend is stable for shading a huge
+       rasterized triangle, but it is a screen-space artifact, not the actual
+       terrain slope, and goes unreliable exactly at the distant/grazing
+       viewing angles where it dominates -- keying stretch detection off it
+       painted large stretches of ordinary distant terrain solid red. */
+    vec3 analytic_normal;
 };
 
 float height_at(vec2 uv) {
@@ -60,6 +70,7 @@ HeightSurface height_surface() {
                            (up - down) / max(2.0 * metres.y, 1e-5));
     result.local_normal = normalize(vec3(-result.gradient.x, 1.0,
                                          -result.gradient.y));
+    result.analytic_normal = result.local_normal;
 
     /* Once one fragment spans many height samples, the rasterized geometric
        derivative is both cheaper and more representative than a fine central
@@ -110,22 +121,24 @@ uint material_index(ivec2 cell, uint first, uint count) {
 }
 
 float material_width_decimetres(uint index) {
-const float widths[15] = float[15](
+const float widths[21] = float[21](
     60.0, 60.0, 60.0, 80.0, 80.0,
     172.0, 228.0, 160.0, 200.0,
     56.0, 56.0, 56.0, 80.0, 40.0,
-    80.0
+    80.0,
+    20.0, 20.0, 20.0, 20.0, 20.0, 20.0
 );
     return widths[index];
 }
 
 vec2 material_atlas_uv(uint index, vec2 tiled_uv) {
+    const float atlas_grid = 5.0;
     vec2 atlas_size = vec2(textureSize(micro_albedo_atlas, 0));
-    vec2 cell_size = atlas_size / 4.0;
+    vec2 cell_size = atlas_size / atlas_grid;
     vec2 gutter = vec2(8.0) / cell_size;
     vec2 interior = mix(gutter, vec2(1.0) - gutter, fract(tiled_uv));
-    vec2 cell = vec2(float(index % 4u), float(index / 4u));
-    return (cell + interior) / 4.0;
+    vec2 cell = vec2(float(index % 5u), float(index / 5u));
+    return (cell + interior) / atlas_grid;
 }
 
 struct MicroMaterial {
@@ -136,17 +149,17 @@ struct MicroMaterial {
     float height;
 };
 
-MicroMaterial sample_micro(uint index, vec2 world_xz) {
+MicroMaterial sample_micro(uint index, vec2 projected_position) {
     float width_dm = material_width_decimetres(index);
     /* Keep the texture coordinate derivative unwrapped, but form the sampled
        fraction in decimetres. DETAIL_PHASE_PERIOD_M is an exact common repeat
        of every scan width, so this avoids a float rounding seam at tile edges. */
-    vec2 tiled_uv = world_xz * (10.0 / width_dm);
-    vec2 tile_fraction = mod(world_xz * 10.0, width_dm) / width_dm;
+    vec2 tiled_uv = projected_position * (10.0 / width_dm);
+    vec2 tile_fraction = mod(projected_position * 10.0, width_dm) / width_dm;
     vec2 atlas_uv = material_atlas_uv(index, tile_fraction);
     /* The per-cell wrap gutter occupies 8/528 of a cell. Scale derivatives to
        the atlas interior so implicit filtering never sees a 3x3 cell jump. */
-    float derivative_scale = (512.0 / 528.0) / 4.0;
+    float derivative_scale = (512.0 / 528.0) / 5.0;
     vec2 dx = dFdxCoarse(tiled_uv) * derivative_scale;
     vec2 dy = dFdyCoarse(tiled_uv) * derivative_scale;
     /* derivative_scale only maps up to one tile repeat per fragment into the
@@ -171,7 +184,6 @@ MicroMaterial sample_micro(uint index, vec2 world_xz) {
         dx *= derivative_scale / dx_len;
     if (dy_len > derivative_scale)
         dy *= derivative_scale / dy_len;
-    vec3 detail = textureGrad(micro_albedo_atlas, atlas_uv, dx, dy).rgb;
     vec3 normal = textureGrad(micro_normal_atlas, atlas_uv, dx, dy).xyz * 2.0 - 1.0;
     vec4 ormh = textureGrad(micro_ormh_atlas, atlas_uv, dx, dy);
     /* Cap the lateral tilt of the tangent normal. Residual atlas bleed at cell
@@ -183,7 +195,7 @@ MicroMaterial sample_micro(uint index, vec2 world_xz) {
     float lateral = length(normal.xy);
     normal.xy *= min(1.0, 0.5 / max(lateral, 1e-4));
     MicroMaterial result;
-    result.luminance_factor = detail.r * 2.0;
+    result.luminance_factor = ormh.b * 2.0;
     result.tangent_normal = normalize(normal);
     result.ao = ormh.r;
     result.roughness = ormh.g;
@@ -191,9 +203,10 @@ MicroMaterial sample_micro(uint index, vec2 world_xz) {
     return result;
 }
 
-MicroMaterial blend_micro_bank(vec2 world_xz, uint first, uint count) {
+MicroMaterial blend_micro_bank(vec2 material_position_xz, vec2 projected_position,
+                               uint first, uint count) {
     const float region_m = 32.0;
-    vec2 region = world_xz / region_m;
+    vec2 region = material_position_xz / region_m;
     ivec2 base = ivec2(floor(region));
     vec2 blend = smoothstep(vec2(0.20), vec2(0.80), fract(region));
     float weights[4] = float[4]((1.0-blend.x)*(1.0-blend.y),
@@ -204,7 +217,7 @@ MicroMaterial blend_micro_bank(vec2 world_xz, uint first, uint count) {
     MicroMaterial result = MicroMaterial(0.0, vec3(0.0), 0.0, 0.0, 0.0);
     for (int i = 0; i < 4; ++i) {
         MicroMaterial sample_value = sample_micro(
-            material_index(base + offsets[i], first, count), world_xz);
+            material_index(base + offsets[i], first, count), projected_position);
         result.luminance_factor += sample_value.luminance_factor * weights[i];
         result.tangent_normal += sample_value.tangent_normal * weights[i];
         result.ao += sample_value.ao * weights[i];
@@ -215,17 +228,145 @@ MicroMaterial blend_micro_bank(vec2 world_xz, uint first, uint count) {
     return result;
 }
 
+/* A second material read at twenty times the authored width supplies
+   mesoscopic breakup above the true-scale PBR scan. Its albedo contributes
+   only normalized luminance structure: geographic terrain RGB remains the
+   sole colour source. A weak normal contribution creates formation-scale
+   structure; AO and roughness stay true-scale so enlarged pores do not read
+   as literal geometry. */
+struct MaterialMacro {
+    vec3 color;
+    vec3 tangent_normal;
+    float reference_luminance;
+};
+
+float material_macro_reference_luminance(uint index) {
+    /* Raw linear-atlas means for the fixed neutral macro representatives used
+       by classified_macro(). Other indices are retained for diagnostic/helper
+       completeness but do not currently reach the final macro layer. */
+    if (index == 7u) return 0.19218;
+    if (index == 10u) return 0.06208;
+    if (index == 16u) return 0.80287;
+    return 0.18;
+}
+
+MaterialMacro sample_material_macro(uint index, vec2 projected_position) {
+    const float macro_scale = 20.0;
+    float width_dm = material_width_decimetres(index) * macro_scale;
+    vec2 tiled_uv = projected_position * (10.0 / width_dm);
+    vec2 tile_fraction = mod(projected_position * 10.0, width_dm) / width_dm;
+    vec2 atlas_uv = material_atlas_uv(index, tile_fraction);
+    float derivative_scale = (512.0 / 528.0) / 5.0;
+    vec2 dx = dFdxCoarse(tiled_uv) * derivative_scale;
+    vec2 dy = dFdyCoarse(tiled_uv) * derivative_scale;
+    float dx_len = length(dx);
+    float dy_len = length(dy);
+    if (dx_len > derivative_scale)
+        dx *= derivative_scale / dx_len;
+    if (dy_len > derivative_scale)
+        dy *= derivative_scale / dy_len;
+    MaterialMacro result;
+    result.color = textureGrad(micro_albedo_atlas, atlas_uv, dx, dy).rgb;
+    result.tangent_normal = normalize(
+        textureGrad(micro_normal_atlas, atlas_uv, dx, dy).xyz * 2.0 - 1.0);
+    result.reference_luminance = material_macro_reference_luminance(index);
+    return result;
+}
+
+MaterialMacro blend_macro_bank(vec2 material_position_xz,
+                               vec2 projected_position,
+                               uint first, uint count) {
+    const float region_m = 128.0;
+    vec2 region = material_position_xz / region_m;
+    ivec2 base = ivec2(floor(region));
+    vec2 blend = smoothstep(vec2(0.20), vec2(0.80), fract(region));
+    float weights[4] = float[4]((1.0-blend.x)*(1.0-blend.y),
+                                blend.x*(1.0-blend.y),
+                                (1.0-blend.x)*blend.y, blend.x*blend.y);
+    ivec2 offsets[4] = ivec2[4](ivec2(0,0), ivec2(1,0),
+                                ivec2(0,1), ivec2(1,1));
+    MaterialMacro result = MaterialMacro(vec3(0.0), vec3(0.0), 0.0);
+    for (int i = 0; i < 4; ++i) {
+        MaterialMacro sample_value = sample_material_macro(
+            material_index(base + offsets[i], first, count),
+            projected_position);
+        result.color += sample_value.color * weights[i];
+        result.tangent_normal += sample_value.tangent_normal * weights[i];
+        result.reference_luminance += sample_value.reference_luminance * weights[i];
+    }
+    result.tangent_normal = normalize(result.tangent_normal);
+    return result;
+}
+
+MaterialMacro mix_macro(MaterialMacro first, MaterialMacro second,
+                        float weight) {
+    return MaterialMacro(
+        mix(first.color, second.color, weight),
+        normalize(mix(first.tangent_normal, second.tangent_normal, weight)),
+        mix(first.reference_luminance, second.reference_luminance, weight));
+}
+
 MicroMaterial mix_micro(MicroMaterial rock, MicroMaterial grass,
                         float grass_weight);
 
-MicroMaterial classified_micro(vec2 world_xz, float grass_weight) {
+MicroMaterial classified_micro(vec2 material_position_xz,
+                               vec2 projected_position,
+                               float grass_weight,
+                               float snow_weight) {
+    if (snow_weight < 0.015) {
+        if (grass_weight < 0.015)
+            return blend_micro_bank(material_position_xz, projected_position, 0u, 9u);
+        if (grass_weight > 0.985)
+            return blend_micro_bank(material_position_xz, projected_position, 9u, 6u);
+        MicroMaterial rock = blend_micro_bank(
+            material_position_xz, projected_position, 0u, 9u);
+        MicroMaterial grass = blend_micro_bank(
+            material_position_xz, projected_position, 9u, 6u);
+        return mix_micro(rock, grass, grass_weight);
+    }
+    if (grass_weight < 0.015) {
+        if (snow_weight > 0.985)
+            return blend_micro_bank(material_position_xz, projected_position, 15u, 6u);
+        MicroMaterial rock = blend_micro_bank(
+            material_position_xz, projected_position, 0u, 9u);
+        MicroMaterial snow = blend_micro_bank(
+            material_position_xz, projected_position, 15u, 6u);
+        return mix_micro(rock, snow, snow_weight);
+    }
+    MicroMaterial rock = blend_micro_bank(material_position_xz, projected_position, 0u, 9u);
+    MicroMaterial grass = blend_micro_bank(material_position_xz, projected_position, 9u, 6u);
+    MicroMaterial snow = blend_micro_bank(material_position_xz, projected_position, 15u, 6u);
+    float non_snow = max(1.0 - snow_weight, 1e-4);
+    MicroMaterial ground = mix_micro(rock, grass,
+                                     clamp(grass_weight / non_snow, 0.0, 1.0));
+    return mix_micro(ground, snow, snow_weight);
+}
+
+MaterialMacro classified_macro(vec2 material_position_xz,
+                               vec2 projected_position,
+                               float grass_weight,
+                               float snow_weight) {
+    /* Region-randomized macro scans made one cliff alternate between cracked,
+       layered, and mottled formations in large rectangular sections. Keep
+       that variation in the true-scale micro layer, where it is useful and
+       subtle, but give each macro material class one neutral representative.
+       Index 7 is deliberately the non-directional mountain rock scan: giant
+       directional cracks can otherwise look like a return of UV stretching. */
+    MaterialMacro rock = sample_material_macro(7u, projected_position);
+    if (snow_weight < 0.015) {
+        if (grass_weight < 0.015)
+            return rock;
+        MaterialMacro grass = sample_material_macro(10u, projected_position);
+        return mix_macro(rock, grass, grass_weight);
+    }
+    MaterialMacro snow = sample_material_macro(16u, projected_position);
     if (grass_weight < 0.015)
-        return blend_micro_bank(world_xz, 0u, 9u);
-    if (grass_weight > 0.985 && false)
-        return blend_micro_bank(world_xz, 9u, 6u);
-    MicroMaterial rock = blend_micro_bank(world_xz, 0u, 9u);
-    MicroMaterial grass = blend_micro_bank(world_xz, 9u, 6u);
-    return mix_micro(rock, grass, grass_weight);
+        return mix_macro(rock, snow, snow_weight);
+    MaterialMacro grass = sample_material_macro(10u, projected_position);
+    float non_snow = max(1.0 - snow_weight, 1e-4);
+    MaterialMacro ground = mix_macro(
+        rock, grass, clamp(grass_weight / non_snow, 0.0, 1.0));
+    return mix_macro(ground, snow, snow_weight);
 }
 
 MicroMaterial mix_micro(MicroMaterial rock, MicroMaterial grass,
@@ -241,6 +382,89 @@ MicroMaterial mix_micro(MicroMaterial rock, MicroMaterial grass,
     return result;
 }
 
+/* A top-down orthophoto cannot provide new cliff colour, but it can be
+   prevented from injecting vertically magnified detail. Expand its texture
+   derivatives in the DEM downslope direction by exactly the surface-area
+   stretch, 1/normal.y. This selects a correspondingly coarser/anisotropic mip
+   on a cliff while leaving flat ground bit-identical. */
+vec2 slope_corrected_derivative(vec2 derivative, vec2 slope_direction,
+                                float stretch) {
+    float along_slope = dot(derivative, slope_direction);
+    return derivative + slope_direction * along_slope * (stretch - 1.0);
+}
+
+/* Metric box projection: every coordinate is measured in metres, so the scan
+   has the same physical scale on horizontal ground and on either cliff axis.
+   Fourth-power weights keep most fragments to one dominant projection while
+   retaining a broad, continuous cross-fade at axis boundaries. Unlike the old
+   snapped contour axis, this cannot switch UV frames abruptly between adjacent
+   DEM sections. Components are X-side, top, Z-side. */
+vec3 material_projection_weights(vec3 normal) {
+    vec3 weights = pow(abs(normal), vec3(4.0));
+    return weights / max(weights.x + weights.y + weights.z, 1e-5);
+}
+
+void material_projection_coordinates(vec3 position, vec3 normal, uint axis,
+                                     out vec2 projected_position,
+                                     out vec3 tangent_hint) {
+    if (axis == 0u) {
+        /* YZ plane. cross(+Z, normal) follows the signed vertical UV axis. */
+        float facing_sign = normal.x < 0.0 ? -1.0 : 1.0;
+        projected_position = vec2(position.z, facing_sign * position.y);
+        tangent_hint = vec3(0.0, 0.0, 1.0);
+    } else if (axis == 1u) {
+        projected_position = position.xz;
+        tangent_hint = vec3(1.0, 0.0, 0.0);
+    } else {
+        /* XY plane. cross(+X, normal) follows the signed vertical UV axis. */
+        float facing_sign = normal.z < 0.0 ? -1.0 : 1.0;
+        projected_position = vec2(position.x, -facing_sign * position.y);
+        tangent_hint = vec3(1.0, 0.0, 0.0);
+    }
+}
+
+vec3 reorient_micro_normal(vec3 tangent_normal, vec3 terrain_normal,
+                           vec3 tangent_hint) {
+    vec3 tangent = normalize(tangent_hint - terrain_normal *
+                             dot(tangent_hint, terrain_normal));
+    vec3 bitangent = normalize(cross(tangent, terrain_normal));
+    return normalize(tangent * tangent_normal.x +
+                     bitangent * tangent_normal.y +
+                     terrain_normal * tangent_normal.z);
+}
+
+void accumulate_projected_material(
+    vec2 material_position_xz, vec3 material_position, vec3 analytic_normal,
+    vec3 shading_normal, uint axis, float weight,
+    float grass_weight, float snow_weight,
+    inout MicroMaterial micro, inout vec3 micro_local_normal,
+    inout MaterialMacro material_macro,
+    inout vec3 material_macro_local_normal) {
+    if (weight <= 0.0005)
+        return;
+    vec2 projected_position;
+    vec3 tangent_hint;
+    material_projection_coordinates(material_position, analytic_normal, axis,
+                                    projected_position, tangent_hint);
+    MicroMaterial projected_micro = classified_micro(
+        material_position_xz, projected_position, grass_weight, snow_weight);
+    MaterialMacro projected_macro = classified_macro(
+        material_position_xz, projected_position, grass_weight, snow_weight);
+    micro.luminance_factor += projected_micro.luminance_factor * weight;
+    micro.tangent_normal += projected_micro.tangent_normal * weight;
+    micro.ao += projected_micro.ao * weight;
+    micro.roughness += projected_micro.roughness * weight;
+    micro.height += projected_micro.height * weight;
+    micro_local_normal += reorient_micro_normal(
+        projected_micro.tangent_normal, shading_normal, tangent_hint) * weight;
+    material_macro.color += projected_macro.color * weight;
+    material_macro.tangent_normal += projected_macro.tangent_normal * weight;
+    material_macro.reference_luminance +=
+        projected_macro.reference_luminance * weight;
+    material_macro_local_normal += reorient_micro_normal(
+        projected_macro.tangent_normal, shading_normal, tangent_hint) * weight;
+}
+
 void main() {
     vec2 current_uv = current_clip.xy / current_clip.w * 0.5 + 0.5;
     vec2 previous_uv = previous_clip.xy / previous_clip.w * 0.5 + 0.5;
@@ -254,27 +478,68 @@ void main() {
     }
 
     HeightSurface surface = height_surface();
+    float top_down_stretch = 1.0 / max(surface.analytic_normal.y, 0.05);
+    vec3 projection_weights = material_projection_weights(
+        surface.analytic_normal);
+    float side_projection_weight = 1.0 - projection_weights.y;
+    vec2 slope_direction = length(surface.gradient) > 1e-5
+        ? normalize(surface.gradient) : vec2(1.0, 0.0);
+    vec2 child_dx = slope_corrected_derivative(
+        dFdxCoarse(imagery_uv), slope_direction, top_down_stretch);
+    vec2 child_dy = slope_corrected_derivative(
+        dFdyCoarse(imagery_uv), slope_direction, top_down_stretch);
     vec4 child_macro = textureGrad(macro_color_map, imagery_uv,
-                                   dFdxCoarse(imagery_uv),
-                                   dFdyCoarse(imagery_uv));
+                                   child_dx, child_dy);
+    /* At the height-field limit the top-down derivative tends to zero, so no
+       finite derivative multiplier can select the needed mip. Supply a
+       slope-derived minimum LOD there. The two extra cliff mips deliberately
+       leave only broad geographic tint for the projected material to detail. */
+    float macro_unstretch_lod = clamp(log2(top_down_stretch) +
+                                      2.0 * side_projection_weight, 0.0, 6.0);
+    vec4 child_macro_lowpass = textureLod(macro_color_map, imagery_uv,
+                                          macro_unstretch_lod);
+    child_macro = mix(child_macro, child_macro_lowpass,
+                      side_projection_weight);
     float parent_quadrant = floor(draw.debug.z);
     vec2 parent_tile_uv = tile_uv * 0.5 + 0.5 * vec2(
         mod(parent_quadrant, 2.0), floor(parent_quadrant * 0.5));
     vec2 parent_imagery_uv = parent_tile_uv * draw.imagery_uv_transform.xy +
                              draw.imagery_uv_transform.zw;
+    vec2 parent_dx = slope_corrected_derivative(
+        dFdxCoarse(parent_imagery_uv), slope_direction, top_down_stretch);
+    vec2 parent_dy = slope_corrected_derivative(
+        dFdyCoarse(parent_imagery_uv), slope_direction, top_down_stretch);
     vec4 parent_macro = textureGrad(parent_macro_color_map, parent_imagery_uv,
-                                    dFdxCoarse(parent_imagery_uv),
-                                    dFdyCoarse(parent_imagery_uv));
+                                    parent_dx, parent_dy);
+    vec4 parent_macro_lowpass = textureLod(parent_macro_color_map,
+                                           parent_imagery_uv,
+                                           macro_unstretch_lod);
+    parent_macro = mix(parent_macro, parent_macro_lowpass,
+                       side_projection_weight);
     float lod_fade = clamp(fract(draw.debug.z) * 8.0, 0.0, 1.0);
     vec4 macro_sample = mix(parent_macro, child_macro, lod_fade);
     vec3 macro_tint = macro_sample.rgb;
-    /* Golden synthesis owns RGB. Alpha is the separately composed Alpine
-       rock/grass classification, so material selection remains water-free
-       without feeding the blurred classifier colour into the result. */
+    /* Golden synthesis owns RGB. Alpha supplies the older Alpine rock/grass
+       classification; bright neutral RGB adds snow below without feeding a
+       separately blurred classifier colour into the result. */
     float grass_weight = smoothstep(0.08, 0.55, macro_sample.a);
     float steepness = smoothstep(0.42, 0.78, 1.0 - surface.local_normal.y);
-    grass_weight *= 1.0 - 0.40 * steepness;
-    float rock_weight = 1.0 - grass_weight;
+    /* Orthophoto grass coverage is top-down land cover, not proof that grass
+       coats a near-vertical wall. Keep ledges green but converge cliffs to the
+       single continuous rock macro material. */
+    grass_weight *= 1.0 - 0.90 * steepness;
+    float macro_luminance = dot(macro_tint, vec3(0.2126, 0.7152, 0.0722));
+    float macro_chroma = max(macro_tint.r, max(macro_tint.g, macro_tint.b)) -
+                         min(macro_tint.r, min(macro_tint.g, macro_tint.b));
+    /* Runtime RGB retains the actual orthophoto snow that the older binary
+       grass alpha could not represent. In linear space snow is both bright and
+       neutral; the upward-facing term rejects bright vertical rock and keeps
+       the three material weights mutually exclusive. */
+    float snow_weight = smoothstep(0.42, 0.68, macro_luminance) *
+                        (1.0 - smoothstep(0.07, 0.18, macro_chroma)) *
+                        smoothstep(0.18, 0.58, surface.analytic_normal.y);
+    grass_weight *= 1.0 - snow_weight;
+    float rock_weight = max(1.0 - grass_weight - snow_weight, 0.0);
 
     /* draw.debug.yw is the tile's world-space origin reduced modulo
        phase_period_m (4096 m, terrain_runtime.c) in double on the CPU, so it
@@ -283,7 +548,33 @@ void main() {
     vec2 world_phase = local_position.xz + draw.debug.yw;
     /* Golden already supplies macro and meso structure. The authored scans are
        a deliberately subordinate, true-scale PBR layer. */
-    MicroMaterial micro = classified_micro(world_phase, grass_weight);
+    /* local_position.y resets at every tile transform, which made side
+       projection jump phase in rectangular LOD sections. Tile translation is
+       camera-relative; adding the camera's reduced world-Y phase reconstructs
+       one continuous vertical material coordinate without sending a large,
+       imprecise absolute float to the GPU. */
+    float world_phase_y = local_position.y +
+                          draw.local_to_camera_relative[3].y +
+                          frame.shader_dump.z;
+    vec3 material_position = vec3(world_phase.x, world_phase_y, world_phase.y);
+    /* Blend the same matching material through all three metric projections.
+       Material selection remains keyed to X/Z, so the projection blend cannot
+       introduce material-cell seams. */
+    MicroMaterial micro = MicroMaterial(0.0, vec3(0.0), 0.0, 0.0, 0.0);
+    vec3 micro_local_normal = vec3(0.0);
+    MaterialMacro material_macro = MaterialMacro(vec3(0.0), vec3(0.0), 0.0);
+    vec3 material_macro_local_normal = vec3(0.0);
+    for (uint axis = 0u; axis < 3u; ++axis) {
+        accumulate_projected_material(
+            world_phase, material_position, surface.analytic_normal,
+            surface.local_normal, axis, projection_weights[axis],
+            grass_weight, snow_weight, micro, micro_local_normal,
+            material_macro, material_macro_local_normal);
+    }
+    micro.tangent_normal = normalize(micro.tangent_normal);
+    micro_local_normal = normalize(micro_local_normal);
+    material_macro.tangent_normal = normalize(material_macro.tangent_normal);
+    material_macro_local_normal = normalize(material_macro_local_normal);
     float view_distance = length(camera_relative_position);
     float detail_fade = 1.0 - smoothstep(4000.0, 12000.0, view_distance);
     const float detail_weight = 0.65;
@@ -298,31 +589,43 @@ void main() {
                                   length(dFdy(local_position.xz)));
     float footprint_confidence = 1.0 - smoothstep(0.8, 4.0, world_footprint_m);
     float weighted_detail = detail_weight * detail_fade * footprint_confidence;
-    /* Scan normals are tangent-space data. Reorient them around the terrain
-       normal; treating their Z component as world-up made steep close-range
-       cells falsely face the sun. Keep the original flat-ground orientation
-       (tangent +X, bitangent +Z) for visual continuity. */
-    vec3 tangent_reference = abs(surface.local_normal.x) < 0.95
-        ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 0.0, 1.0);
-    vec3 tangent = normalize(tangent_reference - surface.local_normal *
-                             dot(tangent_reference, surface.local_normal));
-    vec3 bitangent = normalize(cross(tangent, surface.local_normal));
-    vec3 micro_local_normal = normalize(tangent * micro.tangent_normal.x +
-                                        bitangent * micro.tangent_normal.y +
-                                        surface.local_normal * micro.tangent_normal.z);
-    vec3 material_local_normal = normalize(mix(surface.local_normal,
+    /* Each scan normal was reoriented through the same top/cliff basis as its
+       albedo sample above; treating tangent Z as world-up would make steep
+       close-range cells falsely face the sun. */
+    vec3 macro_local_normal = normalize(mix(surface.local_normal,
+                                             material_macro_local_normal,
+                                             weighted_detail * 0.45));
+    vec3 material_local_normal = normalize(mix(macro_local_normal,
                                                 micro_local_normal,
-                                                weighted_detail));
+                                                weighted_detail * 0.22));
     vec3 geometric_normal = normalize(mat3(draw.local_to_camera_relative) *
                                       material_local_normal);
     vec3 V = normalize(-camera_relative_position);
     if (dot(geometric_normal, V) < 0.0)
         geometric_normal = -geometric_normal;
 
-    /* Neutral high-pass luminance cannot replace golden chroma and is capped
-       at the same 20% priority as the other authored scan channels. */
-    vec3 base_color = macro_tint * mix(1.0, micro.luminance_factor,
-                                       weighted_detail);
+    /* Fine high-pass luminance remains subordinate to the geographic tint and
+       the material-matched coarse structure layer. */
+    float micro_layer = mix(1.0, micro.luminance_factor,
+                            weighted_detail * 0.40);
+    /* Keep the original terrain imagery as the only RGB source. On slopes it
+       has already been reduced to a broad, slope-corrected colour guide above;
+       the metric material projection contributes achromatic structure only.
+       Normalizing by each representative scan's linear mean removes the brown
+       rock / vivid-green grass / blue-white snow cast that previously looked
+       like a red diagnostic overlay baked into the terrain. */
+    float top_imagery_retention = pow(projection_weights.y, 8.0);
+    float material_color_weight = 1.0 -
+        (1.0 - weighted_detail * 0.70) *
+        top_imagery_retention;
+    float sampled_macro_luminance = dot(
+        material_macro.color, vec3(0.2126, 0.7152, 0.0722));
+    float macro_structure = clamp(
+        sampled_macro_luminance /
+        max(material_macro.reference_luminance, 0.02), 0.65, 1.35);
+    vec3 matched_macro_tint = macro_tint *
+        mix(1.0, macro_structure, material_color_weight);
+    vec3 base_color = matched_macro_tint * micro_layer;
     /* Skirts (untextured > 0.5) are crack-fillers extruded straight down from a
        tile edge. Their vertices are copies of the edge surface vertex, so they
        carry the same imagery/tile UVs and world phase and therefore sample the
@@ -359,7 +662,7 @@ void main() {
         return;
     }
     if (frame.debug_view > 5.5 && frame.debug_view < 6.5) {
-        out_color = vec4(rock_weight, grass_weight, 0.0, 1.0);
+        out_color = vec4(rock_weight, grass_weight, snow_weight, 1.0);
         return;
     }
     if (frame.debug_view > 6.5 && frame.debug_view < 7.5) {
@@ -383,6 +686,12 @@ void main() {
             vec3(shadow.coordinate.xy, float(shadow.cascade))).r : 1.0;
         out_color = vec4(vec3(depth), 1.0); return;
     }
+    if (frame.debug_view > 21.5 && frame.debug_view < 22.5) {
+        out_color = vec4(material_macro.color, 1.0); return;
+    }
+    if (frame.debug_view > 22.5 && frame.debug_view < 23.5) {
+        out_color = vec4(projection_weights, 1.0); return;
+    }
 
     vec3 direct = (bxdf.diffuse + bxdf.specular) * frame.sun_radiance.rgb *
                   NoL * shadow.visibility;
@@ -393,12 +702,20 @@ void main() {
                      environment.final_specular;
     vec3 final_color = mix(base_color, lit_color,
                            clamp(frame.relight_strength, 0.0, 1.0));
+#ifdef TERRAIN_STRETCH_OVERLAY
+    /* Diagnostic builds only: --show-texture-stretch (main.c) is the live
+       equivalent of tools/detect_texture_stretch.py's red overlay, driven by
+       the same 1/|normal.y| ratio computed above. Normal builds do not contain
+       this colour path at all. */
+    if (frame.stretch_overlay.x > 0.5 && top_down_stretch >= frame.stretch_overlay.y)
+        final_color = mix(final_color, vec3(1.0, 0.0, 0.0), frame.stretch_overlay.z);
+#endif
     out_color = vec4(final_color, 1.0);
 
     shader_dump(DUMP_SHADER_TERRAIN,
                 vec4(macro_tint, micro.luminance_factor),
                 vec4(surface.local_normal, weighted_detail),
-                vec4(micro.tangent_normal, grass_weight),
+                vec4(projection_weights, side_projection_weight),
                 vec4(base_color, roughness),
                 vec4(final_color, NoL));
     shader_dump(DUMP_SHADER_ENVIRONMENT_IBL,

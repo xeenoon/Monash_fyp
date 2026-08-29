@@ -100,25 +100,37 @@ the blurred classifier colour from entering the rendered material.
 Nine CC0 rock scans are represented in `textures/manifest.json`: Rock 01,
 Rock 06, Rock 2, Rock055, Rock040, Marble Cliff 01/03, Rocky Mountain Cliff
 Face, and Layered Cliff Rock. Six Alpine-matched grass/vegetated-ground sets
-are represented in `textures/grass_manifest.json`. Fetch both source banks and
-generate the compact runtime maps with:
+are represented in `textures/grass_manifest.json`, and six snow sets in
+`textures/snow_manifest.json`. Fetch all three source banks and generate the
+compact runtime maps with:
 
 ```sh
 python3 tools/download_terrain_materials.py
 python3 tools/download_terrain_materials.py \
   --manifest textures/grass_manifest.json \
   --source textures/grass-source
+python3 tools/download_terrain_materials.py \
+  --manifest textures/snow_manifest.json \
+  --source textures/snow-source
 python3 tools/build_terrain_micro_atlas.py
 ```
 
-The 4 x 4 runtime atlases preserve all fifteen materials, add wrap gutters,
-remove diffuse chroma, and high-pass the remaining luminance. Within each bank
+The 5 x 5 runtime atlases preserve nine rock, six grass, and six snow
+materials and add wrap gutters. Linear material albedo supplies normalized
+achromatic structure for the coarse layer, while fine-scale luminance is
+high-pass filtered and packed separately. Original terrain imagery remains the
+sole RGB source.
+Within each bank
 the terrain shader stochastically blends nearby samples across 32 m regions;
-the macro alpha then blends the rock and grass banks at Alpine scale. Only the
-neutral scan luminance multiplies golden colour. Golden has 80% priority; one
-true-scale authored layer contributes 20% albedo luminance, normal, roughness,
-and AO. Mip filtering and a far-horizon fade suppress sub-pixel detail, with
-slope used only as a modest near-vertical correction to the classified blend.
+the macro alpha then blends the material banks at Alpine scale. A colour and
+slope test separates bright neutral snow from rock/grass. Neutral material
+structure is layered at a coarse macro scale and true micro scale. A
+restrained coarse normal breaks up formations; roughness and AO remain
+true-scale. Mip filtering and a far-horizon fade suppress sub-pixel detail.
+Steep terrain uses a world-continuous metric triplanar projection of the same
+authored scans; their metre scale and phase remain continuous across tile and
+LOD boundaries. Top-down imagery is filtered for classification, then removed
+from side-facing colour instead of being magnified into cliff-long streaks.
 Terrain mode starts at fixed exposure so the surrounding dark sky does not
 meter the material to white; `E` still toggles adaptation.
 
@@ -168,6 +180,27 @@ building any natural-only `.trn` dataset.
 - E: toggle auto-exposure (eye adaptation) on/off
 - Escape: quit
 
+Set `TERRAIN_FREEZE_CAMERA=1` when capturing a replayed dump viewpoint so
+window focus and pointer motion cannot move the camera between comparisons.
+`TERRAIN_START_DEBUG_VIEW=22` boots into the final colour-preserving macro layer;
+`23` shows the X-side/top/Z-side triplanar weights.
+
 Shadows default to stable eight-tap rotated PCF on four 2048² cascades. Set
 `TERRAIN_SHADOW_FILTER=hard`, `pcf`, or `pcss` (PCSS is opt-in), and use
 `TERRAIN_SHADOW_RESOLUTION=4096` only for benchmarks; other resolutions are rejected.
+
+Normal builds do not contain the red texture-stretch highlight. To compile the
+diagnostic explicitly, configure a separate build and launch it with the
+runtime switch:
+
+```sh
+cmake -S . -B build-stretch -DTERRAIN_STRETCH_OVERLAY=ON
+cmake --build build-stretch -j
+./build-stretch/terrain_renderer --show-texture-stretch
+```
+
+The overlay marks terrain where top-down projection stretches by 1.5x or more,
+matching `tools/detect_texture_stretch.py`. Tune it with
+`TERRAIN_STRETCH_THRESHOLD` (default `1.5`) and `TERRAIN_STRETCH_OPACITY`
+(default `0.25`). Passing `--show-texture-stretch` to an ordinary build prints
+an explanatory warning and cannot alter terrain colour.
