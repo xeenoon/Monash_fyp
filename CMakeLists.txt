@@ -97,7 +97,15 @@ add_custom_target(shaders ALL DEPENDS ${SHADER_BINARIES})
 # --- Headless Vulkan compute terrain baker (opt-in: -DTERRAIN_BAKE=ON) --------
 if(TERRAIN_BAKE)
     set(BAKE_SHADER_BINARIES "")
-    foreach(BAKE_SHADER bake_scale.comp)
+    foreach(BAKE_SHADER bake_scale.comp bake_copy.comp bake_classify.comp
+                        bake_gaussian.comp bake_jfa.comp bake_green.comp
+                        bake_clean_masks.comp bake_jfa_init.comp
+                        bake_inpaint.comp bake_clean_finish.comp
+                        bake_unpack.comp bake_bands.comp bake_subtract.comp
+                        bake_quilt.comp bake_relayer.comp bake_patchmatch.comp
+                        bake_gather.comp bake_transition_seed.comp
+                        bake_transition_finish.comp bake_material_mask.comp
+                        bake_resample.comp)
         add_custom_command(
             OUTPUT "${SHADER_OUTPUT_DIR}/${BAKE_SHADER}.spv"
             COMMAND "${CMAKE_COMMAND}" -E make_directory "${SHADER_OUTPUT_DIR}"
@@ -111,20 +119,50 @@ if(TERRAIN_BAKE)
     endforeach()
     add_custom_target(bake_shaders ALL DEPENDS ${BAKE_SHADER_BINARIES})
 
-    add_library(bake_gpu STATIC src/bake/bake_gpu.c)
-    target_include_directories(bake_gpu PUBLIC src src/bake)
-    target_link_libraries(bake_gpu PUBLIC core_utils Vulkan::Vulkan)
+    add_library(bake_gpu STATIC
+        src/bake/bake_gpu.c
+        src/bake/bake_image.c
+        src/bake/bake_filter.c
+        src/bake/bake_jfa.c
+        src/bake/bake_clean.c
+        src/bake/bake_bands.c
+        src/bake/bake_quilt.c
+        src/bake/bake_relayer.c
+        src/bake/bake_patchmatch.c
+        src/bake/bake_transition.c
+        src/bake/bake_pipeline.c
+        src/bake/bake_resample.c
+        include/stb_image.c)
+    target_include_directories(bake_gpu PUBLIC src src/bake PRIVATE include)
+    target_link_libraries(bake_gpu PUBLIC core_utils Vulkan::Vulkan m)
     target_compile_definitions(bake_gpu PUBLIC BAKE_SHADER_DIR="${SHADER_OUTPUT_DIR}")
     if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(bake_gpu PRIVATE -Wall -Wextra -Wpedantic)
+        set_source_files_properties(include/stb_image.c PROPERTIES COMPILE_OPTIONS "-w")
+        # Bit-exact GPU match requires no fused multiply-add on the CPU side.
+        set_source_files_properties(src/bake/bake_filter.c
+            PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+        set_source_files_properties(src/bake/bake_clean.c
+            PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+        set_source_files_properties(src/bake/bake_bands.c
+            PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+        set_source_files_properties(src/bake/bake_relayer.c
+            PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+        set_source_files_properties(src/bake/bake_resample.c
+            PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
     endif()
 
-    add_executable(terrain_bake src/bake/bake_main.c)
+    add_executable(terrain_bake src/bake/bake_main.c src/terrain_tile.c)
     add_dependencies(terrain_bake bake_shaders)
     target_link_libraries(terrain_bake PRIVATE bake_gpu)
+    target_compile_definitions(terrain_bake PRIVATE
+        BAKE_DATASET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/alps-data/trn-alps-16km")
 
     # `cmake --build . --target bake` runs the baker to produce images.
-    add_custom_target(bake COMMAND terrain_bake DEPENDS terrain_bake bake_shaders)
+    add_custom_target(bake
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_BINARY_DIR}/baked_materials"
+        COMMAND terrain_bake --output "${CMAKE_BINARY_DIR}/baked_materials"
+        DEPENDS terrain_bake bake_shaders)
 
     if(BUILD_TESTING)
         add_executable(bake_gpu_tests tests/bake_gpu_tests.c)
@@ -132,6 +170,72 @@ if(TERRAIN_BAKE)
         target_link_libraries(bake_gpu_tests PRIVATE bake_gpu)
         add_test(NAME bake_gpu_roundtrip COMMAND bake_gpu_tests)
         set_tests_properties(bake_gpu_roundtrip PROPERTIES SKIP_RETURN_CODE 77)
+
+        add_executable(bake_image_tests tests/bake_image_tests.c)
+        add_dependencies(bake_image_tests bake_shaders)
+        target_link_libraries(bake_image_tests PRIVATE bake_gpu)
+        add_test(NAME bake_image_roundtrip COMMAND bake_image_tests)
+        set_tests_properties(bake_image_roundtrip PROPERTIES SKIP_RETURN_CODE 77)
+
+        add_executable(bake_classify_tests tests/bake_classify_tests.c)
+        add_dependencies(bake_classify_tests bake_shaders)
+        target_link_libraries(bake_classify_tests PRIVATE bake_gpu)
+        add_test(NAME bake_classify_oracle COMMAND bake_classify_tests)
+        set_tests_properties(bake_classify_oracle PROPERTIES SKIP_RETURN_CODE 77)
+
+        add_executable(bake_gaussian_tests tests/bake_gaussian_tests.c)
+        add_dependencies(bake_gaussian_tests bake_shaders)
+        target_link_libraries(bake_gaussian_tests PRIVATE bake_gpu)
+        add_test(NAME bake_gaussian_bitexact COMMAND bake_gaussian_tests)
+        set_tests_properties(bake_gaussian_bitexact PROPERTIES SKIP_RETURN_CODE 77)
+
+        add_executable(bake_jfa_tests tests/bake_jfa_tests.c)
+        add_dependencies(bake_jfa_tests bake_shaders)
+        target_link_libraries(bake_jfa_tests PRIVATE bake_gpu)
+        add_test(NAME bake_jfa_bitexact COMMAND bake_jfa_tests)
+        set_tests_properties(bake_jfa_bitexact PROPERTIES SKIP_RETURN_CODE 77)
+
+        add_executable(bake_clean_tests tests/bake_clean_tests.c)
+        add_dependencies(bake_clean_tests bake_shaders)
+        target_link_libraries(bake_clean_tests PRIVATE bake_gpu)
+        add_test(NAME bake_clean_bitexact COMMAND bake_clean_tests)
+        set_tests_properties(bake_clean_bitexact PROPERTIES SKIP_RETURN_CODE 77)
+
+        add_executable(bake_bands_tests tests/bake_bands_tests.c)
+        add_dependencies(bake_bands_tests bake_shaders)
+        target_link_libraries(bake_bands_tests PRIVATE bake_gpu)
+        add_test(NAME bake_bands_bitexact COMMAND bake_bands_tests)
+        set_tests_properties(bake_bands_bitexact PROPERTIES SKIP_RETURN_CODE 77)
+
+        add_executable(bake_quilt_tests tests/bake_quilt_tests.c)
+        add_dependencies(bake_quilt_tests bake_shaders)
+        target_link_libraries(bake_quilt_tests PRIVATE bake_gpu)
+        add_test(NAME bake_quilt_bitexact COMMAND bake_quilt_tests)
+        set_tests_properties(bake_quilt_bitexact PROPERTIES SKIP_RETURN_CODE 77)
+
+        add_executable(bake_relayer_tests tests/bake_relayer_tests.c)
+        add_dependencies(bake_relayer_tests bake_shaders)
+        target_link_libraries(bake_relayer_tests PRIVATE bake_gpu)
+        add_test(NAME bake_relayer_bitexact COMMAND bake_relayer_tests)
+        set_tests_properties(bake_relayer_bitexact PROPERTIES SKIP_RETURN_CODE 77)
+
+        add_executable(bake_transition_tests tests/bake_transition_tests.c)
+        add_dependencies(bake_transition_tests bake_shaders)
+        target_link_libraries(bake_transition_tests PRIVATE bake_gpu)
+        add_test(NAME bake_transition_bitexact COMMAND bake_transition_tests)
+        set_tests_properties(bake_transition_bitexact PROPERTIES SKIP_RETURN_CODE 77)
+
+        add_executable(bake_pipeline_tests tests/bake_pipeline_tests.c)
+        add_dependencies(bake_pipeline_tests bake_shaders)
+        target_link_libraries(bake_pipeline_tests PRIVATE bake_gpu)
+        add_test(NAME bake_pipeline_bitexact COMMAND bake_pipeline_tests)
+        set_tests_properties(bake_pipeline_bitexact PROPERTIES SKIP_RETURN_CODE 77)
+
+        add_executable(bake_resample_tests tests/bake_resample_tests.c)
+        add_dependencies(bake_resample_tests bake_shaders)
+        target_link_libraries(bake_resample_tests PRIVATE bake_gpu)
+        add_test(NAME bake_resample_bitexact COMMAND bake_resample_tests)
+        set_tests_properties(bake_resample_bitexact PROPERTIES SKIP_RETURN_CODE 77)
     endif()
 endif()
 

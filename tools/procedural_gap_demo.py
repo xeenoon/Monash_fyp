@@ -2798,17 +2798,9 @@ def semantic_texture_quilt(target_labels: np.ndarray, target: TerrainSample,
                            donors: list[TerrainSample], north: TerrainSample,
                            east: TerrainSample, output: Path | None = None,
                            macro_low: np.ndarray | None = None,
-                           material_exemplars: dict[int, list[TerrainSample]] | None = None,
-                           uniform_material: int | None = None
+                           material_exemplars: dict[int, list[TerrainSample]] | None = None
                            ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Coarse-to-fine semantic synthesis or pass15 native multiband rendering.
-
-    ``uniform_material`` marks a pure single-material tile: the coarse-to-fine
-    *semantic* patch search is pointless when every patch is the same class, so
-    it is skipped and the native detail comes straight from the material relayer
-    on the macro-low base — that search is the dominant per-preset cost (~49s)
-    for a uniform result it cannot improve.
-    """
+    """Coarse-to-fine semantic synthesis or pass15 native multiband rendering."""
     from terrain_shape_synth import soft_choice
     from terrain_synth import srgb_to_lab
     generated = (macro_low.copy() if macro_low is not None else
@@ -2829,18 +2821,7 @@ def semantic_texture_quilt(target_labels: np.ndarray, target: TerrainSample,
         texture_dir.mkdir(parents=True, exist_ok=True)
     frequency_source_fields: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
 
-    levels = [] if uniform_material is not None else list(enumerate(TEXTURE_LEVELS))
-    if uniform_material is not None:
-        print("  uniform tile: exemplar-quilt base (semantic search skipped)", flush=True)
-        # Seed the base with a coherent min-cut quilt of the pure material rather
-        # than the smooth macro-low: the relayer alone on macro-low leaves blotchy
-        # blobs, whereas the exemplar carries real mid/meso structure the relayer
-        # then only needs to colour-anchor.
-        exemplar = build_material_exemplar(
-            (material_exemplars or {}).get(uniform_material, []), uniform_material, rng)
-        if exemplar is not None:
-            generated = np.clip(exemplar, 0, 255).astype(np.uint8)
-    for level, (patch, stride, source_stride) in levels:
+    for level, (patch, stride, source_stride) in enumerate(TEXTURE_LEVELS):
         print(f"  texture level {level + 1}/{len(TEXTURE_LEVELS)}: "
               f"patch={patch}, stride={stride}", flush=True)
         database = build_texture_patch_database(donors, patch, source_stride)
@@ -3072,21 +3053,18 @@ def semantic_texture_quilt(target_labels: np.ndarray, target: TerrainSample,
                 texture_dir / f"level_{level + 1}_{patch}px_source_uv.png")
 
     if macro_low is not None:
-        native_mid = native_fine = None
-        if frequency_source_fields:  # the uniform fast path has none
-            coarse_field = frequency_source_fields[0]
-            fine_field = frequency_source_fields[-1]
-            _, native_mid, native_fine = relayer_native_microtexture(
-                generated, donors, *coarse_field, fine_field=fine_field)
+        coarse_field = frequency_source_fields[0]
+        fine_field = frequency_source_fields[-1]
+        _, native_mid, native_fine = relayer_native_microtexture(
+            generated, donors, *coarse_field, fine_field=fine_field)
         generated, material_mid, material_fine, material_sources = \
             relayer_material_microtexture(generated, target_labels, donors,
                                           material_exemplars=material_exemplars)
         if texture_dir is not None:
-            if native_mid is not None:
-                Image.fromarray(native_mid, "RGB").save(
-                    texture_dir / "native_midfrequency_mosaic.png")
-                Image.fromarray(native_fine, "RGB").save(
-                    texture_dir / "native_highfrequency_mosaic.png")
+            Image.fromarray(native_mid, "RGB").save(
+                texture_dir / "native_midfrequency_mosaic.png")
+            Image.fromarray(native_fine, "RGB").save(
+                texture_dir / "native_highfrequency_mosaic.png")
             Image.fromarray(material_mid, "RGB").save(
                 texture_dir / "material_midfrequency_residual.png")
             Image.fromarray(material_fine, "RGB").save(
@@ -3311,8 +3289,7 @@ def write_texture_outputs(output: Path, target: TerrainSample, east: TerrainSamp
                           texture_sources: list[TerrainSample],
                           macro_low: np.ndarray | None = None,
                           snap_edges: bool = True,
-                          material_exemplars: dict[int, list[TerrainSample]] | None = None,
-                          uniform_material: int | None = None) -> None:
+                          material_exemplars: dict[int, list[TerrainSample]] | None = None) -> None:
     """Run and export only the semantic-guided RGB/source-UV synthesis.
 
     ``snap_edges`` copies the real north/east neighbour imagery a few pixels
@@ -3327,7 +3304,7 @@ def write_texture_outputs(output: Path, target: TerrainSample, east: TerrainSamp
     print("Synthesizing coherent RGB source-coordinate field…", flush=True)
     unblended, donor_map, source_x, source_y = semantic_texture_quilt(
         target_labels, target, texture_sources, north, east, output, macro_low,
-        material_exemplars=material_exemplars, uniform_material=uniform_material)
+        material_exemplars=material_exemplars)
     if snap_edges:
         rebuilt, blend_mask = snap_generated_edges(unblended, north.rgb, east.rgb)
     else:
@@ -3434,8 +3411,7 @@ def write_outputs(output: Path, target: TerrainSample, west: TerrainSample, nort
                   texture_sources: list[TerrainSample],
                   macro_low: np.ndarray | None = None,
                   snap_edges: bool = True,
-                  material_exemplars: dict[int, list[TerrainSample]] | None = None,
-                  uniform_material: int | None = None) -> None:
+                  material_exemplars: dict[int, list[TerrainSample]] | None = None) -> None:
     output.mkdir(parents=True, exist_ok=True)
     print(f"Writing output images to {output}…", flush=True)
     # Raw source overview intentionally includes the red-marked target for audit.
@@ -3453,8 +3429,7 @@ def write_outputs(output: Path, target: TerrainSample, west: TerrainSample, nort
     _ = atlas_path
     write_texture_outputs(output, target, west, north, target_labels, texture_sources,
                           macro_low, snap_edges=snap_edges,
-                          material_exemplars=material_exemplars,
-                          uniform_material=uniform_material)
+                          material_exemplars=material_exemplars)
 
     summary = output / "README.md"
     summary.write_text(

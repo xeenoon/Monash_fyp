@@ -1,0 +1,45 @@
+#version 450
+// One jump-flooding pass at `step`: for each pixel, adopt the neighbouring
+// seed (self + 8 at ±step) with the smallest integer squared distance.  Same
+// neighbour order and strict-`<` tie-break as bake_jfa.c, so the owner field is
+// bit-identical CPU vs GPU.  Ping-pong two int buffers across passes.
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(std430, binding = 0) readonly buffer InOwner { int owner[]; } src;
+layout(std430, binding = 1) writeonly buffer OutOwner { int owner[]; } dst;
+
+layout(push_constant) uniform Push {
+    uint width;
+    uint height;
+    int step;
+} pc;
+
+void main() {
+    uvec2 q = gl_GlobalInvocationID.xy;
+    if (q.x >= pc.width || q.y >= pc.height) return;
+    int W = int(pc.width), H = int(pc.height), x = int(q.x), y = int(q.y);
+
+    int best = src.owner[y * W + x];
+    int best_d = -1;
+    if (best >= 0) {
+        int bx = best % W, by = best / W;
+        int dx = x - bx, dy = y - by;
+        best_d = dx * dx + dy * dy;
+    }
+    for (int oy = -pc.step; oy <= pc.step; oy += pc.step) {
+        for (int ox = -pc.step; ox <= pc.step; ox += pc.step) {
+            int nx = x + ox, ny = y + oy;
+            if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
+            int seed = src.owner[ny * W + nx];
+            if (seed < 0) continue;
+            int sx = seed % W, sy = seed / W;
+            int dx = x - sx, dy = y - sy;
+            int d = dx * dx + dy * dy;
+            if (best_d < 0 || d < best_d) {
+                best_d = d;
+                best = seed;
+            }
+        }
+    }
+    dst.owner[y * W + x] = best;
+}

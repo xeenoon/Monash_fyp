@@ -1,0 +1,19 @@
+#version 450
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(std430, binding = 0) readonly buffer Rgb { float v[]; } rgb;
+layout(std430, binding = 1) readonly buffer Blur2 { float v[]; } blur2;
+layout(std430, binding = 2) readonly buffer Blur12 { float v[]; } blur12;
+layout(std430, binding = 3) readonly buffer Blur32 { float v[]; } blur32;
+layout(std430, binding = 4) writeonly buffer Mid { float v[]; } mid;
+layout(std430, binding = 5) writeonly buffer Meso { float v[]; } meso;
+layout(push_constant) uniform Push { uint width; uint height; } pc;
+void main() {
+    uvec2 q = gl_GlobalInvocationID.xy;
+    if (q.x >= pc.width || q.y >= pc.height) return;
+    uint first = (q.y * pc.width + q.x) * 3u;
+    for (uint c = 0u; c < 3u; ++c) {
+        uint i = first + c;
+        mid.v[i] = blur2.v[i] - blur12.v[i];
+        meso.v[i] = blur12.v[i] - blur32.v[i];
+    }
+}

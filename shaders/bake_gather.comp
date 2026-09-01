@@ -1,0 +1,7 @@
+#version 450
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(std430,binding=0)readonly buffer Atlas{uint px[];}atlas;
+layout(std430,binding=1)readonly buffer Owners{uint v[];}owners;
+layout(std430,binding=2)writeonly buffer Output{uint px[];}output_image;
+layout(push_constant)uniform Push{uint width;uint height;}pc;
+void main(){uvec2 q=gl_GlobalInvocationID.xy;if(q.x>=pc.width||q.y>=pc.height)return;uint i=q.y*pc.width+q.x;output_image.px[i]=atlas.px[owners.v[i]];}

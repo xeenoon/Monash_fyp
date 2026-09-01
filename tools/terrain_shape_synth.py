@@ -9,15 +9,9 @@ native-resolution mid/high bands are added later by procedural_gap_demo.
 """
 from __future__ import annotations
 
-import hashlib
-import pickle
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
-
-# Bump whenever _shape/_build or the classifier's semantics change, so stale
-# on-disk shape banks are ignored instead of silently reused.
-SHAPE_LIBRARY_CACHE_VERSION = 1
 
 import numpy as np
 from PIL import Image
@@ -138,7 +132,7 @@ def mass_error(labels: np.ndarray, probabilities: np.ndarray) -> float:
 class WholeMapShapeLibrary:
     def __init__(self, dataset: Path, classifier: Callable[[np.ndarray], np.ndarray],
                  exclude: set[tuple[int, int]] = frozenset(),
-                 max_tiles: int | None = None, use_cache: bool = True):
+                 max_tiles: int | None = None):
         self.dataset = dataset
         self.classifier = classifier
         coordinates = [p for p in discover_level5(dataset) if p not in exclude]
@@ -152,14 +146,7 @@ class WholeMapShapeLibrary:
         self._sample_sources: list[tuple[int, int]] = []
         self._clean_cache: dict[tuple[int, int], np.ndarray] = {}
         self.selected_sources: list[tuple[int, int]] = []
-        cache_path = self._cache_path(exclude, max_tiles) if use_cache else None
-        if cache_path is not None and cache_path.exists():
-            print(f"Loading cached shape bank from {cache_path.name}…", flush=True)
-            self._load_cache(cache_path)
-        else:
-            self._build()
-            if cache_path is not None:
-                self._save_cache(cache_path)
+        self._build()
         if not self.macro or not self.micro:
             raise RuntimeError("whole-map shape bank is empty")
         self.geometry = np.asarray(self._geometry_rows, np.float32)
@@ -172,35 +159,6 @@ class WholeMapShapeLibrary:
                                                if shape.material == kind], np.int32)
                                    for kind in range(CLASS_COUNT)]
 
-    def _cache_path(self, exclude: set[tuple[int, int]],
-                    max_tiles: int | None) -> Path:
-        digest = hashlib.sha1(repr((
-            str(self.dataset.resolve()), tuple(sorted(exclude)), max_tiles,
-            len(self.coordinates), SHAPE_LIBRARY_CACHE_VERSION)).encode()).hexdigest()[:16]
-        return self.dataset / ".shape_cache" / f"shape_bank_{digest}.pkl"
-
-    _CACHE_ATTRS = ("coordinates", "macro", "micro", "_geometry_rows",
-                    "_density_rows", "_sample_sources")
-
-    def _save_cache(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {attr: getattr(self, attr) for attr in self._CACHE_ATTRS}
-        payload["version"] = SHAPE_LIBRARY_CACHE_VERSION
-        tmp = path.with_suffix(".tmp")
-        with tmp.open("wb") as handle:
-            pickle.dump(payload, handle, protocol=pickle.HIGHEST_PROTOCOL)
-        tmp.replace(path)  # atomic: never leave a half-written cache
-        print(f"  cached shape bank to {path.name}", flush=True)
-
-    def _load_cache(self, path: Path) -> None:
-        with path.open("rb") as handle:
-            payload = pickle.load(handle)
-        if payload.get("version") != SHAPE_LIBRARY_CACHE_VERSION:
-            self._build()
-            return
-        for attr in self._CACHE_ATTRS:
-            setattr(self, attr, payload[attr])
-
     def clean_tile(self, x: int, y: int) -> np.ndarray:
         key = (x, y)
         if key not in self._clean_cache:
@@ -208,9 +166,8 @@ class WholeMapShapeLibrary:
             if rgb is None:
                 raise FileNotFoundError(key)
             self._clean_cache[key] = clean_source(rgb)[0]
-            # Hold enough distinct sources that the macro candidate loop (which
-            # samples many tiles per iteration) stops thrashing and re-cleaning.
-            if len(self._clean_cache) > 512:
+            # Only transformed macro sources are cached; cap accidental growth.
+            if len(self._clean_cache) > 32:
                 first = next(iter(self._clean_cache))
                 if first != key:
                     self._clean_cache.pop(first)

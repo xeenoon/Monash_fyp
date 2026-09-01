@@ -1,0 +1,11 @@
+#version 450
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(std430, binding = 0) readonly buffer Mask { uint v[]; } mask;
+layout(std430, binding = 1) writeonly buffer Owner { int v[]; } owner;
+layout(push_constant) uniform Push { uint width; uint height; } pc;
+void main() {
+    uvec2 q = gl_GlobalInvocationID.xy;
+    if (q.x >= pc.width || q.y >= pc.height) return;
+    uint i = q.y * pc.width + q.x;
+    owner.v[i] = mask.v[i] != 0u ? -1 : int(i);
+}

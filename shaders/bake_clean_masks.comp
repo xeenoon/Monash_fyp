@@ -1,0 +1,50 @@
+#version 450
+// Direct Manhattan-radius form of scipy binary_dilation's default cross
+// structure: hard=baseHard dilated 5; repair=tree dilated 4 OR baseHard
+// dilated 9 (the composition of radii 5 and 4).
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(std430, binding = 0) readonly buffer InImage { uint px[]; } src;
+layout(std430, binding = 1) readonly buffer GreenBlur { float v[]; } green;
+layout(std430, binding = 2) writeonly buffer Hard { uint v[]; } hard_out;
+layout(std430, binding = 3) writeonly buffer Repair { uint v[]; } repair_out;
+layout(push_constant) uniform Push { uint width; uint height; } pc;
+
+void flags(int x, int y, out bool tree, out bool base_hard) {
+    int W = int(pc.width);
+    uint i = uint(y * W + x), p = src.px[i];
+    float r = float(p & 0xffu) / 255.0;
+    float g = float((p >> 8) & 0xffu) / 255.0;
+    float b = float((p >> 16) & 0xffu) / 255.0;
+    float mx = max(r, max(g, b)), mn = min(r, min(g, b));
+    float sat = (mx - mn) / max(mx, 1.0e-5);
+    precise float lum = r * 0.2126 + g * 0.7152 + b * 0.0722;
+    bool green_ctx = green.v[i] > 0.015;
+    tree = (g >= b - 0.02) && (g > r - 0.07) && (lum < 0.31) &&
+           (g > 0.05) && green_ctx;
+    bool road = (lum > 0.60) && (sat < 0.13) && green_ctx;
+    bool water = (b > r + 0.035) && (b > g + 0.015) && (lum < 0.52);
+    bool magenta = (r > g + 0.11) && (b > g + 0.07) && (sat > 0.22);
+    base_hard = road || water || magenta;
+}
+
+void main() {
+    uvec2 q = gl_GlobalInvocationID.xy;
+    if (q.x >= pc.width || q.y >= pc.height) return;
+    int W = int(pc.width), H = int(pc.height), x = int(q.x), y = int(q.y);
+    bool hard = false, repair = false;
+    for (int dy = -9; dy <= 9; ++dy) {
+        int room = 9 - abs(dy);
+        for (int dx = -room; dx <= room; ++dx) {
+            int xx = x + dx, yy = y + dy;
+            if (xx < 0 || xx >= W || yy < 0 || yy >= H) continue;
+            bool tree, base_hard;
+            flags(xx, yy, tree, base_hard);
+            int d = abs(dx) + abs(dy);
+            if (base_hard && d <= 5) hard = true;
+            if ((tree && d <= 4) || base_hard) repair = true;
+        }
+    }
+    uint i = q.y * pc.width + q.x;
+    hard_out.v[i] = hard ? 1u : 0u;
+    repair_out.v[i] = repair ? 1u : 0u;
+}

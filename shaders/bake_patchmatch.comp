@@ -1,0 +1,47 @@
+#version 450
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(std430, binding = 0) readonly buffer Atlas { uint px[]; } atlas;
+layout(std430, binding = 1) readonly buffer Labels { uint v[]; } labels;
+layout(std430, binding = 2) readonly buffer InOwner { uint v[]; } src;
+layout(std430, binding = 3) writeonly buffer OutOwner { uint v[]; } dst;
+layout(push_constant) uniform Push { uint width; uint height; uint seed; uint iteration; } pc;
+uint mix32(uint v) { v ^= v >> 16; v *= 0x7feb352du; v ^= v >> 15; v *= 0x846ca68bu; return v ^ (v >> 16); }
+uint adjust_owner(uint owner, int dx, int dy) {
+    uint count = pc.width * pc.height, plane = owner / count, local = owner % count;
+    int x = int(local % pc.width), y = int(local / pc.width);
+    x = clamp(x + dx, 0, int(pc.width) - 1); y = clamp(y + dy, 0, int(pc.height) - 1);
+    return plane * count + uint(y) * pc.width + uint(x);
+}
+uint cost(uint candidate, int x, int y) {
+    uint count = pc.width * pc.height, i = uint(y) * pc.width + uint(x);
+    uint material = labels.v[i] < 3u ? labels.v[i] : 0u;
+    if (candidate / count != material) return 0xffffffffu;
+    uint sum_r=0u,sum_g=0u,sum_b=0u,n=0u,continuity=0xffffffffu;
+    const ivec2 d[4] = ivec2[4](ivec2(-1,0),ivec2(1,0),ivec2(0,-1),ivec2(0,1));
+    uint local = candidate % count; int cx=int(local%pc.width), cy=int(local/pc.width);
+    for (int k=0;k<4;++k) {
+        int nx=x+d[k].x, ny=y+d[k].y;
+        if(nx<0||nx>=int(pc.width)||ny<0||ny>=int(pc.height)) continue;
+        uint ni=uint(ny)*pc.width+uint(nx); if(labels.v[ni]!=material) continue;
+        uint no=src.v[ni]; if(no/count!=material) continue;
+        uint p=atlas.px[no]; sum_r+=p&255u; sum_g+=(p>>8)&255u; sum_b+=(p>>16)&255u; ++n;
+        uint expected=adjust_owner(no,-d[k].x,-d[k].y), el=expected%count;
+        int ex=int(el%pc.width), ey=int(el/pc.width);
+        continuity=min(continuity,uint(abs(cx-ex)+abs(cy-ey)));
+    }
+    if(n==0u) return continuity==0xffffffffu?0u:continuity*16u;
+    uint p=atlas.px[candidate],r=p&255u,g=(p>>8)&255u,b=(p>>16)&255u;
+    int dr=int(r)-int(sum_r/n),dg=int(g)-int(sum_g/n),db=int(b)-int(sum_b/n);
+    if(continuity==0xffffffffu) continuity=0u;
+    return uint(dr*dr+dg*dg+db*db)+continuity*16u;
+}
+void main(){
+    uvec2 q=gl_GlobalInvocationID.xy;if(q.x>=pc.width||q.y>=pc.height)return;
+    int x=int(q.x),y=int(q.y);uint i=q.y*pc.width+q.x,count=pc.width*pc.height;
+    uint material=labels.v[i]<3u?labels.v[i]:0u,c[6];int n=0;c[n++]=src.v[i];
+    if(x>0)c[n++]=adjust_owner(src.v[i-1u],1,0);if(x+1<int(pc.width))c[n++]=adjust_owner(src.v[i+1u],-1,0);
+    if(y>0)c[n++]=adjust_owner(src.v[i-pc.width],0,1);if(y+1<int(pc.height))c[n++]=adjust_owner(src.v[i+pc.width],0,-1);
+    uint h=mix32(pc.seed^i*0x9e3779b9u^pc.iteration*0x85ebca6bu);c[n++]=material*count+h%count;
+    uint best=c[0],best_cost=0xffffffffu;for(int k=0;k<n;++k){uint s=cost(c[k],x,y);if(s<best_cost||(s==best_cost&&c[k]<best)){best=c[k];best_cost=s;}}
+    dst.v[i]=best;
+}

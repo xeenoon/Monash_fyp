@@ -1,0 +1,50 @@
+#version 450
+// Parallel patch quilt: each pixel chooses among overlapping jittered patch
+// cells using an integer Voronoi seam. Unlike the old greedy min-cut, all seam
+// owners are independent and can be evaluated in one dispatch.
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(std430, binding = 0) readonly buffer Atlas { uint px[]; } atlas;
+layout(std430, binding = 1) readonly buffer Labels { uint v[]; } labels;
+layout(std430, binding = 2) writeonly buffer Output { uint px[]; } output_image;
+layout(std430, binding = 3) writeonly buffer Owners { uint v[]; } owners;
+layout(push_constant) uniform Push { uint width; uint height; uint seed; } pc;
+const int PATCH = 32, STRIDE = 24;
+uint mix32(uint v) {
+    v ^= v >> 16; v *= 0x7feb352du;
+    v ^= v >> 15; v *= 0x846ca68bu;
+    return v ^ (v >> 16);
+}
+void main() {
+    uvec2 q = gl_GlobalInvocationID.xy;
+    if (q.x >= pc.width || q.y >= pc.height) return;
+    int W = int(pc.width), H = int(pc.height), x = int(q.x), y = int(q.y);
+    int room_x = max(W - PATCH, 0), room_y = max(H - PATCH, 0);
+    int base_x = x / STRIDE, base_y = y / STRIDE;
+    uint i = q.y * pc.width + q.x;
+    uint material = labels.v[i] < 3u ? labels.v[i] : 0u;
+    uint best_score = 0xffffffffu, best_owner = material * pc.width * pc.height;
+    for (int cy = base_y - 1; cy <= base_y + 1; ++cy) {
+        for (int cx = base_x - 1; cx <= base_x + 1; ++cx) {
+            if (cx < 0 || cy < 0) continue;
+            int tx = cx * STRIDE, ty = cy * STRIDE;
+            if (x < tx || y < ty || x >= tx + PATCH || y >= ty + PATCH) continue;
+            uint h = mix32(pc.seed ^ uint(cx) * 0x9e3779b9u ^
+                           uint(cy) * 0x85ebca6bu ^ material * 0xc2b2ae35u);
+            int sx0 = room_x != 0 ? int(h % uint(room_x + 1)) : 0;
+            int sy0 = room_y != 0 ? int(mix32(h + 0x27d4eb2du) % uint(room_y + 1)) : 0;
+            int local_x = x - tx, local_y = y - ty;
+            int center_x = tx + PATCH / 2 + int((h >> 24) & 7u) - 3;
+            int center_y = ty + PATCH / 2 + int((h >> 20) & 7u) - 3;
+            int dx = x - center_x, dy = y - center_y;
+            uint score = uint(dx * dx + dy * dy) * 16u + ((h >> 8) & 15u);
+            uint owner = material * pc.width * pc.height +
+                         uint(clamp(sy0 + local_y, 0, H - 1)) * pc.width +
+                         uint(clamp(sx0 + local_x, 0, W - 1));
+            if (score < best_score || (score == best_score && owner < best_owner)) {
+                best_score = score; best_owner = owner;
+            }
+        }
+    }
+    owners.v[i] = best_owner;
+    output_image.px[i] = atlas.px[best_owner];
+}

@@ -1,0 +1,24 @@
+#version 450
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(std430, binding = 0) readonly buffer InImage { uint px[]; } src;
+layout(std430, binding = 1) readonly buffer Soft { float v[]; } soft;
+layout(std430, binding = 2) readonly buffer Repair { uint v[]; } repair;
+layout(std430, binding = 3) readonly buffer Hard { uint v[]; } hard_mask;
+layout(std430, binding = 4) writeonly buffer OutImage { uint px[]; } dst;
+layout(std430, binding = 5) writeonly buffer Confidence { uint v[]; } confidence;
+layout(push_constant) uniform Push { uint width; uint height; } pc;
+void main() {
+    uvec2 q = gl_GlobalInvocationID.xy;
+    if (q.x >= pc.width || q.y >= pc.height) return;
+    uint i = q.y * pc.width + q.x, original = src.px[i];
+    if (repair.v[i] != 0u) {
+        uint r = uint(clamp(soft.v[i * 3u + 0u], 0.0, 255.0));
+        uint g = uint(clamp(soft.v[i * 3u + 1u], 0.0, 255.0));
+        uint b = uint(clamp(soft.v[i * 3u + 2u], 0.0, 255.0));
+        dst.px[i] = r | (g << 8) | (b << 16) | (original & 0xff000000u);
+    } else {
+        dst.px[i] = original;
+    }
+    confidence.v[i] = hard_mask.v[i] != 0u ? 32u :
+                      (repair.v[i] != 0u ? 128u : 255u);
+}

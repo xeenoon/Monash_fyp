@@ -1,0 +1,37 @@
+#version 450
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(std430, binding = 0) readonly buffer Base { uint px[]; } base;
+layout(std430, binding = 1) readonly buffer Labels { uint v[]; } labels;
+layout(std430, binding = 2) readonly buffer Owners { uint v[]; } owners;
+layout(std430, binding = 3) readonly buffer Low { float v[]; } low;
+layout(std430, binding = 4) readonly buffer Mid { float v[]; } mid;
+layout(std430, binding = 5) readonly buffer Meso { float v[]; } meso;
+layout(std430, binding = 6) readonly buffer Fine { float v[]; } fine;
+layout(std430, binding = 7) writeonly buffer Output { uint px[]; } output_image;
+layout(push_constant) uniform Push { uint width; uint height; } pc;
+void main() {
+    uvec2 q = gl_GlobalInvocationID.xy;
+    if (q.x >= pc.width || q.y >= pc.height) return;
+    uint count = pc.width * pc.height, i = q.y * pc.width + q.x;
+    uint kind = labels.v[i] < 3u ? labels.v[i] : 0u;
+    uint owner = owners.v[i] < count * 3u ? owners.v[i] : kind * count;
+    uint first = owner * 3u;
+    vec3 anchor = kind == 0u ? vec3(112.0, 108.0, 101.0) :
+                  (kind == 1u ? vec3(82.0, 112.0, 65.0) :
+                                vec3(218.0, 221.0, 224.0));
+    float keep = kind == 0u ? 0.65 : (kind == 1u ? 1.0 : 0.10);
+    precise float broad_r = low.v[first + 0u] * 0.35 + anchor.r * 0.65;
+    precise float broad_g = low.v[first + 1u] * 0.35 + anchor.g * 0.65;
+    precise float broad_b = low.v[first + 2u] * 0.35 + anchor.b * 0.65;
+    precise float band_r = mid.v[first + 0u] + meso.v[first + 0u] + fine.v[first + 0u];
+    precise float band_g = mid.v[first + 1u] + meso.v[first + 1u] + fine.v[first + 1u];
+    precise float band_b = mid.v[first + 2u] + meso.v[first + 2u] + fine.v[first + 2u];
+    precise float luma = band_r * 0.2126 + band_g * 0.7152 + band_b * 0.0722;
+    band_r = luma + keep * (band_r - luma);
+    band_g = luma + keep * (band_g - luma);
+    band_b = luma + keep * (band_b - luma);
+    uint r = uint(clamp(broad_r + band_r, 0.0, 255.0));
+    uint g = uint(clamp(broad_g + band_g, 0.0, 255.0));
+    uint b = uint(clamp(broad_b + band_b, 0.0, 255.0));
+    output_image.px[i] = r | (g << 8) | (b << 16) | 0xff000000u;
+}

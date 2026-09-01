@@ -1,0 +1,26 @@
+#version 450
+// Shared-weight bilinear resampling. `precise` and the explicit horizontal,
+// horizontal, vertical sequence mirror bake_resample.c bit-for-bit.
+layout(local_size_x=8,local_size_y=8)in;
+layout(std430,binding=0)readonly buffer Input{float v[];}input_field;
+layout(std430,binding=1)writeonly buffer Output{float v[];}output_field;
+layout(std430,binding=2)readonly buffer XIndices{uint v[];}xi;
+layout(std430,binding=3)readonly buffer XWeights{float v[];}xw;
+layout(std430,binding=4)readonly buffer YIndices{uint v[];}yi;
+layout(std430,binding=5)readonly buffer YWeights{float v[];}yw;
+layout(push_constant)uniform Push{uint source_width;uint source_height;uint output_width;uint output_height;}pc;
+void main(){
+    uvec2 q=gl_GlobalInvocationID.xy;
+    if(q.x>=pc.output_width||q.y>=pc.output_height)return;
+    uint x0=xi.v[q.x*2u],x1=xi.v[q.x*2u+1u];
+    uint y0=yi.v[q.y*2u],y1=yi.v[q.y*2u+1u];
+    float tx=xw.v[q.x],ty=yw.v[q.y];
+    float a=input_field.v[y0*pc.source_width+x0];
+    float b=input_field.v[y0*pc.source_width+x1];
+    float c=input_field.v[y1*pc.source_width+x0];
+    float d=input_field.v[y1*pc.source_width+x1];
+    precise float top=a+tx*(b-a);
+    precise float bottom=c+tx*(d-c);
+    precise float value=top+ty*(bottom-top);
+    output_field.v[q.y*pc.output_width+q.x]=value;
+}

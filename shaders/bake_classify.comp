@@ -1,0 +1,42 @@
+#version 450
+// Stage 3: per-pixel material classification — mirror of colour_labels().
+// ROCK(0) by default, GRASS(1) where the grass rule holds, SNOW(2) overrides.
+// Written with explicit multiply-adds (not dot()) so the arithmetic order
+// matches the C/Python reference and the label map is bit-for-bit identical.
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(std430, binding = 0) readonly buffer InImage { uint px[]; } src;
+layout(std430, binding = 1) writeonly buffer OutLabels { uint label[]; } dst;
+
+layout(push_constant) uniform Push {
+    uint width;
+    uint height;
+} pc;
+
+const uint ROCK = 0u, GRASS = 1u, SNOW = 2u;
+
+void main() {
+    uvec2 q = gl_GlobalInvocationID.xy;
+    if (q.x >= pc.width || q.y >= pc.height) return;
+    uint i = q.y * pc.width + q.x;
+    uint p = src.px[i];
+
+    float r = float(p & 0xffu) / 255.0;
+    float g = float((p >> 8) & 0xffu) / 255.0;
+    float b = float((p >> 16) & 0xffu) / 255.0;
+    float mx = max(r, max(g, b));
+    float mn = min(r, min(g, b));
+    float saturation = (mx - mn) / max(mx, 1.0e-5);
+    float luminance = r * 0.2126 + g * 0.7152 + b * 0.0722;
+
+    bool water = (b > r * 1.08) && (g > r * 1.04) && (b > g * 1.035) &&
+                 ((b + g) > (r * 2.18)) && (luminance > 0.08) && (luminance < 0.78);
+    bool snow = (luminance > 0.64) && (saturation < 0.28);
+    bool grass = (g > r * 1.035) && (g > b * 1.10) && (luminance > 0.08) &&
+                 (luminance < 0.64) && !water;
+
+    uint label = ROCK;
+    if (grass) label = GRASS;
+    if (snow) label = SNOW;
+    dst.label[i] = label;
+}

@@ -1,0 +1,38 @@
+#version 450
+// One separable Gaussian pass (axis 0 = horizontal, 1 = vertical) on interleaved
+// float data, clamp boundary.  Weights come from a buffer (computed on the CPU)
+// and the accumulator is `precise` so the mul-then-add order and rounding match
+// the C reference bit-for-bit — see bake_filter.h.
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(std430, binding = 0) readonly buffer In { float v[]; } src;
+layout(std430, binding = 1) writeonly buffer Out { float v[]; } dst;
+layout(std430, binding = 2) readonly buffer Weights { float w[]; } kernel;
+
+layout(push_constant) uniform Push {
+    uint width;
+    uint height;
+    uint channels;
+    uint radius;
+    uint axis;  // 0 = horizontal, 1 = vertical
+} pc;
+
+void main() {
+    uvec2 q = gl_GlobalInvocationID.xy;
+    if (q.x >= pc.width || q.y >= pc.height) return;
+    int W = int(pc.width), H = int(pc.height), C = int(pc.channels), R = int(pc.radius);
+    int px = int(q.x), py = int(q.y);
+    for (int c = 0; c < C; ++c) {
+        precise float acc = 0.0;
+        for (int k = -R; k <= R; ++k) {
+            int x = px, y = py;
+            if (pc.axis == 0u) {
+                x = clamp(px + k, 0, W - 1);
+            } else {
+                y = clamp(py + k, 0, H - 1);
+            }
+            acc = acc + kernel.w[k + R] * src.v[(y * W + x) * C + c];
+        }
+        dst.v[(py * W + px) * C + c] = acc;
+    }
+}
