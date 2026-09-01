@@ -49,9 +49,9 @@ int main(void) {
     memcpy(wbuf.mapped, weights, taps * sizeof(float));
 
     BakePipeline pipeline = bake_pipeline_create(
-        &gpu, BAKE_SHADER_DIR "/bake_gaussian.comp.spv", 3, 5 * sizeof(uint32_t));
-    struct { uint32_t w, h, c, r, axis; } push = {
-        (uint32_t)width, (uint32_t)height, (uint32_t)channels, (uint32_t)radius, 0};
+        &gpu, BAKE_SHADER_DIR "/bake_gaussian.comp.spv", 3, 6 * sizeof(uint32_t));
+    struct { uint32_t w, h, c, r, axis, reflect_mode; } push = {
+        (uint32_t)width, (uint32_t)height, (uint32_t)channels, (uint32_t)radius, 0, 0};
     BakeBuffer h_pass[3] = {in, mid, wbuf};
     bake_dispatch(&gpu, &pipeline, h_pass, 3, &push, sizeof(push),
                   (width + 7) / 8, (height + 7) / 8, 1);

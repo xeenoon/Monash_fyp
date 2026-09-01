@@ -27,6 +27,9 @@ void bake_gaussian_weights(float sigma, int radius, float *weights);
 void bake_gaussian_cpu(const float *in, float *out, float *scratch,
                        int width, int height, int channels,
                        const float *weights, int radius);
+void bake_gaussian_cpu_reflect(const float *in, float *out, float *scratch,
+                               int width, int height, int channels,
+                               const float *weights, int radius);
 
 // Dispatch the exact same two passes on the GPU. The caller owns three
 // distinct, correctly-sized buffers; input and output remain GPU-resident.
@@ -34,5 +37,18 @@ void bake_gaussian_gpu(BakeGpu *gpu, const BakeBuffer *input,
                        const BakeBuffer *output, const BakeBuffer *scratch,
                        int width, int height, int channels, float sigma,
                        float truncate);
+void bake_gaussian_gpu_reflect(BakeGpu *gpu, const BakeBuffer *input,
+                               const BakeBuffer *output,
+                               const BakeBuffer *scratch, int width, int height,
+                               int channels, float sigma, float truncate);
+
+// Same operation over `layers` tightly packed image planes. The existing
+// pass17 residual and material-exemplar paths use this to amortize shortlist
+// and donor-pool filtering across the GPU.
+void bake_gaussian_batch_gpu(BakeGpu *gpu, const BakeBuffer *input,
+                             const BakeBuffer *output,
+                             const BakeBuffer *scratch, int width, int height,
+                             int channels, int layers, float sigma,
+                             float truncate, int reflect);
 
 #endif  // BAKE_FILTER_H

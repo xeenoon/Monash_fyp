@@ -1,0 +1,30 @@
+#version 450
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(std430, binding = 0) readonly buffer In { float v[]; } src;
+layout(std430, binding = 1) writeonly buffer Out { float v[]; } dst;
+layout(std430, binding = 2) readonly buffer Weights { float w[]; } kernel;
+layout(push_constant) uniform Push {
+    uint width, height, channels, radius, axis, layers, reflect_mode;
+} pc;
+int boundary(int value, int extent) {
+    if (pc.reflect_mode == 0u) return clamp(value, 0, extent - 1);
+    while (value < 0 || value >= extent)
+        value = value < 0 ? -value - 1 : 2 * extent - value - 1;
+    return value;
+}
+void main() {
+    uvec3 q = gl_GlobalInvocationID.xyz;
+    if (q.x >= pc.width || q.y >= pc.height || q.z >= pc.layers) return;
+    int W=int(pc.width), H=int(pc.height), C=int(pc.channels), R=int(pc.radius);
+    int px=int(q.x), py=int(q.y), layer=int(q.z);
+    int layer_base = layer * W * H * C;
+    for (int c=0;c<C;++c) {
+        precise float acc=0.0;
+        for (int k=-R;k<=R;++k) {
+            int x=px, y=py;
+            if (pc.axis==0u) x=boundary(px+k,W); else y=boundary(py+k,H);
+            acc = acc + kernel.w[k+R] * src.v[layer_base+(y*W+x)*C+c];
+        }
+        dst.v[layer_base+(py*W+px)*C+c]=acc;
+    }
+}

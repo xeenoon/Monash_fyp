@@ -98,7 +98,11 @@ add_custom_target(shaders ALL DEPENDS ${SHADER_BINARIES})
 if(TERRAIN_BAKE)
     set(BAKE_SHADER_BINARIES "")
     foreach(BAKE_SHADER bake_scale.comp bake_copy.comp bake_classify.comp
-                        bake_gaussian.comp bake_jfa.comp bake_green.comp
+                        bake_gaussian.comp bake_jfa.comp bake_edt_horizontal.comp
+                        bake_edt_vertical.comp bake_gaussian_batch.comp
+                        bake_residual_extract.comp bake_residual_finish.comp
+                        bake_residual_score.comp bake_residual_seam_cost.comp
+                        bake_residual_commit.comp bake_green.comp
                         bake_clean_masks.comp bake_jfa_init.comp
                         bake_inpaint.comp bake_clean_finish.comp
                         bake_unpack.comp bake_bands.comp bake_subtract.comp
@@ -126,6 +130,15 @@ if(TERRAIN_BAKE)
         src/bake/bake_jfa.c
         src/bake/bake_clean.c
         src/bake/bake_bands.c
+        src/bake/bake_random.c
+        src/bake/bake_pass17_sources.c
+        src/bake/bake_pass17_relayer.c
+        src/bake/bake_sample.c
+        src/bake/bake_residual.c
+        src/bake/bake_ordered_quilt.c
+        src/bake/bake_texture_database.c
+        src/bake/bake_texture_score.c
+        src/bake/bake_seam.c
         src/bake/bake_quilt.c
         src/bake/bake_relayer.c
         src/bake/bake_patchmatch.c
@@ -157,6 +170,16 @@ if(TERRAIN_BAKE)
     target_link_libraries(terrain_bake PRIVATE bake_gpu)
     target_compile_definitions(terrain_bake PRIVATE
         BAKE_DATASET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/alps-data/trn-alps-16km")
+
+    add_executable(bake_pass17_compare src/bake/bake_compare_main.c)
+    target_link_libraries(bake_pass17_compare PRIVATE bake_gpu)
+
+    add_executable(bake_pass17_texture
+        src/bake/bake_pass17_texture_main.c src/terrain_tile.c)
+    add_dependencies(bake_pass17_texture bake_shaders)
+    target_link_libraries(bake_pass17_texture PRIVATE bake_gpu)
+    target_compile_definitions(bake_pass17_texture PRIVATE
+        BAKE_DATASET_DIR="${TERRAIN_DATASET_DIR}")
 
     # `cmake --build . --target bake` runs the baker to produce images.
     add_custom_target(bake
@@ -211,6 +234,54 @@ if(TERRAIN_BAKE)
         add_dependencies(bake_quilt_tests bake_shaders)
         target_link_libraries(bake_quilt_tests PRIVATE bake_gpu)
         add_test(NAME bake_quilt_bitexact COMMAND bake_quilt_tests)
+
+        add_executable(bake_seam_tests tests/bake_seam_tests.c)
+        target_link_libraries(bake_seam_tests PRIVATE bake_gpu)
+        add_test(NAME bake_pass17_seam_order COMMAND bake_seam_tests)
+
+        add_executable(bake_random_tests tests/bake_random_tests.c)
+        target_link_libraries(bake_random_tests PRIVATE bake_gpu)
+        add_test(NAME bake_pass17_random_stream COMMAND bake_random_tests)
+
+        add_executable(bake_pass17_sources_tests tests/bake_pass17_sources_tests.c)
+        target_link_libraries(bake_pass17_sources_tests PRIVATE bake_gpu)
+        add_test(NAME bake_pass17_source_sets COMMAND bake_pass17_sources_tests)
+
+        add_executable(bake_sample_tests tests/bake_sample_tests.c src/terrain_tile.c)
+        add_dependencies(bake_sample_tests bake_shaders)
+        target_link_libraries(bake_sample_tests PRIVATE bake_gpu)
+        target_compile_definitions(bake_sample_tests PRIVATE
+            BAKE_DATASET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/alps-data/trn-alps-16km")
+        add_test(NAME bake_pass17_sample_loader COMMAND bake_sample_tests)
+        set_tests_properties(bake_pass17_sample_loader PROPERTIES SKIP_RETURN_CODE 77)
+
+        add_executable(bake_residual_tests tests/bake_residual_tests.c)
+        add_dependencies(bake_residual_tests bake_shaders)
+        target_link_libraries(bake_residual_tests PRIVATE bake_gpu)
+        add_test(NAME bake_pass17_residual_batch COMMAND bake_residual_tests)
+        set_tests_properties(bake_pass17_residual_batch PROPERTIES SKIP_RETURN_CODE 77)
+
+        add_executable(bake_residual_score_tests tests/bake_residual_score_tests.c)
+        add_dependencies(bake_residual_score_tests bake_shaders)
+        target_link_libraries(bake_residual_score_tests PRIVATE bake_gpu)
+        add_test(NAME bake_pass17_residual_scores COMMAND bake_residual_score_tests)
+        set_tests_properties(bake_pass17_residual_scores PROPERTIES SKIP_RETURN_CODE 77)
+
+        add_executable(bake_residual_commit_tests tests/bake_residual_commit_tests.c)
+        add_dependencies(bake_residual_commit_tests bake_shaders)
+        target_link_libraries(bake_residual_commit_tests PRIVATE bake_gpu)
+        add_test(NAME bake_pass17_ordered_commit COMMAND bake_residual_commit_tests)
+        set_tests_properties(bake_pass17_ordered_commit PROPERTIES SKIP_RETURN_CODE 77)
+
+        add_executable(bake_ordered_quilt_tests tests/bake_ordered_quilt_tests.c)
+        add_dependencies(bake_ordered_quilt_tests bake_shaders)
+        target_link_libraries(bake_ordered_quilt_tests PRIVATE bake_gpu)
+        add_test(NAME bake_pass17_ordered_scheduler COMMAND bake_ordered_quilt_tests)
+        set_tests_properties(bake_pass17_ordered_scheduler PROPERTIES SKIP_RETURN_CODE 77)
+
+        add_executable(bake_texture_database_tests tests/bake_texture_database_tests.c)
+        target_link_libraries(bake_texture_database_tests PRIVATE bake_gpu)
+        add_test(NAME bake_pass17_texture_database COMMAND bake_texture_database_tests)
         set_tests_properties(bake_quilt_bitexact PROPERTIES SKIP_RETURN_CODE 77)
 
         add_executable(bake_relayer_tests tests/bake_relayer_tests.c)

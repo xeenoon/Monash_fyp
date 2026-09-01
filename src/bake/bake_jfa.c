@@ -1,6 +1,71 @@
 #include "bake_jfa.h"
 
+#include <limits.h>
 #include <stddef.h>
+#include <stdlib.h>
+
+void bake_edt_cpu(const uint8_t *mask, int32_t *owner, int width, int height) {
+    int count = width * height;
+    int32_t *horizontal = malloc((size_t)count * sizeof(*horizontal));
+    int32_t *distance = malloc((size_t)count * sizeof(*distance));
+    for (int y = 0; y < height; ++y) for (int x = 0; x < width; ++x) {
+        int best_owner = -1, best_distance = INT_MAX;
+        for (int sx = 0; sx < width; ++sx) {
+            int candidate = y * width + sx;
+            if (mask[candidate]) continue;
+            int dx = x - sx, value = dx * dx;
+            if (value < best_distance ||
+                (value == best_distance && candidate < best_owner)) {
+                best_distance = value;
+                best_owner = candidate;
+            }
+        }
+        horizontal[y * width + x] = best_owner;
+        distance[y * width + x] = best_distance;
+    }
+    for (int y = 0; y < height; ++y) for (int x = 0; x < width; ++x) {
+        int best_owner = -1, best_distance = INT_MAX;
+        for (int sy = 0; sy < height; ++sy) {
+            int i = sy * width + x;
+            if (horizontal[i] < 0) continue;
+            int dy = y - sy, value = distance[i] + dy * dy;
+            // scipy.ndimage's separable EDT resolves equal-distance owners by
+            // the last transformed axis first: x before y for a 2-D image.
+            if (value < best_distance ||
+                (value == best_distance &&
+                 horizontal[i] % width < best_owner % width)) {
+                best_distance = value;
+                best_owner = horizontal[i];
+            }
+        }
+        owner[y * width + x] = best_owner;
+    }
+    free(distance);
+    free(horizontal);
+}
+
+void bake_edt_gpu(BakeGpu *gpu, const BakeBuffer *mask, const BakeBuffer *owner,
+                  int width, int height) {
+    size_t bytes = (size_t)width * height * sizeof(uint32_t);
+    BakeBuffer horizontal = bake_buffer_host(gpu, bytes);
+    BakeBuffer distance = bake_buffer_host(gpu, bytes);
+    struct { uint32_t width, height; } push = {
+        (uint32_t)width, (uint32_t)height};
+    uint32_t gx = (uint32_t)(width + 7) / 8;
+    uint32_t gy = (uint32_t)(height + 7) / 8;
+    BakePipeline first = bake_pipeline_create(
+        gpu, BAKE_SHADER_DIR "/bake_edt_horizontal.comp.spv", 3, sizeof(push));
+    BakeBuffer first_bindings[3] = {*mask, horizontal, distance};
+    bake_dispatch(gpu, &first, first_bindings, 3, &push, sizeof(push), gx, gy, 1);
+    bake_pipeline_destroy(gpu, &first);
+    BakePipeline second = bake_pipeline_create(
+        gpu, BAKE_SHADER_DIR "/bake_edt_vertical.comp.spv", 3, sizeof(push));
+    BakeBuffer second_bindings[3] = {horizontal, distance, *owner};
+    bake_dispatch(gpu, &second, second_bindings, 3, &push, sizeof(push), gx, gy, 1);
+    bake_pipeline_destroy(gpu, &second);
+    bake_buffer_destroy(gpu, &distance);
+    bake_buffer_destroy(gpu, &horizontal);
+}
 
 int bake_jfa_pass_count(int width, int height) {
     int longest = width > height ? width : height;

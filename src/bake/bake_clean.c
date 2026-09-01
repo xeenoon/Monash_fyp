@@ -27,6 +27,58 @@ static int any_within(const uint8_t *mask, int x, int y, int radius,
     return 0;
 }
 
+// scipy.ndimage generates its Gaussian coefficients in float64 and performs
+// each 1-D correlation in float64 before casting the result back to the
+// float32 output array.  Cleaning is a one-time source preparation step, so
+// matching that behavior here avoids changing material labels on repaired
+// boundary pixels without taking any synthesis work off the GPU.
+static void scipy_gaussian_reflect(const float *input, float *output,
+                                   float *scratch, int width, int height,
+                                   int channels, double sigma) {
+    const int radius = (int)(4.0 * sigma + 0.5);
+    const int taps = 2 * radius + 1;
+    double *weights = malloc((size_t)taps * sizeof(*weights));
+    double sum = 0.0;
+    for (int k = -radius; k <= radius; ++k) {
+        const double value = exp(-0.5 * (double)(k * k) / (sigma * sigma));
+        weights[k + radius] = value;
+        sum += value;
+    }
+    for (int k = 0; k < taps; ++k) weights[k] /= sum;
+
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            for (int c = 0; c < channels; ++c) {
+                double value = 0.0;
+                for (int k = -radius; k <= radius; ++k) {
+                    int xx = x + k;
+                    while (xx < 0 || xx >= width)
+                        xx = xx < 0 ? -xx - 1 : 2 * width - xx - 1;
+                    value += weights[k + radius] *
+                             input[((size_t)y * width + xx) * channels + c];
+                }
+                scratch[((size_t)y * width + x) * channels + c] = (float)value;
+            }
+        }
+    }
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            for (int c = 0; c < channels; ++c) {
+                double value = 0.0;
+                for (int k = -radius; k <= radius; ++k) {
+                    int yy = y + k;
+                    while (yy < 0 || yy >= height)
+                        yy = yy < 0 ? -yy - 1 : 2 * height - yy - 1;
+                    value += weights[k + radius] *
+                             scratch[((size_t)yy * width + x) * channels + c];
+                }
+                output[((size_t)y * width + x) * channels + c] = (float)value;
+            }
+        }
+    }
+    free(weights);
+}
+
 void bake_clean_cpu(const uint32_t *input, uint32_t *cleaned,
                     uint32_t *confidence, uint32_t *hard_mask,
                     int width, int height) {
@@ -34,24 +86,17 @@ void bake_clean_cpu(const uint32_t *input, uint32_t *cleaned,
     float *green = malloc((size_t)count * sizeof(float));
     float *green_blur = malloc((size_t)count * sizeof(float));
     float *blur_scratch = malloc((size_t)count * 3 * sizeof(float));
-    float *weights10 = malloc((size_t)(2 * bake_gaussian_radius(10.0f, 4.0f) + 1) *
-                              sizeof(float));
     uint8_t *tree = calloc((size_t)count, 1);
     uint8_t *base_hard = calloc((size_t)count, 1);
     uint8_t *repair = calloc((size_t)count, 1);
     uint8_t *mask8 = malloc((size_t)count);
     int32_t *owner = malloc((size_t)count * sizeof(int32_t));
-    int32_t *jfa_scratch = malloc((size_t)count * sizeof(int32_t));
     float *filled = malloc((size_t)count * 3 * sizeof(float));
     float *soft = malloc((size_t)count * 3 * sizeof(float));
-    float *weights2 = malloc((size_t)(2 * bake_gaussian_radius(2.0f, 4.0f) + 1) *
-                             sizeof(float));
 
     for (int i = 0; i < count; ++i) green[i] = channel(input[i], 8) - channel(input[i], 0);
-    int r10 = bake_gaussian_radius(10.0f, 4.0f);
-    bake_gaussian_weights(10.0f, r10, weights10);
-    bake_gaussian_cpu(green, green_blur, blur_scratch, width, height, 1,
-                      weights10, r10);
+    scipy_gaussian_reflect(green, green_blur, blur_scratch, width, height, 1,
+                           10.0);
 
     for (int i = 0; i < count; ++i) {
         float r = channel(input[i], 0), g = channel(input[i], 8);
@@ -85,16 +130,14 @@ void bake_clean_cpu(const uint32_t *input, uint32_t *cleaned,
         goto done;
     }
 
-    bake_jfa_cpu(mask8, owner, jfa_scratch, width, height);
+    bake_edt_cpu(mask8, owner, width, height);
     for (int i = 0; i < count; ++i) {
         uint32_t p = input[owner[i] >= 0 ? owner[i] : i];
         filled[i * 3 + 0] = (float)(p & 0xffu);
         filled[i * 3 + 1] = (float)((p >> 8) & 0xffu);
         filled[i * 3 + 2] = (float)((p >> 16) & 0xffu);
     }
-    int r2 = bake_gaussian_radius(2.0f, 4.0f);
-    bake_gaussian_weights(2.0f, r2, weights2);
-    bake_gaussian_cpu(filled, soft, blur_scratch, width, height, 3, weights2, r2);
+    scipy_gaussian_reflect(filled, soft, blur_scratch, width, height, 3, 2.0);
     for (int i = 0; i < count; ++i) {
         if (repair[i]) {
             uint32_t r = (uint32_t)fminf(fmaxf(soft[i * 3 + 0], 0.0f), 255.0f);
@@ -108,9 +151,9 @@ void bake_clean_cpu(const uint32_t *input, uint32_t *cleaned,
     }
 
 done:
-    free(green); free(green_blur); free(blur_scratch); free(weights10);
+    free(green); free(green_blur); free(blur_scratch);
     free(tree); free(base_hard); free(repair); free(mask8);
-    free(owner); free(jfa_scratch); free(filled); free(soft); free(weights2);
+    free(owner); free(filled); free(soft);
 }
 
 void bake_clean_gpu(BakeGpu *gpu, const BakeBuffer *input,
@@ -121,8 +164,7 @@ void bake_clean_gpu(BakeGpu *gpu, const BakeBuffer *input,
     BakeBuffer green_blur = bake_buffer_host(gpu, count * sizeof(float));
     BakeBuffer scalar_scratch = bake_buffer_host(gpu, count * sizeof(float));
     BakeBuffer repair = bake_buffer_host(gpu, count * sizeof(uint32_t));
-    BakeBuffer owner_a = bake_buffer_host(gpu, count * sizeof(int32_t));
-    BakeBuffer owner_b = bake_buffer_host(gpu, count * sizeof(int32_t));
+    BakeBuffer owner = bake_buffer_host(gpu, count * sizeof(int32_t));
     BakeBuffer filled = bake_buffer_host(gpu, count * 3 * sizeof(float));
     BakeBuffer soft = bake_buffer_host(gpu, count * 3 * sizeof(float));
     BakeBuffer rgb_scratch = bake_buffer_host(gpu, count * 3 * sizeof(float));
@@ -134,8 +176,8 @@ void bake_clean_gpu(BakeGpu *gpu, const BakeBuffer *input,
     BakeBuffer green_bind[2] = {*input, green};
     bake_dispatch(gpu, &green_pipe, green_bind, 2, &size, sizeof(size), gx, gy, 1);
     bake_pipeline_destroy(gpu, &green_pipe);
-    bake_gaussian_gpu(gpu, &green, &green_blur, &scalar_scratch,
-                      width, height, 1, 10.0f, 4.0f);
+    bake_gaussian_gpu_reflect(gpu, &green, &green_blur, &scalar_scratch,
+                              width, height, 1, 10.0f, 4.0f);
 
     BakePipeline masks_pipe = bake_pipeline_create(
         gpu, BAKE_SHADER_DIR "/bake_clean_masks.comp.spv", 4, sizeof(size));
@@ -143,34 +185,15 @@ void bake_clean_gpu(BakeGpu *gpu, const BakeBuffer *input,
     bake_dispatch(gpu, &masks_pipe, mask_bind, 4, &size, sizeof(size), gx, gy, 1);
     bake_pipeline_destroy(gpu, &masks_pipe);
 
-    BakePipeline init_pipe = bake_pipeline_create(
-        gpu, BAKE_SHADER_DIR "/bake_jfa_init.comp.spv", 2, sizeof(size));
-    BakeBuffer init_bind[2] = {repair, owner_a};
-    bake_dispatch(gpu, &init_pipe, init_bind, 2, &size, sizeof(size), gx, gy, 1);
-    bake_pipeline_destroy(gpu, &init_pipe);
-
-    BakePipeline jfa = bake_pipeline_create(
-        gpu, BAKE_SHADER_DIR "/bake_jfa.comp.spv", 2, 3 * sizeof(uint32_t));
-    int longest = width > height ? width : height, start = 1;
-    while (start < longest) start <<= 1;
-    start >>= 1;
-    BakeBuffer cur = owner_a, other = owner_b;
-    for (int step = start; step >= 1; step >>= 1) {
-        struct { uint32_t width, height; int32_t step; } push = {
-            (uint32_t)width, (uint32_t)height, step};
-        BakeBuffer pass[2] = {cur, other};
-        bake_dispatch(gpu, &jfa, pass, 2, &push, sizeof(push), gx, gy, 1);
-        BakeBuffer tmp = cur; cur = other; other = tmp;
-    }
-    bake_pipeline_destroy(gpu, &jfa);
+    bake_edt_gpu(gpu, &repair, &owner, width, height);
 
     BakePipeline inpaint = bake_pipeline_create(
         gpu, BAKE_SHADER_DIR "/bake_inpaint.comp.spv", 3, sizeof(size));
-    BakeBuffer inpaint_bind[3] = {*input, cur, filled};
+    BakeBuffer inpaint_bind[3] = {*input, owner, filled};
     bake_dispatch(gpu, &inpaint, inpaint_bind, 3, &size, sizeof(size), gx, gy, 1);
     bake_pipeline_destroy(gpu, &inpaint);
-    bake_gaussian_gpu(gpu, &filled, &soft, &rgb_scratch,
-                      width, height, 3, 2.0f, 4.0f);
+    bake_gaussian_gpu_reflect(gpu, &filled, &soft, &rgb_scratch,
+                              width, height, 3, 2.0f, 4.0f);
 
     BakePipeline finish = bake_pipeline_create(
         gpu, BAKE_SHADER_DIR "/bake_clean_finish.comp.spv", 6, sizeof(size));
@@ -180,8 +203,8 @@ void bake_clean_gpu(BakeGpu *gpu, const BakeBuffer *input,
     bake_pipeline_destroy(gpu, &finish);
 
     bake_buffer_destroy(gpu, &rgb_scratch); bake_buffer_destroy(gpu, &soft);
-    bake_buffer_destroy(gpu, &filled); bake_buffer_destroy(gpu, &owner_b);
-    bake_buffer_destroy(gpu, &owner_a); bake_buffer_destroy(gpu, &repair);
+    bake_buffer_destroy(gpu, &filled); bake_buffer_destroy(gpu, &owner);
+    bake_buffer_destroy(gpu, &repair);
     bake_buffer_destroy(gpu, &scalar_scratch); bake_buffer_destroy(gpu, &green_blur);
     bake_buffer_destroy(gpu, &green);
 }

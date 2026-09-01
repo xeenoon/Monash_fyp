@@ -1,0 +1,72 @@
+#version 450
+layout(local_size_x = 1) in;
+layout(std430, binding = 0) readonly buffer Bands { float v[]; } bands;
+layout(std430, binding = 1) readonly buffer Existing { float v[]; } existing;
+layout(std430, binding = 2) readonly buffer Known { uint v[]; } known;
+layout(std430, binding = 3) readonly buffer BaseScores { float v[]; } base_scores;
+layout(std430, binding = 4) writeonly buffer OutputScores { float v[]; } output_scores;
+layout(push_constant) uniform Push {
+    uint output_width, output_height, target_x, target_y;
+    uint patch_size, overlap, candidate_count;
+} pc;
+float luma_existing(int x,int y){
+    uint i=((pc.target_y+uint(y))*pc.output_width+pc.target_x+uint(x))*3u;
+    return (existing.v[i]*0.2126+existing.v[i+1u]*0.7152+existing.v[i+2u]*0.0722)/255.0;
+}
+float luma_candidate(uint base,int x,int y){
+    uint i=base+(uint(y)*pc.patch_size+uint(x))*3u;
+    return (bands.v[i]*0.2126+bands.v[i+1u]*0.7152+bands.v[i+2u]*0.0722)/255.0;
+}
+bool is_active(int x,int y){
+    bool overlap=(pc.target_x>0u&&uint(x)<pc.overlap)||
+                 (pc.target_y>0u&&uint(y)<pc.overlap);
+    uint i=(pc.target_y+uint(y))*pc.output_width+pc.target_x+uint(x);
+    return overlap&&known.v[i]!=0u;
+}
+float gx_existing(int x,int y){
+    if(x==0)return luma_existing(1,y)-luma_existing(0,y);
+    if(x==int(pc.patch_size)-1)return luma_existing(x,y)-luma_existing(x-1,y);
+    return 0.5*(luma_existing(x+1,y)-luma_existing(x-1,y));
+}
+float gy_existing(int x,int y){
+    if(y==0)return luma_existing(x,1)-luma_existing(x,0);
+    if(y==int(pc.patch_size)-1)return luma_existing(x,y)-luma_existing(x,y-1);
+    return 0.5*(luma_existing(x,y+1)-luma_existing(x,y-1));
+}
+float gx_candidate(uint base,int x,int y){
+    if(x==0)return luma_candidate(base,1,y)-luma_candidate(base,0,y);
+    if(x==int(pc.patch_size)-1)return luma_candidate(base,x,y)-luma_candidate(base,x-1,y);
+    return 0.5*(luma_candidate(base,x+1,y)-luma_candidate(base,x-1,y));
+}
+float gy_candidate(uint base,int x,int y){
+    if(y==0)return luma_candidate(base,x,1)-luma_candidate(base,x,0);
+    if(y==int(pc.patch_size)-1)return luma_candidate(base,x,y)-luma_candidate(base,x,y-1);
+    return 0.5*(luma_candidate(base,x,y+1)-luma_candidate(base,x,y-1));
+}
+void main(){
+    uint candidate=gl_GlobalInvocationID.x;
+    if(candidate>=pc.candidate_count)return;
+    uint pixels=pc.patch_size*pc.patch_size,base=candidate*pixels*3u,count=0u;
+    precise float colour=0.0,gradient=0.0,first_frequency=0.0,second_frequency=0.0;
+    for(int y=0;y<int(pc.patch_size);++y)for(int x=0;x<int(pc.patch_size);++x){
+        if(!is_active(x,y))continue;
+        uint e=((pc.target_y+uint(y))*pc.output_width+pc.target_x+uint(x))*3u;
+        uint c=base+(uint(y)*pc.patch_size+uint(x))*3u;
+        for(uint channel=0u;channel<3u;++channel){
+            float d=(existing.v[e+channel]-bands.v[c+channel])/255.0;colour+=d*d;
+        }
+        float egx=gx_existing(x,y),egy=gy_existing(x,y);
+        float cgx=gx_candidate(base,x,y),cgy=gy_candidate(base,x,y);
+        float dx=egx-cgx,dy=egy-cgy;gradient+=dx*dx+dy*dy;
+        first_frequency+=egx*egx+egy*egy;second_frequency+=cgx*cgx+cgy*cgy;
+        ++count;
+    }
+    if(count==0u){output_scores.v[candidate]=base_scores.v[candidate];return;}
+    colour=(colour/float(count*3u))/0.04;
+    gradient=(gradient/float(count))/0.02;
+    float first=sqrt(first_frequency/float(count));
+    float second=sqrt(second_frequency/float(count));
+    float ratio=log((second+0.0001)/(first+0.0001));
+    float scale=ratio*ratio;
+    output_scores.v[candidate]=base_scores.v[candidate]+3.0*colour+1.5*gradient+0.35*scale;
+}

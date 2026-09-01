@@ -1,0 +1,35 @@
+#version 450
+layout(local_size_x = 1) in;
+layout(std430, binding = 0) readonly buffer Raw { float v[]; } raw_image;
+layout(std430, binding = 1) readonly buffer Small { float v[]; } small;
+layout(std430, binding = 2) readonly buffer Large { float v[]; } large;
+layout(std430, binding = 3) writeonly buffer Output { float v[]; } output_band;
+layout(push_constant) uniform Push { uint patch_size, candidate_count, level; } pc;
+float uncentered(uint i) {
+    if (pc.level==0u) return 0.55*(small.v[i]-large.v[i]);
+    if (pc.level==1u) return 0.45*(small.v[i]-large.v[i]);
+    return 0.95*(raw_image.v[i]-small.v[i]);
+}
+void main() {
+    uint candidate=gl_GlobalInvocationID.x;
+    if(candidate>=pc.candidate_count)return;
+    uint pixels=pc.patch_size*pc.patch_size, base=candidate*pixels*3u;
+    precise float mr=0.0,mg=0.0,mb=0.0;
+    for(uint p=0u;p<pixels;++p){
+        mr+=uncentered(base+p*3u); mg+=uncentered(base+p*3u+1u);
+        mb+=uncentered(base+p*3u+2u);
+    }
+    mr/=float(pixels);mg/=float(pixels);mb/=float(pixels);
+    precise float sum=0.0;
+    for(uint p=0u;p<pixels;++p){
+        float r=uncentered(base+p*3u)-mr,g=uncentered(base+p*3u+1u)-mg;
+        float b=uncentered(base+p*3u+2u)-mb; sum+=r*r+g*g+b*b;
+    }
+    float rms=sqrt(sum/float(pixels*3u));
+    float scale=min(1.0,28.0/max(rms,0.0001));
+    for(uint p=0u;p<pixels;++p){
+        output_band.v[base+p*3u]=(uncentered(base+p*3u)-mr)*scale;
+        output_band.v[base+p*3u+1u]=(uncentered(base+p*3u+1u)-mg)*scale;
+        output_band.v[base+p*3u+2u]=(uncentered(base+p*3u+2u)-mb)*scale;
+    }
+}

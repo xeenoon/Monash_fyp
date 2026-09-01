@@ -25,17 +25,42 @@ in `tools/*.py`. Opt-in: configure with `-DTERRAIN_BAKE=ON`.
   and a blocking `bake_dispatch`. Independent of `renderer.c`.
 - `shaders/bake_scale.comp` + `tests/bake_gpu_tests.c` — smoke kernel and an
   exact-match GPU round-trip test (skips with exit 77 if no device).
-- Stages 1–9 are implemented. `terrain_bake` loads three real material
-  exemplars plus a `.trn` heightmap, isolates each material, runs all five
-  presets, and writes RGBA PNG files.
+- The Vulkan harness and low-level compute primitives are implemented. The
+  current end-to-end baker is a faceted prototype and is **not** a port of
+  pass17: it loads three fixed material images and substitutes a parallel
+  Voronoi/Jacobi synthesis for pass17's ordered, multilevel minimum-cut quilt.
+  Its PNGs must not be treated as pass17-equivalent output.
+
+## Frozen pass17 compatibility contract
+
+The immutable visual oracle is the five-image output produced by production
+Python commit `1c7f6a9ff96e3717d996cc0fa881983078860f37`. An accepted Vulkan
+implementation must preserve pass17's operation order: source discovery and
+cleaning, macro/micro labels, low-frequency composition, ordered 96/48/24 px
+patch placement, candidate choice, minimum-cut ownership, then the material
+microtexture relayer. Candidate scores may be evaluated in parallel, but the
+winning patch must be committed before the next placement is scored.
+
+The required PNG byte-stream SHA-256 targets are:
+
+- `full_snow`: `15bf24f0e7afcc5782cfd4900d180abcd053e1477e0989f682248ed99efb1102`
+- `snow_rock`: `7fece61c85e157766aded4d7399733457ce850424b4de64b9c6b62fda090da30`
+- `full_rock`: `e0a4c23c7e8ed0d66b39c6d37eb5e2dfe403cd4925debf522b4ac8107bf4ca22`
+- `rock_grass`: `c5c4d44d22d09ce1147e8860c96aaec0c1e701c9705d409b17f36b2fb337ee89`
+- `full_grass`: `53b69bee36a41063db1c2b7a0c4fa021eef6c8e2b6cbc43249cce723ba5c502f`
+
+For these showcase presets edge snapping is disabled. The final PNG equals the
+unblended synthesis result; the saved level-4 diagnostic differs only because
+it draws a red one-pixel audit border.
 
 ## Validation discipline
 
-Under Option A, the matched C implementation defines every GPU primitive. Each
-`bake_*` unit test dispatches the shader and compares the complete output to C
-bit-for-bit, including floating-point Gaussian, resampling, bands, relayer and
-the five-preset pipeline. The Python pipeline remains the visual/metric baseline
-for purity and band energy, not the byte-level oracle.
+The `bake_*` unit tests currently prove C/GLSL agreement for individual
+primitives. They do not establish pass17 compatibility: several C primitives
+are deliberate replacement algorithms. End-to-end acceptance requires at
+least 99.0% normalized RGB byte similarity for every frozen pass17 output.
+Exact-pixel percentage remains visible as a diagnostic, but tiny floating-point
+drift does not veto a visually indistinguishable result.
 
 > **Height sampling note:** the current Option-A contract bilinearly resamples
 > each 129×129 `.trn` interior to the 256×256 output using CPU-generated weights
@@ -57,13 +82,14 @@ for purity and band energy, not the byte-level oracle.
    masks. Test `bake_clean_bitexact` compares every output field exactly.
 5. **[done]** separable Gaussian pyramid + mid/meso/fine band extraction.
    Tests `bake_gaussian_bitexact` and `bake_bands_bitexact` compare all floats.
-6. **[done]** parallel material-aware exemplar quilt. Test
-   `bake_quilt_bitexact` compares source owners and RGB exactly.
-7. **[done]** relayer: broad-colour re-anchor, band top-up and per-material
-   chroma retention (snow 0.10). Test `bake_relayer_bitexact` compares RGBA.
-8. **[done]** dual-JFA signed-distance transitions plus four Jacobi PatchMatch
-   iterations. Test `bake_transition_bitexact` compares labels, SDF, owners and
-   RGB exactly.
-9. **[done]** all five presets, PNG output and real dataset command. Test
-   `bake_pipeline_bitexact` compares every final pixel; the separate 129→256
-   `bake_resample_bitexact` test covers the real `.trn` dimension conversion.
+6. **[prototype only]** the parallel Voronoi quilt and Jacobi refinement match
+   their C counterparts, but replace pass17's ordered minimum-cut quilt and
+   therefore cannot satisfy the compatibility contract.
+7. **[prototype only]** the current relayer matches its simplified C
+   counterpart, not pass17's three-level residual quilt plus material-exemplar
+   energy top-up.
+8. **[prototype only]** dual-JFA transitions do not reproduce pass17's
+   macro/micro shape synthesis.
+9. **[not matched]** the five-preset command writes PNGs, but its outputs remain
+   measurably and visibly different from pass17. The separate 129→256
+   `bake_resample_bitexact` test remains valid for the height conversion.

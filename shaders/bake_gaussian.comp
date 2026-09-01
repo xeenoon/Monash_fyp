@@ -15,7 +15,15 @@ layout(push_constant) uniform Push {
     uint channels;
     uint radius;
     uint axis;  // 0 = horizontal, 1 = vertical
+    uint reflect_mode;
 } pc;
+
+int boundary(int value, int extent) {
+    if (pc.reflect_mode == 0u) return clamp(value, 0, extent - 1);
+    while (value < 0 || value >= extent)
+        value = value < 0 ? -value - 1 : 2 * extent - value - 1;
+    return value;
+}
 
 void main() {
     uvec2 q = gl_GlobalInvocationID.xy;
@@ -27,9 +35,9 @@ void main() {
         for (int k = -R; k <= R; ++k) {
             int x = px, y = py;
             if (pc.axis == 0u) {
-                x = clamp(px + k, 0, W - 1);
+                x = boundary(px + k, W);
             } else {
-                y = clamp(py + k, 0, H - 1);
+                y = boundary(py + k, H);
             }
             acc = acc + kernel.w[k + R] * src.v[(y * W + x) * C + c];
         }

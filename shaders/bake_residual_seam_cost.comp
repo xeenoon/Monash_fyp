@@ -1,0 +1,21 @@
+#version 450
+layout(local_size_x=8,local_size_y=8)in;
+layout(std430,binding=0)readonly buffer Bands{float v[];}bands;
+layout(std430,binding=1)readonly buffer Existing{float v[];}existing;
+layout(std430,binding=2)writeonly buffer Cost{float v[];}cost;
+layout(push_constant)uniform Push{uint output_width,output_height,target_x,target_y;
+    uint patch_size,selected_candidate;}pc;
+float el(int x,int y){uint i=((pc.target_y+uint(y))*pc.output_width+pc.target_x+uint(x))*3u;
+return(existing.v[i]*.2126+existing.v[i+1u]*.7152+existing.v[i+2u]*.0722)/255.0;}
+float cl(uint base,int x,int y){uint i=base+(uint(y)*pc.patch_size+uint(x))*3u;
+return(bands.v[i]*.2126+bands.v[i+1u]*.7152+bands.v[i+2u]*.0722)/255.0;}
+float egx(int x,int y){if(x==0)return el(1,y)-el(0,y);if(x==int(pc.patch_size)-1)return el(x,y)-el(x-1,y);return .5*(el(x+1,y)-el(x-1,y));}
+float egy(int x,int y){if(y==0)return el(x,1)-el(x,0);if(y==int(pc.patch_size)-1)return el(x,y)-el(x,y-1);return .5*(el(x,y+1)-el(x,y-1));}
+float cgx(uint b,int x,int y){if(x==0)return cl(b,1,y)-cl(b,0,y);if(x==int(pc.patch_size)-1)return cl(b,x,y)-cl(b,x-1,y);return .5*(cl(b,x+1,y)-cl(b,x-1,y));}
+float cgy(uint b,int x,int y){if(y==0)return cl(b,x,1)-cl(b,x,0);if(y==int(pc.patch_size)-1)return cl(b,x,y)-cl(b,x,y-1);return .5*(cl(b,x,y+1)-cl(b,x,y-1));}
+void main(){uvec2 q=gl_GlobalInvocationID.xy;if(q.x>=pc.patch_size||q.y>=pc.patch_size)return;
+uint pixels=pc.patch_size*pc.patch_size,base=pc.selected_candidate*pixels*3u;
+uint e=((pc.target_y+q.y)*pc.output_width+pc.target_x+q.x)*3u,c=base+(q.y*pc.patch_size+q.x)*3u;
+float colour=0.0;for(uint k=0u;k<3u;++k){float d=(existing.v[e+k]-bands.v[c+k])/255.0;colour+=d*d;}colour/=3.0;
+int x=int(q.x),y=int(q.y);float dx=egx(x,y)-cgx(base,x,y),dy=egy(x,y)-cgy(base,x,y);
+cost.v[q.y*pc.patch_size+q.x]=colour+.5*(dx*dx+dy*dy);}

@@ -1,0 +1,23 @@
+#version 450
+layout(local_size_x=8,local_size_y=8)in;
+layout(std430,binding=0)readonly buffer Bands{float v[];}bands;
+layout(std430,binding=1)readonly buffer Take{uint v[];}take_mask;
+layout(std430,binding=2)readonly buffer Candidates{ivec4 v[];}candidates;
+layout(std430,binding=3)buffer Existing{float v[];}existing;
+layout(std430,binding=4)buffer Known{uint v[];}known;
+layout(std430,binding=5)buffer DonorMap{int v[];}donor_map;
+layout(std430,binding=6)buffer SourceX{int v[];}source_x;
+layout(std430,binding=7)buffer SourceY{int v[];}source_y;
+layout(std430,binding=8)buffer Usage{int v[];}usage;
+layout(push_constant)uniform Push{uint output_width,output_height,donor_width,donor_height;
+uint target_x,target_y,patch_size,selected_candidate;}pc;
+void main(){uvec2 q=gl_GlobalInvocationID.xy;if(q.x>=pc.patch_size||q.y>=pc.patch_size)return;
+uint local=q.y*pc.patch_size+q.x;if(take_mask.v[local]==0u)return;
+uint target=(pc.target_y+q.y)*pc.output_width+pc.target_x+q.x;
+if(known.v[target]!=0u&&donor_map.v[target]>=0){int old=donor_map.v[target];int ox=source_x.v[target],oy=source_y.v[target];
+if(ox>=0&&oy>=0&&ox<int(pc.donor_width)&&oy<int(pc.donor_height))atomicAdd(usage.v[old*int(pc.donor_width*pc.donor_height)+oy*int(pc.donor_width)+ox],-1);}
+ivec4 candidate=candidates.v[pc.selected_candidate];int nx=candidate.y+int(q.x),ny=candidate.z+int(q.y);
+atomicAdd(usage.v[candidate.x*int(pc.donor_width*pc.donor_height)+ny*int(pc.donor_width)+nx],1);
+uint source=(pc.selected_candidate*pc.patch_size*pc.patch_size+local)*3u;
+existing.v[target*3u]=bands.v[source];existing.v[target*3u+1u]=bands.v[source+1u];existing.v[target*3u+2u]=bands.v[source+2u];
+known.v[target]=1u;donor_map.v[target]=candidate.x;source_x.v[target]=nx;source_y.v[target]=ny;}

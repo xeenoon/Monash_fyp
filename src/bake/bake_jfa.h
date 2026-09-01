@@ -24,4 +24,9 @@ void bake_jfa_cpu(const uint8_t *mask, int32_t *owner, int32_t *scratch,
 void bake_jfa_gpu(BakeGpu *gpu, const BakeBuffer *mask, const BakeBuffer *owner,
                   int width, int height);
 
+// Exact squared-Euclidean nearest-zero field used by pass17 source cleaning.
+void bake_edt_cpu(const uint8_t *mask, int32_t *owner, int width, int height);
+void bake_edt_gpu(BakeGpu *gpu, const BakeBuffer *mask, const BakeBuffer *owner,
+                  int width, int height);
+
 #endif  // BAKE_JFA_H

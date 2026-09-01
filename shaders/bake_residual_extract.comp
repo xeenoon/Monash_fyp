@@ -1,0 +1,29 @@
+#version 450
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(std430, binding = 0) readonly buffer Atlas { uint px[]; } atlas;
+layout(std430, binding = 1) readonly buffer Candidates { ivec4 v[]; } candidates;
+layout(std430, binding = 2) writeonly buffer Shifted { float v[]; } shifted;
+layout(push_constant) uniform Push {
+    uint donor_width, donor_height, patch_size, candidate_count;
+    int level, phase_seed;
+} pc;
+int reflect_index(int value, int extent) {
+    while (value < 0 || value >= extent)
+        value = value < 0 ? -value - 1 : 2 * extent - value - 1;
+    return value;
+}
+void main() {
+    uvec3 q=gl_GlobalInvocationID.xyz;
+    if (q.x>=pc.patch_size || q.y>=pc.patch_size || q.z>=pc.candidate_count) return;
+    ivec4 c=candidates.v[q.z];
+    int phase_x=((c.w*17+pc.level*11+pc.phase_seed*5)%13)-6;
+    int phase_y=((c.w*29+pc.level*7+pc.phase_seed*3)%13)-6;
+    int lx=reflect_index(int(q.x)-phase_x,int(pc.patch_size));
+    int ly=reflect_index(int(q.y)-phase_y,int(pc.patch_size));
+    uint plane=pc.donor_width*pc.donor_height;
+    uint p=atlas.px[uint(c.x)*plane+uint(c.z+ly)*pc.donor_width+uint(c.y+lx)];
+    uint base=(q.z*pc.patch_size*pc.patch_size+q.y*pc.patch_size+q.x)*3u;
+    shifted.v[base+0u]=float(p&255u);
+    shifted.v[base+1u]=float((p>>8)&255u);
+    shifted.v[base+2u]=float((p>>16)&255u);
+}
