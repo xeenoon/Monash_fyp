@@ -108,6 +108,9 @@ def main() -> None:
                         help="optional development cap; omit for the full map")
     parser.add_argument("--texture-only", action="store_true",
                         help="reuse each preset's saved labels/metrics and rerender RGB only")
+    parser.add_argument("--fast-uniform", action="store_true",
+                        help="skip the semantic patch quilt for pure-material tiles "
+                             "(~2x faster on those presets, but a touch patchier)")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
 
@@ -140,9 +143,13 @@ def main() -> None:
                 args.dataset, target.x, target.y, preferred)
             macro_low = np.asarray(Image.open(
                 destination / "macro_low_frequency_filled.png").convert("RGB"))
+            uniques = np.unique(labels)
+            uniform_material = (int(uniques[0]) if args.fast_uniform and uniques.size == 1
+                                else None)
             demo.write_texture_outputs(destination, target, west, north, labels,
                                        texture_sources, macro_low, snap_edges=False,
-                                       material_exemplars=material_exemplars)
+                                       material_exemplars=material_exemplars,
+                                       uniform_material=uniform_material)
             demo.write_audit_outputs(destination, target, north, west, refined=True)
             Image.open(destination / "texture_reconstruction_target.png").save(
                 args.output / f"{preset}.png")
@@ -191,7 +198,8 @@ def main() -> None:
         demo.write_outputs(destination, target, west, north, shape_result.labels,
                            probabilities, ROOT / "textures/runtime/terrain_micro_albedo.png",
                            texture_sources, macro_low, snap_edges=False,
-                           material_exemplars=material_exemplars)
+                           material_exemplars=material_exemplars,
+                           uniform_material=PURE_KIND.get(preset) if args.fast_uniform else None)
         demo.write_audit_outputs(destination, target, north, west, refined=True)
         Image.open(destination / "texture_reconstruction_target.png").save(
             args.output / f"{preset}.png")
