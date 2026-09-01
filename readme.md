@@ -182,6 +182,17 @@ building any natural-only `.trn` dataset.
 
 Set `TERRAIN_FREEZE_CAMERA=1` when capturing a replayed dump viewpoint so
 window focus and pointer motion cannot move the camera between comparisons.
+When built with `-DDEBUG_SHADER_DUMP=ON`, press `X` to append a shader capture
+and `C` to clear it. Inspect captures as a fullscreen, local pixel view with:
+
+```sh
+python3 tools/shader_dump_viewer.py debug_dumps/shader_dump.txt
+```
+
+The viewer maps any dumped fields to RGB, offers shader-specific presets and
+black/white single-channel inspection, and labels the selected channel meanings
+beside the image. It is served only on `127.0.0.1` and has no Python package
+dependencies.
 `TERRAIN_START_DEBUG_VIEW=22` boots into the final colour-preserving macro layer;
 `23` shows the X-side/top/Z-side triplanar weights.
 

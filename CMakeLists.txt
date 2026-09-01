@@ -12,6 +12,8 @@ option(TERRAIN_STRETCH_OVERLAY
     "Compile the diagnostic red terrain texture-stretch overlay" OFF)
 option(TERRAIN_GOLDEN
     "Boot the modern-render/legacy-sampling golden terrain dataset by default" ON)
+option(TERRAIN_BAKE
+    "Build the headless Vulkan compute terrain baker (terrain_bake) and its tests" OFF)
 set(SHADER_DUMP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/debug_dumps")
 
 set(CMAKE_C_STANDARD 11)
@@ -91,6 +93,47 @@ foreach(SHADER cube.vert cube.frag terrain.vert terrain.frag mesh.vert mesh.frag
 endforeach()
 
 add_custom_target(shaders ALL DEPENDS ${SHADER_BINARIES})
+
+# --- Headless Vulkan compute terrain baker (opt-in: -DTERRAIN_BAKE=ON) --------
+if(TERRAIN_BAKE)
+    set(BAKE_SHADER_BINARIES "")
+    foreach(BAKE_SHADER bake_scale.comp)
+        add_custom_command(
+            OUTPUT "${SHADER_OUTPUT_DIR}/${BAKE_SHADER}.spv"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${SHADER_OUTPUT_DIR}"
+            COMMAND "${GLSLC}" ${GLSLC_FLAGS}
+                    -MD -MF "${SHADER_OUTPUT_DIR}/${BAKE_SHADER}.spv.d"
+                    "${SHADER_DIR}/${BAKE_SHADER}" -o "${SHADER_OUTPUT_DIR}/${BAKE_SHADER}.spv"
+            DEPFILE "${SHADER_OUTPUT_DIR}/${BAKE_SHADER}.spv.d"
+            DEPENDS "${SHADER_DIR}/${BAKE_SHADER}"
+            VERBATIM)
+        list(APPEND BAKE_SHADER_BINARIES "${SHADER_OUTPUT_DIR}/${BAKE_SHADER}.spv")
+    endforeach()
+    add_custom_target(bake_shaders ALL DEPENDS ${BAKE_SHADER_BINARIES})
+
+    add_library(bake_gpu STATIC src/bake/bake_gpu.c)
+    target_include_directories(bake_gpu PUBLIC src src/bake)
+    target_link_libraries(bake_gpu PUBLIC core_utils Vulkan::Vulkan)
+    target_compile_definitions(bake_gpu PUBLIC BAKE_SHADER_DIR="${SHADER_OUTPUT_DIR}")
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(bake_gpu PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+
+    add_executable(terrain_bake src/bake/bake_main.c)
+    add_dependencies(terrain_bake bake_shaders)
+    target_link_libraries(terrain_bake PRIVATE bake_gpu)
+
+    # `cmake --build . --target bake` runs the baker to produce images.
+    add_custom_target(bake COMMAND terrain_bake DEPENDS terrain_bake bake_shaders)
+
+    if(BUILD_TESTING)
+        add_executable(bake_gpu_tests tests/bake_gpu_tests.c)
+        add_dependencies(bake_gpu_tests bake_shaders)
+        target_link_libraries(bake_gpu_tests PRIVATE bake_gpu)
+        add_test(NAME bake_gpu_roundtrip COMMAND bake_gpu_tests)
+        set_tests_properties(bake_gpu_roundtrip PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
+endif()
 
 add_library(core_utils STATIC
     src/byte_utils.c

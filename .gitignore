@@ -23,3 +23,5 @@ __pycache__/
 /*.md
 !/readme.md
 /out/
+# generated shape-bank cache (deterministic, rebuildable)
+**/.shape_cache/

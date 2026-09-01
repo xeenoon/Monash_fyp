@@ -4,6 +4,7 @@
 #include "common.glsl"
 
 layout(local_size_x = 16, local_size_y = 16) in;
+layout(set = 1, binding = 1) uniform sampler2D current_depth;
 layout(set = 1, binding = 5) uniform sampler2D resolved_hdr;
 layout(std430, set = 1, binding = 6) buffer ExposureState {
     float exposure;
@@ -17,6 +18,13 @@ void main() {
     ivec2 size = textureSize(resolved_hdr, 0);
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
     if (any(greaterThanEqual(pixel, size))) return;
+    /* Reversed-Z clear is 0.0 (invariant #4): sky/empty pixels never get a
+       depth write and stay at that clear value. Meter exposure off the
+       terrain, not the sky -- an unweighted full-frame average lets a
+       sky-heavy or shadow-heavy view drag the metered luminance far below
+       what the actual subject needs, which is what drove exposure toward its
+       ceiling clamp and made the scene blow out white. */
+    if (texelFetch(current_depth, pixel, 0).r <= 1e-8) return;
     vec3 color = max(texelFetch(resolved_hdr, pixel, 0).rgb, vec3(0.0));
     float luminance = max(dot(color, vec3(0.2126, 0.7152, 0.0722)), exp2(-12.0));
     float unit = clamp((log2(luminance) + 12.0) / 28.0, 0.0, 0.999999);
