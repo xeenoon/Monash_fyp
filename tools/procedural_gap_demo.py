@@ -15,13 +15,15 @@ integration.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageDraw
-from scipy.ndimage import distance_transform_edt, gaussian_filter, label, map_coordinates
+from scipy.ndimage import (distance_transform_edt, gaussian_filter, label, map_coordinates,
+                           shift as image_shift)
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
@@ -40,6 +42,8 @@ MORPH_RADII = (1, 2, 4, 8, 16, 32, 48)
 MORPH_SIGMAS = (0.75, 1.5, 3.0)
 ORIENT_BINS = 8
 SYNTHESIS_PASSES = 1
+MORPH_SCORE_CANDIDATES = 24
+MORPH_SOFT_TEMPERATURE = 1.5
 # Explicitly continue material contours that are cut by a known tile edge.
 # The guide is learned from the donor SDF approaching that edge, not from a
 # material-specific rule.
@@ -1324,17 +1328,6 @@ def target_context(result: np.ndarray, north: np.ndarray, east: np.ndarray,
     return output
 
 
-def source_ownership(payload_known: np.ndarray, replace_overlaps: bool) -> np.ndarray:
-    """Use intact source support, never an unrelated per-pixel ownership mask.
-
-    The source patch's connected material regions are consequently either kept
-    as a group (including overlaps) or added only where the target is empty.
-    This deliberately avoids the random mask that shredded every region.  The
-    replace decision is made from one 128 px morphology comparison below.
-    """
-    return np.ones(payload_known.shape, dtype=bool) if replace_overlaps else ~payload_known
-
-
 def save_three_way_class_preview(output: Path | None, north_labels: np.ndarray,
                                  east_labels: np.ndarray, target_labels: np.ndarray,
                                  filename: str, known: np.ndarray | None = None) -> None:
@@ -1385,6 +1378,88 @@ def save_shape_polygon_preview(output: Path | None, labels: np.ndarray,
         rgba[mask, :3] = CLASS_COLORS[kind]
         rgba[mask, 3] = 255
         Image.fromarray(rgba, "RGBA").save(polygon_dir / f"{stage}_{name}.png")
+
+
+def write_macro_micro_diagnostics(output: Path, result, north: TerrainSample,
+                                  east: TerrainSample) -> None:
+    """Write inspectable pass15 shape stages without consulting target RGB."""
+    output.mkdir(parents=True, exist_ok=True)
+    save_shape_polygon_preview(output, result.initial_labels, "01_quilted_shapes")
+    save_shape_polygon_preview(output, result.macro_labels, "02_coherent_macro_shapes")
+    save_shape_polygon_preview(output, result.labels, "03_final_shapes")
+    save_three_way_class_preview(output, north.colour_class, east.colour_class,
+                                 result.initial_labels, "pass_01_probability_seed.png")
+    save_three_way_class_preview(output, north.colour_class, east.colour_class,
+                                 result.macro_labels, "pass_02_macro_sdf.png")
+    save_three_way_class_preview(output, north.colour_class, east.colour_class,
+                                 result.labels, "pass_03_micro_sdf.png")
+    north_guide = np.repeat(north.colour_class[-1:, :], EDGE_GUIDE_DEPTH, axis=0)
+    east_guide = np.repeat(east.colour_class[:, :1], EDGE_GUIDE_DEPTH, axis=1)
+    save_edge_guide_preview(output, north_guide, east_guide)
+    Image.fromarray(result.macro_low_rgb, "RGB").save(output / "macro_low_frequency.png")
+    Image.fromarray(np.clip(result.transition_density /
+                            max(float(result.transition_density.max()), 1.0e-8) * 255,
+                            0, 255).astype(np.uint8), "L").save(
+        output / "micro_transition_density.png")
+    for name, values in (("macro_shape_source_map", result.macro_source_map),
+                         ("micro_shape_source_map", result.micro_source_map)):
+        maximum = max(int(values.max()), 1)
+        image = np.clip(values / maximum * 255, 0, 255).astype(np.uint8)
+        Image.fromarray(image, "L").save(output / f"{name}.png")
+    payload = dict(result.metrics)
+    payload["placements"] = [
+        {"material": int(item.material), "source": [int(item.source_x), int(item.source_y)],
+         "centre": [float(item.centre_x), float(item.centre_y)],
+         "scale": float(item.scale), "angle_degrees": float(item.angle),
+         "aspect": float(item.aspect), "elastic_pixels": float(item.elastic)}
+        for item in result.placements
+    ]
+    (output / "macro_micro_metrics.json").write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def compose_macro_low_background(transformed_low: np.ndarray, shape_mask: np.ndarray,
+                                 target_labels: np.ndarray,
+                                 donors: list[TerrainSample], seed: int = 1515) -> np.ndarray:
+    """Fill non-shape background with real low bands from selected style families."""
+    from terrain_shape_synth import soft_choice
+    rng = np.random.default_rng(seed)
+    patch, stride = 128, 80
+    origins = patch_axis_origins(patch, stride)
+    window_1d = np.maximum(np.hanning(patch).astype(np.float32), 0.08)
+    window = window_1d[:, None] * window_1d[None, :]
+    accumulated = np.zeros((SIZE, SIZE, 3), np.float32)
+    weights = np.zeros((SIZE, SIZE), np.float32)
+    for y in origins:
+        for x in origins:
+            desired = np.bincount(target_labels[y:y + patch, x:x + patch].ravel(),
+                                  minlength=3) / float(patch * patch)
+            candidates, scores = [], []
+            for donor_index, donor in enumerate(donors):
+                for sy in (0, 64, SIZE - patch):
+                    for sx in (0, 64, SIZE - patch):
+                        labels = donor.colour_class[sy:sy + patch, sx:sx + patch]
+                        density = np.bincount(labels.ravel(), minlength=3) / float(patch * patch)
+                        candidates.append((donor_index, sy, sx))
+                        scores.append(float(np.mean((density - desired) ** 2)))
+            selected = candidates[soft_choice(np.asarray(scores), rng, temperature=0.08)]
+            donor_index, sy, sx = selected
+            low = gaussian_filter(donors[donor_index].rgb[sy:sy + patch, sx:sx + patch]
+                                  .astype(np.float32), (16.0, 16.0, 0))
+            accumulated[y:y + patch, x:x + patch] += low * window[..., None]
+            weights[y:y + patch, x:x + patch] += window
+    background = accumulated / np.maximum(weights[..., None], 1.0e-6)
+    alpha = gaussian_filter(shape_mask.astype(np.float32), 5.0)[..., None]
+    transformed = transformed_low.astype(np.float32)
+    if shape_mask.any():
+        grade = background[shape_mask].mean(0) - transformed[shape_mask].mean(0)
+        transformed = np.clip(transformed + np.clip(grade, -42.0, 42.0), 0, 255)
+    # Macro imagery is allowed to carry structure, but its colour must remain in
+    # the active style family.  A partial alpha avoids a transformed low patch
+    # reading as an opaque photographic plate.
+    alpha *= 0.25
+    return np.clip(background * (1.0 - alpha) + transformed * alpha,
+                   0, 255).astype(np.uint8)
 
 
 def save_edge_guide_preview(output: Path | None, north_labels: np.ndarray,
@@ -1576,11 +1651,13 @@ def constrained_patch_labels(target: TerrainSample, north: TerrainSample, east: 
                         cost += edge_guide_cost(candidate_sdf, candidate_label_strip,
                                                 guide_sdf, guide_labels, distance)
 
-                choice_count = min(4, len(cost))
+                choice_count = min(MORPH_SCORE_CANDIDATES, len(cost))
                 best = np.argpartition(cost, choice_count - 1)[:choice_count]
-                # A deterministic soft choice avoids repeating one donor patch
-                # everywhere while still heavily favouring the terrain/context fit.
-                weights = np.exp(-(cost[best] - cost[best].min()) * 3.0)
+                # The chosen stochastic candidate is the candidate actually
+                # written.  Keep this as one stage: recomputing a hard argmin
+                # afterwards silently kills entropy and repeats the same shapes.
+                weights = np.exp(-(cost[best] - cost[best].min()) /
+                                 MORPH_SOFT_TEMPERATURE)
                 selected = best[rng.choice(len(best), p=weights / weights.sum())]
                 existing = result[y:y + patch, x:x + patch]
                 chosen = candidate_labels[selected]
@@ -1706,8 +1783,91 @@ def load_texture_mosaic(dataset: Path, origin_x: int, origin_y: int,
                          mosaic("colour_class"))
 
 
-def load_texture_sources(dataset: Path, target_x: int, target_y: int) -> list[TerrainSample]:
-    """Use adjacent 2x2 mosaics that cannot contain the held-out target tile."""
+def load_texture_sources(dataset: Path, target_x: int, target_y: int,
+                         preferred: list[tuple[int, int]] | None = None
+                         ) -> list[TerrainSample]:
+    """Load clean style-family sources, or the legacy four adjacent mosaics.
+
+    Pass15 supplies a 70/20/10 whole-map selection made by the macro solver.
+    Individual native-resolution tiles are deliberate: no RGB frequency band
+    is scaled with a shape, and every selected source retains its real pixels.
+    """
+    if preferred:
+        from terrain_synth import clean_source, discover_level5
+        clean_pool: list[TerrainSample] = []
+        available = set(discover_level5(dataset))
+        candidates: list[tuple[int, int]] = []
+        # Preserve style locality, but search outward when a chosen tile would
+        # require so much repair that its Voronoi-like inpaint becomes texture.
+        for radius in range(4):
+            for px, py in preferred:
+                for dy in range(-radius, radius + 1):
+                    for dx in range(-radius, radius + 1):
+                        if radius and max(abs(dx), abs(dy)) != radius:
+                            continue
+                        candidate = (int(px + dx), int(py + dy))
+                        if candidate in available and candidate not in candidates:
+                            candidates.append(candidate)
+        # Deterministic global reserve ensures every material can still find a
+        # clean donor if an entire local style family is contaminated.
+        reserve = sorted(available, key=lambda p: min(
+            np.hypot(p[0] - q[0], p[1] - q[1]) for q in preferred))
+        candidates.extend(candidate for candidate in reserve if candidate not in candidates)
+        rejected = 0
+        for x, y in candidates:
+            if (x, y) == (target_x, target_y):
+                continue
+            try:
+                sample = load_sample(dataset, int(x), int(y))
+            except (FileNotFoundError, OSError):
+                continue
+            cleaned, confidence, hard = clean_source(sample.rgb)
+            repair_fraction = float(np.mean(confidence < 255))
+            hard_fraction = float(np.mean(hard))
+            if repair_fraction > 0.12 or hard_fraction > 0.06:
+                rejected += 1
+                continue
+            sample.rgb = cleaned
+            sample.colour_class = colour_labels(sample.rgb)
+            sample.cleanup_confidence = float(confidence.mean() / 255.0)
+            clean_pool.append(sample)
+            if len(clean_pool) >= 80:
+                break
+        if clean_pool:
+            # A locality-ordered first-N list can still contain fourteen grass
+            # tiles.  Reserve four donors for every material, then fill the
+            # remaining slots from the closest clean style families.
+            sources: list[TerrainSample] = []
+            source_keys: set[tuple[int, int]] = set()
+            for kind in range(len(CLASS_NAMES)):
+                ranked = sorted(
+                    enumerate(clean_pool),
+                    key=lambda item: (float(np.mean(item[1].colour_class == kind)) +
+                                      0.08 * np.exp(-item[0] / 24.0)),
+                    reverse=True)
+                added = 0
+                for _rank, sample in ranked:
+                    key = (sample.x, sample.y)
+                    if key not in source_keys:
+                        sources.append(sample)
+                        source_keys.add(key)
+                        added += 1
+                    if added >= 4:
+                        break
+            for sample in clean_pool:
+                key = (sample.x, sample.y)
+                if key not in source_keys:
+                    sources.append(sample)
+                    source_keys.add(key)
+                if len(sources) >= 14:
+                    break
+            sources = sources[:14]
+            print(f"  texture donors: {len(sources)} material-balanced clean tiles "
+                  f"({rejected} low-confidence candidates rejected)", flush=True)
+            return sources
+        raise ValueError("whole-map style selection produced no usable texture sources")
+
+    # Compatibility path used by --legacy-shapes.
     grid_size = 32
     origins = [
         (int(np.clip(target_x, 0, grid_size - 2)),
@@ -1730,11 +1890,76 @@ def load_texture_sources(dataset: Path, target_x: int, target_y: int) -> list[Te
     return [load_texture_mosaic(dataset, *origin) for origin in unique_origins]
 
 
+def load_material_exemplar_sources(dataset: Path, exclude: frozenset = frozenset(),
+                                   per_material: int = 6, min_purity: float = 0.75
+                                   ) -> dict[int, list[TerrainSample]]:
+    """Whole-map search for the cleanest *and best-textured* tiles per material.
+
+    The local style pool is often mixed — a rocky target has no pure grass
+    neighbour, so the 14 texture donors can be <0.5 grass everywhere.  This
+    scans every level-5 tile once to score per-material purity and 2-12 px
+    texture energy, keeps the tiles above ``min_purity``, and ranks *those* by
+    energy.  Ranking by purity alone selects flat meadow/snow tiles (a pure
+    grass field can be nearly featureless); gating on purity then maximising
+    texture energy yields real, richly-textured material to quilt from.
+    """
+    from terrain_synth import discover_level5, clean_source, tile_rgb
+    scored: dict[int, list[tuple[float, float, int, int]]] = {
+        k: [] for k in range(len(CLASS_NAMES))}
+    # Rank on a downsampled copy: classification and a texture proxy at 96 px are
+    # ~7x cheaper than at full resolution and preserve per-tile purity/energy
+    # ordering.  Full-resolution tiles are only loaded for the chosen handful.
+    scan = 96
+    for (x, y) in discover_level5(dataset):
+        if (x, y) in exclude:
+            continue
+        rgb = tile_rgb(dataset, x, y)
+        if rgb is None:
+            continue
+        small = np.asarray(Image.fromarray(rgb, "RGB").resize((scan, scan),
+                                                              Image.Resampling.BILINEAR))
+        classes = colour_labels(small)
+        smallf = small.astype(np.float32)
+        mid = (gaussian_filter(smallf, (0.75, 0.75, 0), mode="nearest") -
+               gaussian_filter(smallf, (4.5, 4.5, 0), mode="nearest"))
+        energy = float(np.sqrt(np.mean(mid * mid)))
+        for kind in range(len(CLASS_NAMES)):
+            scored[kind].append((float(np.mean(classes == kind)), energy, int(x), int(y)))
+    sources: dict[int, list[TerrainSample]] = {}
+    for kind in range(len(CLASS_NAMES)):
+        pure = [entry for entry in scored[kind] if entry[0] >= min_purity]
+        if len(pure) < per_material:  # relax when a material is genuinely rare
+            pure = sorted(scored[kind], key=lambda e: e[0], reverse=True)[:per_material * 4]
+        pure.sort(key=lambda entry: entry[1], reverse=True)  # richest texture first
+        chosen: list[TerrainSample] = []
+        for purity, energy, x, y in pure:
+            if len(chosen) >= per_material:
+                break
+            try:
+                sample = load_sample(dataset, x, y)
+            except (FileNotFoundError, OSError):
+                continue
+            cleaned, confidence, hard = clean_source(sample.rgb)
+            if float(np.mean(confidence < 255)) > 0.12 or float(np.mean(hard)) > 0.06:
+                continue
+            sample.rgb = cleaned
+            sample.colour_class = colour_labels(sample.rgb)
+            chosen.append(sample)
+        picked = [(e[0], e[1]) for e in pure[:len(chosen)]]
+        note = (f"purity>={min_purity:.2f}, energy {picked[0][1]:.1f}..{picked[-1][1]:.1f}"
+                if picked else "none")
+        print(f"  {CLASS_NAMES[kind]} exemplar sources: {len(chosen)} ({note})", flush=True)
+        sources[kind] = chosen
+    return sources
+
+
 def build_texture_patch_database(donors: list[TerrainSample], patch: int,
                                  source_stride: int) -> dict[str, np.ndarray]:
     """Describe intact RGB+semantic donor patches without material splitting."""
+    from terrain_synth import srgb_to_lab
     thumb_axis = np.rint(np.linspace(0, patch - 1, TEXTURE_DESCRIPTOR_SIZE)).astype(int)
     indexes, extents, thumbnails, densities, terrain, terrain_angles = [], [], [], [], [], []
+    mean_labs, source_positions = [], []
     north_contexts, east_contexts, north_valid, east_valid = [], [], [], []
     top_edges, top_gradients, right_edges, right_gradients = [], [], [], []
     band = min(TEXTURE_BOUNDARY_BAND, patch // 3)
@@ -1757,6 +1982,9 @@ def build_texture_patch_database(donors: list[TerrainSample], patch: int,
                     donor.gradient_x[sy:sy + patch, sx:sx + patch],
                     donor.gradient_y[sy:sy + patch, sx:sx + patch])
                 terrain_angles.append((angle, anisotropy))
+                mean_labs.append(srgb_to_lab(patch_rgb).mean(axis=(0, 1)))
+                source_positions.append(((donor.x * SIZE + sx + patch * 0.5) / SIZE,
+                                         (donor.y * SIZE + sy + patch * 0.5) / SIZE))
                 top_edges.append(patch_rgb[0, thumb_axis])
                 top_gradients.append(patch_rgb[1, thumb_axis].astype(np.int16) -
                                      patch_rgb[0, thumb_axis].astype(np.int16))
@@ -1786,6 +2014,8 @@ def build_texture_patch_database(donors: list[TerrainSample], patch: int,
         "density": np.asarray(densities, dtype=np.float32),
         "terrain": np.asarray(terrain, dtype=np.float32),
         "terrain_angle": np.asarray(terrain_angles, dtype=np.float32),
+        "mean_lab": np.asarray(mean_labs, dtype=np.float32),
+        "source_position": np.asarray(source_positions, dtype=np.float32),
         "north_context": np.asarray(north_contexts, dtype=np.uint8),
         "east_context": np.asarray(east_contexts, dtype=np.uint8),
         "north_valid": np.asarray(north_valid, dtype=bool),
@@ -1975,11 +2205,46 @@ def rgb_quilt_take_mask(existing: np.ndarray, candidate: np.ndarray, known: np.n
     cost = colour_cost + 0.5 * ((first_gx - second_gx) ** 2 +
                                (first_gy - second_gy) ** 2)
     ownership = np.ones(known.shape, dtype=bool)
+    coordinate = np.arange(overlap, dtype=np.float32)
+    centre_bias = 1.0e-5 * ((coordinate - 0.5 * (overlap - 1)) /
+                            max(overlap, 1)) ** 2
     if has_left:
-        seam = minimum_vertical_seam(cost[:, :overlap])
+        seam = minimum_vertical_seam(cost[:, :overlap] + centre_bias[None, :])
         ownership[:, :overlap] &= np.arange(overlap)[None, :] >= seam[:, None]
     if has_top:
-        seam = minimum_vertical_seam(cost[:overlap, :].T)
+        seam = minimum_vertical_seam(cost[:overlap, :].T + centre_bias[None, :])
+        ownership[:overlap, :] &= np.arange(overlap)[:, None] >= seam[None, :]
+    return ~known | ownership
+
+
+def residual_quilt_take_mask(existing: np.ndarray, candidate: np.ndarray,
+                             known: np.ndarray, overlap: int,
+                             has_left: bool, has_top: bool) -> np.ndarray:
+    """Minimum-cut ownership for a signed native-frequency residual.
+
+    Residual patches must not be feathered together: independently phased
+    rock/grass detail cancels under averaging and exposes the blurry macro
+    colour field.  Cutting the signed bands themselves preserves native donor
+    contrast while still hiding the join along the cheapest residual seam.
+    """
+    first = existing.astype(np.float32) / 255.0
+    second = candidate.astype(np.float32) / 255.0
+    colour_cost = np.mean((first - second) ** 2, axis=2)
+    first_luma = first @ np.asarray((0.2126, 0.7152, 0.0722), dtype=np.float32)
+    second_luma = second @ np.asarray((0.2126, 0.7152, 0.0722), dtype=np.float32)
+    first_gy, first_gx = np.gradient(first_luma)
+    second_gy, second_gx = np.gradient(second_luma)
+    cost = colour_cost + 0.5 * ((first_gx - second_gx) ** 2 +
+                               (first_gy - second_gy) ** 2)
+    ownership = np.ones(known.shape, dtype=bool)
+    coordinate = np.arange(overlap, dtype=np.float32)
+    centre_bias = 1.0e-5 * ((coordinate - 0.5 * (overlap - 1)) /
+                            max(overlap, 1)) ** 2
+    if has_left:
+        seam = minimum_vertical_seam(cost[:, :overlap] + centre_bias[None, :])
+        ownership[:, :overlap] &= np.arange(overlap)[None, :] >= seam[:, None]
+    if has_top:
+        seam = minimum_vertical_seam(cost[:overlap, :].T + centre_bias[None, :])
         ownership[:overlap, :] &= np.arange(overlap)[:, None] >= seam[None, :]
     return ~known | ownership
 
@@ -1995,6 +2260,236 @@ def source_coordinate_visualization(donor_map: np.ndarray, source_x: np.ndarray,
     blue = np.rint(np.clip(donor_map, 0, maximum_donor) /
                    maximum_donor * 224.0 + 24.0).astype(np.uint8)
     return np.dstack((red, green, blue))
+
+
+def sample_native_source_field(base: np.ndarray, donors: list[TerrainSample],
+                               donor_map: np.ndarray, source_x: np.ndarray,
+                               source_y: np.ndarray) -> np.ndarray:
+    """Resolve a minimum-cut source-coordinate field to exact donor pixels."""
+    native = base.astype(np.float32).copy()
+    for donor_index, donor in enumerate(donors):
+        mask = donor_map == donor_index
+        if not np.any(mask):
+            continue
+        sy = np.clip(source_y[mask], 0, donor.rgb.shape[0] - 1)
+        sx = np.clip(source_x[mask], 0, donor.rgb.shape[1] - 1)
+        native[mask] = donor.rgb[sy, sx]
+    return np.clip(native, 0, 255).astype(np.uint8)
+
+
+def relayer_native_microtexture(
+        base: np.ndarray, donors: list[TerrainSample],
+        donor_map: np.ndarray, source_x: np.ndarray, source_y: np.ndarray,
+        fine_field: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None,
+        macro_sigma: float = 12.0, detail_sigma: float = 2.0,
+        mid_gain: float = 1.05, fine_gain: float = 0.95,
+        ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Relayer exact native detail while keeping ownership scale per band.
+
+    ``donor_map`` is the coarse 96 px ownership field.  It contributes only
+    the middle band, so its large coherent regions cannot impose their colour.
+    ``fine_field`` is the 24 px ownership field and contributes only detail
+    above two pixels, so its many cuts cannot read as little photographic
+    plates.  Broad colour remains entirely controlled by the macro synthesis.
+    """
+    mid_native = sample_native_source_field(base, donors, donor_map, source_x, source_y)
+    if fine_field is None:
+        fine_native = mid_native
+    else:
+        fine_native = sample_native_source_field(base, donors, *fine_field)
+    blur = lambda image, sigma: gaussian_filter(
+        image.astype(np.float32), (sigma, sigma, 0), mode="nearest")
+    base_low = blur(base, macro_sigma)
+    mid = blur(mid_native, detail_sigma) - blur(mid_native, macro_sigma)
+    fine = fine_native.astype(np.float32) - blur(fine_native, detail_sigma)
+    relayered = np.clip(base_low + mid_gain * mid + fine_gain * fine,
+                        0, 255).astype(np.uint8)
+    return relayered, mid_native, fine_native
+
+
+def _nearest_isolate(donors: list[TerrainSample], kind: int) -> np.ndarray:
+    """Legacy fallback: nearest-fill the densest donor when no pure source exists.
+
+    Only reached when the whole-map exemplar search returns nothing for a
+    material, so a small Voronoi-fill is preferable to crashing.
+    """
+    densest = int(np.argmax([np.mean(d.colour_class == kind) for d in donors]))
+    donor = donors[densest]
+    valid = donor.colour_class == kind
+    if np.count_nonzero(valid) < 256:
+        return donor.rgb.astype(np.float32)
+    nearest = distance_transform_edt(~valid, return_distances=False,
+                                     return_indices=True)
+    return donor.rgb[tuple(nearest)].astype(np.float32)
+
+
+def build_material_exemplar(sources: list[TerrainSample], kind: int,
+                            rng: np.random.Generator, patch: int = 80,
+                            overlap: int = 20) -> np.ndarray | None:
+    """Min-cut quilt a full-tile pure-``kind`` image from high-purity source tiles.
+
+    Every output pixel is a real sample from one intact source (Efros-Freeman
+    minimum-error boundary cut, no feathering or Gaussian blend), so the native
+    2-32 px and sub-2 px detail survives — the previous nearest-fill produced
+    Voronoi plateaus that blurred into grey blobs, and a hann-blended quilt
+    smeared away the very detail it was meant to inject.  Returns ``None`` when
+    no source is pure enough, so the caller can fall back.
+    """
+    usable = [s for s in sources if float(np.mean(s.colour_class == kind)) >= 0.5]
+    if not usable:
+        return None
+    step = patch - overlap
+    origins = list(range(0, SIZE - patch + 1, step))
+    if not origins or origins[-1] != SIZE - patch:
+        origins.append(SIZE - patch)
+    result = np.zeros((SIZE, SIZE, 3), np.float32)
+    filled = np.zeros((SIZE, SIZE), dtype=bool)
+    for y in origins:
+        for x in origins:
+            # Sample a few windows and keep the *best-textured* one that is still
+            # genuinely this material.  Maximising purity alone would pick the
+            # flattest windows (uniform grass classifies purer than textured
+            # grass) and throw the detail away, so among windows that clear a
+            # purity floor we take the one with the most 2-12 px energy.
+            best_crop, best_energy, fallback, fallback_purity = None, -1.0, None, -1.0
+            for _ in range(5):
+                src = usable[int(rng.integers(0, len(usable)))]
+                sy = int(rng.integers(0, SIZE - patch + 1))
+                sx = int(rng.integers(0, SIZE - patch + 1))
+                crop = src.rgb[sy:sy + patch, sx:sx + patch].astype(np.float32)
+                purity = float(np.mean(src.colour_class[sy:sy + patch, sx:sx + patch] == kind))
+                if purity > fallback_purity:
+                    fallback_purity, fallback = purity, crop
+                if purity >= 0.7:
+                    band = (gaussian_filter(crop, (2.0, 2.0, 0), mode="nearest") -
+                            gaussian_filter(crop, (12.0, 12.0, 0), mode="nearest"))
+                    energy = float(np.sqrt(np.mean(band * band)))
+                    if energy > best_energy:
+                        best_energy, best_crop = energy, crop
+            if best_crop is None:
+                best_crop = fallback
+            region = result[y:y + patch, x:x + patch]
+            known = filled[y:y + patch, x:x + patch]
+            take = rgb_quilt_take_mask(region, best_crop, known, overlap,
+                                       has_left=x > 0, has_top=y > 0)
+            region[take] = best_crop[take]
+            known[:] = True
+    return result
+
+
+def relayer_material_microtexture(base: np.ndarray, labels: np.ndarray,
+                                  donors: list[TerrainSample], seed: int = 1515,
+                                  material_exemplars: dict[int, list[TerrainSample]] | None = None
+                                  ) -> tuple[np.ndarray, np.ndarray, np.ndarray,
+                                             list[tuple[int, int, int]]]:
+    """Render grid-free native bands from clean per-material style exemplars.
+
+    Each material's mid (2-12 px), mesoscale (12-32 px) and fine (<2 px) bands
+    are extracted from a high-purity exemplar min-cut quilted out of real
+    whole-map ``kind`` tiles (``material_exemplars``), so no nearest-fill mush
+    and no blend-blur enter the residual.  Soft material masks merge the
+    residuals at the macro/micro SDF boundary; broad donor colour never enters
+    this operation.
+    """
+    rng = np.random.default_rng(seed)
+    material_exemplars = material_exemplars or {}
+    # Clean-donor band-energy targets across the pool (used only to size the
+    # additive top-up, so quiet tiles are not forced to over-sharpen).
+    mid_energy, meso_energy, fine_energy = [], [], []
+    for donor in donors:
+        rgb = donor.rgb.astype(np.float32)
+        smooth_2 = gaussian_filter(rgb, (2.0, 2.0, 0), mode="nearest")
+        smooth_12 = gaussian_filter(rgb, (12.0, 12.0, 0), mode="nearest")
+        smooth_32 = gaussian_filter(rgb, (32.0, 32.0, 0), mode="nearest")
+        mid_energy.append(float(np.sqrt(np.mean((smooth_2 - smooth_12) ** 2))))
+        meso_energy.append(float(np.sqrt(np.mean((smooth_12 - smooth_32) ** 2))))
+        fine_energy.append(float(np.sqrt(np.mean((rgb - smooth_2) ** 2))))
+    mid_energy = np.asarray(mid_energy, np.float32)
+    meso_energy = np.asarray(meso_energy, np.float32)
+    fine_energy = np.asarray(fine_energy, np.float32)
+    mid = np.zeros_like(base, dtype=np.float32)
+    meso = np.zeros_like(base, dtype=np.float32)
+    fine = np.zeros_like(base, dtype=np.float32)
+    selections: list[tuple[int, int, int]] = []
+    material_colours: list[np.ndarray] = []
+    for kind in range(len(CLASS_NAMES)):
+        exemplar = build_material_exemplar(material_exemplars.get(kind, []), kind, rng)
+        if exemplar is None:
+            exemplar = _nearest_isolate(donors, kind)
+        smooth_2 = gaussian_filter(exemplar, (2.0, 2.0, 0), mode="nearest")
+        smooth_12 = gaussian_filter(exemplar, (12.0, 12.0, 0), mode="nearest")
+        smooth_32 = gaussian_filter(exemplar, (32.0, 32.0, 0), mode="nearest")
+        mid_band = smooth_2 - smooth_12
+        meso_band = smooth_12 - smooth_32       # NEW: 12-32 px mesoscale
+        fine_band = exemplar - smooth_2
+        # Texture *structure* is luminance; hue belongs to the re-anchored macro
+        # colour.  A textured snow window is often snow+grass, so its residual
+        # carries green that reads as mould once added to white snow.  Keep each
+        # material's band chroma only in proportion to that material's own colour
+        # saturation: snow -> near-grey luminance detail, grass -> full colour.
+        mean_colour = exemplar.reshape(-1, 3).mean(axis=0)
+        saturation = float((mean_colour.max() - mean_colour.min()) /
+                           max(float(mean_colour.max()), 1.0e-5))
+        chroma_keep = float(np.clip((saturation - 0.05) * 3.5, 0.10, 1.0))
+
+        def desaturate(band: np.ndarray) -> np.ndarray:
+            luma = band.mean(axis=2, keepdims=True)
+            return luma + chroma_keep * (band - luma)
+
+        mid_band = desaturate(mid_band)
+        meso_band = desaturate(meso_band)
+        fine_band = desaturate(fine_band)
+        weight = gaussian_filter((labels == kind).astype(np.float32), 2.0,
+                                 mode="nearest")[..., None]
+        mid += weight * mid_band
+        meso += weight * meso_band
+        fine += weight * fine_band
+        n_sources = len(material_exemplars.get(kind, []))
+        selections.append((kind, n_sources, n_sources))
+        donor_means = [donor.rgb[donor.colour_class == kind].mean(axis=0)
+                       for donor in donors
+                       if np.count_nonzero(donor.colour_class == kind) >= 256]
+        if not donor_means:
+            donor_means = [donor.rgb.reshape(-1, 3).mean(axis=0) for donor in donors]
+        material_colours.append(np.median(np.asarray(donor_means), axis=0))
+    # Keep the multiscale quilt result intact.  The previous version reblurred
+    # it to sigma 12 and rebuilt mid/fine from scratch, which threw away the
+    # coarse/mid structure the coarse->fine passes had already earned (measured
+    # ~37% mid-band loss).  Instead we re-anchor broad per-material colour and
+    # top up only the residual energy overlap-blending eroded — additively, so
+    # every band the quilt produced is written exactly once and preserved.
+    base_f = base.astype(np.float32)
+    broad = gaussian_filter(base_f, (12.0, 12.0, 0), mode="nearest")
+    # Re-anchor only the broad colour of each SDF material.  Residual exemplars
+    # are zero mean, so without this a grass-heavy local style family can tint
+    # snow/rock green even though their geometry is correct.
+    colour_grade = np.zeros_like(base_f)
+    for kind, desired_colour in enumerate(material_colours):
+        material = labels == kind
+        current_colour = broad[material].mean(axis=0) if np.any(material) else desired_colour
+        shift = np.clip(desired_colour - current_colour, -48.0, 48.0)
+        weight = gaussian_filter(material.astype(np.float32), 3.0,
+                                 mode="nearest")[..., None]
+        colour_grade += weight * shift
+    # Measure how far the assembled tile's mid/meso/fine energy sits below the
+    # clean-donor population and add exactly that shortfall once from the crisp
+    # per-material residual bands.  The 12-32 px mesoscale band is the character
+    # the sigma-16 macro composition smooths away, so it is topped up here too.
+    def band_topup(low_sigma: float, high_sigma: float | None,
+                   target: np.ndarray) -> float:
+        low = gaussian_filter(base_f, (low_sigma, low_sigma, 0), mode="nearest")
+        band = base_f - low if high_sigma is None else \
+            low - gaussian_filter(base_f, (high_sigma, high_sigma, 0), mode="nearest")
+        rms = float(np.sqrt(np.mean(band * band)))
+        return float(np.clip(np.median(target) / max(rms, 1.0e-5) - 1.0, 0.0, 1.5))
+
+    mid_topup = band_topup(2.0, 12.0, mid_energy)
+    meso_topup = band_topup(12.0, 32.0, meso_energy)
+    fine_topup = band_topup(2.0, None, fine_energy)
+    result = np.clip(base_f + 0.80 * colour_grade + mid_topup * mid +
+                     meso_topup * meso + fine_topup * fine, 0, 255).astype(np.uint8)
+    return result, np.clip(mid + 128, 0, 255).astype(np.uint8), \
+        np.clip(fine + 128, 0, 255).astype(np.uint8), selections
 
 
 def source_discontinuities(donor_map: np.ndarray, source_x: np.ndarray,
@@ -2246,17 +2741,77 @@ def grade_patch_to_context(candidate: np.ndarray, existing: np.ndarray,
     return np.rint(linear_to_srgb(graded) * 255.0).astype(np.uint8)
 
 
+def native_frequency_band(source: np.ndarray, level: int,
+                          candidate_index: int, phase_seed: int = 0) -> np.ndarray:
+    """Extract one independently phased, zero-mean native-resolution band.
+
+    Macro low colour is already present in ``existing``.  Each level gets an
+    independent deterministic phase derived from its source identity, and no
+    transform is shared between bands.  Only zero-mean residual energy moves.
+    """
+    phase_x = ((candidate_index * 17 + level * 11 + phase_seed * 5) % 13) - 6
+    phase_y = ((candidate_index * 29 + level * 7 + phase_seed * 3) % 13) - 6
+    shifted = image_shift(source.astype(np.float32), (phase_y, phase_x, 0),
+                          order=1, mode="reflect", prefilter=False)
+    if level == 0:
+        band = gaussian_filter(shifted, (2.0, 2.0, 0)) - \
+               gaussian_filter(shifted, (16.0, 16.0, 0))
+        weight = 0.55
+    elif level == 1:
+        band = gaussian_filter(shifted, (1.2, 1.2, 0)) - \
+               gaussian_filter(shifted, (6.0, 6.0, 0))
+        weight = 0.45
+    else:
+        band = shifted - gaussian_filter(shifted, (2.0, 2.0, 0))
+        weight = 0.95
+    band -= band.mean(axis=(0, 1), keepdims=True)
+    # Prevent one unusually contrasty donor from dominating an entire region.
+    rms = float(np.sqrt(np.mean(band * band)))
+    band *= min(1.0, 28.0 / max(rms, 1.0e-4))
+    return weight * band
+
+
+def native_frequency_candidate(existing: np.ndarray, source: np.ndarray,
+                               level: int, candidate_index: int,
+                               phase_seed: int = 0) -> np.ndarray:
+    return np.clip(existing.astype(np.float32) +
+                   native_frequency_band(source, level, candidate_index, phase_seed),
+                   0, 255).astype(np.uint8)
+
+
+def irregular_axis_origins(patch: int, stride: int,
+                           rng: np.random.Generator) -> list[int]:
+    """Cover one axis without locking placements to a fixed payload period."""
+    last = SIZE - patch
+    result = [0]
+    while result[-1] < last:
+        advance = int(rng.integers(max(1, round(stride * 0.72)),
+                                   max(2, round(stride * 1.28)) + 1))
+        following = min(last, result[-1] + advance)
+        if following == result[-1]:
+            break
+        result.append(following)
+    return result
+
+
 def semantic_texture_quilt(target_labels: np.ndarray, target: TerrainSample,
                            donors: list[TerrainSample], north: TerrainSample,
-                           east: TerrainSample, output: Path | None = None
+                           east: TerrainSample, output: Path | None = None,
+                           macro_low: np.ndarray | None = None,
+                           material_exemplars: dict[int, list[TerrainSample]] | None = None
                            ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Coarse-to-fine semantic-guided synthesis of a coherent source-UV field."""
-    generated = np.zeros((SIZE, SIZE, 3), dtype=np.uint8)
-    known = np.zeros((SIZE, SIZE), dtype=bool)
+    """Coarse-to-fine semantic synthesis or pass15 native multiband rendering."""
+    from terrain_shape_synth import soft_choice
+    from terrain_synth import srgb_to_lab
+    generated = (macro_low.copy() if macro_low is not None else
+                 np.zeros((SIZE, SIZE, 3), dtype=np.uint8))
+    known = (np.ones((SIZE, SIZE), dtype=bool) if macro_low is not None else
+             np.zeros((SIZE, SIZE), dtype=bool))
     donor_map = np.full((SIZE, SIZE), -1, dtype=np.int16)
     source_x = np.full((SIZE, SIZE), -1, dtype=np.int16)
     source_y = np.full((SIZE, SIZE), -1, dtype=np.int16)
     source_usage = [np.zeros(source.rgb.shape[:2], dtype=np.int16) for source in donors]
+    rng = np.random.default_rng(151500)
     # Exposure anchor for the first swatch of a region, which has no overlap yet:
     # keep the whole tile in the surrounding real tiles' colour ballpark.
     context_mean = srgb_to_linear(
@@ -2264,13 +2819,22 @@ def semantic_texture_quilt(target_labels: np.ndarray, target: TerrainSample,
     texture_dir = output / "texture_synthesis" if output is not None else None
     if texture_dir is not None:
         texture_dir.mkdir(parents=True, exist_ok=True)
+    frequency_source_fields: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
 
     for level, (patch, stride, source_stride) in enumerate(TEXTURE_LEVELS):
         print(f"  texture level {level + 1}/{len(TEXTURE_LEVELS)}: "
               f"patch={patch}, stride={stride}", flush=True)
         database = build_texture_patch_database(donors, patch, source_stride)
         thumb_axis = np.rint(np.linspace(0, patch - 1, TEXTURE_DESCRIPTOR_SIZE)).astype(int)
-        origins = patch_axis_origins(patch, stride)
+        origins = (irregular_axis_origins(patch, stride, rng)
+                   if macro_low is not None else patch_axis_origins(patch, stride))
+        if macro_low is not None:
+            # One signed native-resolution residual lives at each output pixel.
+            # Do not overlap-average independently phased crops: that destroys
+            # their actual texture and leaves only macro-scale blur.
+            level_band = np.zeros((SIZE, SIZE, 3), np.float32)
+            level_known = np.zeros((SIZE, SIZE), bool)
+            selected_band_rms: list[float] = []
         for target_y in origins:
             for target_x in origins:
                 target_patch_labels = target_labels[target_y:target_y + patch,
@@ -2329,9 +2893,13 @@ def semantic_texture_quilt(target_labels: np.ndarray, target: TerrainSample,
                 if target_y > 0:
                     overlap_mask[:overlap, :] = True
                 overlap_mask &= existing_known
+                if macro_low is not None:
+                    existing_level_band = level_band[target_y:target_y + patch,
+                                                     target_x:target_x + patch]
+                    existing_level_known = level_known[target_y:target_y + patch,
+                                                       target_x:target_x + patch]
+                    residual_overlap_mask = overlap_mask & existing_level_known
 
-                best_cost = np.inf
-                selected = int(shortlist[0])
                 yy, xx = np.indices((patch, patch), dtype=np.int16)
                 existing_donor = donor_map[target_y:target_y + patch,
                                            target_x:target_x + patch]
@@ -2340,15 +2908,38 @@ def semantic_texture_quilt(target_labels: np.ndarray, target: TerrainSample,
                 existing_source_y = source_y[target_y:target_y + patch,
                                              target_x:target_x + patch]
                 level_coherence_weight = TEXTURE_COHERENCE_WEIGHT
+                active_position = None
+                active_lab = None
+                if overlap_mask.any():
+                    existing_ids = existing_donor[overlap_mask]
+                    existing_ids = existing_ids[existing_ids >= 0]
+                    if len(existing_ids):
+                        active_id = int(np.bincount(existing_ids.astype(int)).argmax())
+                        same = overlap_mask & (existing_donor == active_id)
+                        active_position = np.array((
+                            donors[active_id].x + float(existing_source_x[same].mean()) / SIZE,
+                            donors[active_id].y + float(existing_source_y[same].mean()) / SIZE),
+                            np.float32)
+                    active_lab = srgb_to_lab(existing[overlap_mask]).mean(0)
+                evaluated, evaluated_scores = [], []
+                phase_seed = target_y * 509 + target_x
                 for candidate_index in shortlist:
                     donor_index, sy, sx = database["index"][candidate_index]
                     donor = donors[int(donor_index)]
                     candidate_labels = donor.colour_class[sy:sy + patch, sx:sx + patch]
-                    candidate_rgb = donor.rgb[sy:sy + patch, sx:sx + patch]
+                    raw_candidate_rgb = donor.rgb[sy:sy + patch, sx:sx + patch]
+                    if macro_low is not None:
+                        candidate_band = native_frequency_band(
+                            raw_candidate_rgb, level, int(candidate_index), phase_seed)
+                        overlap_error, gradient_error, scale_error = rgb_patch_error(
+                            existing_level_band, candidate_band, residual_overlap_mask)
+                        candidate_rgb = None
+                    else:
+                        candidate_rgb = raw_candidate_rgb
+                        overlap_error, gradient_error, scale_error = rgb_patch_error(
+                            existing, candidate_rgb, overlap_mask)
                     label_error = float(semantic_layout_error(candidate_labels,
                                                               target_patch_labels))
-                    overlap_error, gradient_error, scale_error = rgb_patch_error(
-                        existing, candidate_rgb, overlap_mask)
                     boundary_error = boundary_condition_error(
                         donor, int(sx), int(sy), patch, target_x, target_y,
                         north, east)
@@ -2359,6 +2950,20 @@ def semantic_texture_quilt(target_labels: np.ndarray, target: TerrainSample,
                                     (existing_source_y == int(sy) + yy))
                     reuse_error = float(np.mean(np.minimum(
                         np.maximum(usage - same_mapping.astype(np.int16), 0), 2)))
+                    if active_position is None:
+                        source_style_error = 0.0
+                    else:
+                        source_distance = np.linalg.norm(
+                            database["source_position"][candidate_index] - active_position)
+                        saturated_source = 1.0 - np.exp(-source_distance / 2.0)
+                        colour_distance = (np.linalg.norm(
+                            database["mean_lab"][candidate_index] - active_lab) / 35.0
+                            if active_lab is not None else 0.0)
+                        material_distance = float(np.linalg.norm(
+                            database["density"][candidate_index] - target_density))
+                        source_style_error = (0.60 * saturated_source +
+                                              0.25 * colour_distance +
+                                              0.15 * material_distance)
                     total = (TEXTURE_LABEL_WEIGHT * label_error +
                              TEXTURE_OVERLAP_WEIGHT * overlap_error +
                              TEXTURE_GRADIENT_WEIGHT * gradient_error +
@@ -2366,10 +2971,13 @@ def semantic_texture_quilt(target_labels: np.ndarray, target: TerrainSample,
                              4.0 * float(room_error[candidate_index]) +
                              TEXTURE_SCALE_WEIGHT * scale_error +
                              TEXTURE_BOUNDARY_WEIGHT * boundary_error +
-                             TEXTURE_REUSE_WEIGHT * reuse_error)
-                    if total < best_cost:
-                        best_cost = total
-                        selected = int(candidate_index)
+                             TEXTURE_REUSE_WEIGHT * reuse_error +
+                             2.0 * source_style_error)
+                    evaluated.append(int(candidate_index)); evaluated_scores.append(float(total))
+
+                chosen_position = soft_choice(np.asarray(evaluated_scores), rng,
+                                              temperature=0.55, finalists=16)
+                selected = evaluated[chosen_position]
 
                 donor_index, sy, sx = database["index"][selected]
                 donor = donors[int(donor_index)]
@@ -2390,11 +2998,19 @@ def semantic_texture_quilt(target_labels: np.ndarray, target: TerrainSample,
                     grade_reference[:edge, :] = \
                         north.rgb[SIZE - edge:, target_x:target_x + patch]
                     grade_overlap[:edge, :] = True
-                candidate_rgb = grade_patch_to_context(
-                    donor.rgb[sy:sy + patch, sx:sx + patch], grade_reference,
-                    grade_overlap, context_mean)
-                take = rgb_quilt_take_mask(existing, candidate_rgb, existing_known,
-                                           overlap, target_x > 0, target_y > 0)
+                if macro_low is not None:
+                    native_band = native_frequency_band(
+                        donor.rgb[sy:sy + patch, sx:sx + patch], level,
+                        selected, phase_seed)
+                    take = residual_quilt_take_mask(
+                        existing_level_band, native_band, existing_level_known,
+                        overlap, target_x > 0, target_y > 0)
+                else:
+                    candidate_rgb = grade_patch_to_context(
+                        donor.rgb[sy:sy + patch, sx:sx + patch], grade_reference,
+                        grade_overlap, context_mean)
+                    take = rgb_quilt_take_mask(existing, candidate_rgb, existing_known,
+                                               overlap, target_x > 0, target_y > 0)
                 # Keep the usage map synchronized with seam ownership.  Exact
                 # propagation into the same target pixels is free; copying a
                 # donor motif into a second target location is not.
@@ -2406,8 +3022,13 @@ def semantic_texture_quilt(target_labels: np.ndarray, target: TerrainSample,
                                   (existing_source_y[old], existing_source_x[old]), -1)
                 np.add.at(source_usage[int(donor_index)],
                           (int(sy) + yy[take], int(sx) + xx[take]), 1)
-                generated[target_y:target_y + patch, target_x:target_x + patch][take] = \
-                    candidate_rgb[take]
+                if macro_low is not None:
+                    selected_band_rms.append(float(np.sqrt(np.mean(native_band * native_band))))
+                    existing_level_band[take] = native_band[take]
+                    existing_level_known[take] = True
+                else:
+                    generated[target_y:target_y + patch, target_x:target_x + patch][take] = \
+                        candidate_rgb[take]
                 known[target_y:target_y + patch, target_x:target_x + patch][take] = True
                 donor_region = donor_map[target_y:target_y + patch, target_x:target_x + patch]
                 source_x_region = source_x[target_y:target_y + patch, target_x:target_x + patch]
@@ -2416,6 +3037,14 @@ def semantic_texture_quilt(target_labels: np.ndarray, target: TerrainSample,
                 source_x_region[take] = int(sx) + xx[take]
                 source_y_region[take] = int(sy) + yy[take]
 
+        if macro_low is not None:
+            current_rms = float(np.sqrt(np.mean(level_band * level_band)))
+            desired_rms = float(np.median(selected_band_rms)) if selected_band_rms else current_rms
+            native_gain = (1.15, 1.10, 1.00)[level]
+            level_band *= native_gain * min(1.6, desired_rms / max(current_rms, 1.0e-5))
+            generated = np.clip(generated.astype(np.float32) + level_band,
+                                0, 255).astype(np.uint8)
+            frequency_source_fields.append((donor_map.copy(), source_x.copy(), source_y.copy()))
         if texture_dir is not None:
             Image.fromarray(mark_target_seams(generated), "RGB").save(
                 texture_dir / f"level_{level + 1}_{patch}px_rgb.png")
@@ -2423,30 +3052,64 @@ def semantic_texture_quilt(target_labels: np.ndarray, target: TerrainSample,
                 donor_map, source_x, source_y)), "RGB").save(
                 texture_dir / f"level_{level + 1}_{patch}px_source_uv.png")
 
+    if macro_low is not None:
+        coarse_field = frequency_source_fields[0]
+        fine_field = frequency_source_fields[-1]
+        _, native_mid, native_fine = relayer_native_microtexture(
+            generated, donors, *coarse_field, fine_field=fine_field)
+        generated, material_mid, material_fine, material_sources = \
+            relayer_material_microtexture(generated, target_labels, donors,
+                                          material_exemplars=material_exemplars)
+        if texture_dir is not None:
+            Image.fromarray(native_mid, "RGB").save(
+                texture_dir / "native_midfrequency_mosaic.png")
+            Image.fromarray(native_fine, "RGB").save(
+                texture_dir / "native_highfrequency_mosaic.png")
+            Image.fromarray(material_mid, "RGB").save(
+                texture_dir / "material_midfrequency_residual.png")
+            Image.fromarray(material_fine, "RGB").save(
+                texture_dir / "material_highfrequency_residual.png")
+            (texture_dir / "material_microtexture_sources.txt").write_text(
+                "\n".join(f"material={kind} mid_donor={mid} fine_donor={fine}"
+                          for kind, mid, fine in material_sources) + "\n",
+                encoding="utf-8")
+            Image.fromarray(mark_target_seams(generated), "RGB").save(
+                texture_dir / "level_4_native_microtexture_relayer.png")
+
     return generated, donor_map, source_x, source_y
 
 
-def material_luminance(labels: np.ndarray, atlas_path: Path) -> np.ndarray:
-    """Use the same representative rock/grass/snow scans as terrain.frag.
+def material_luminance(labels: np.ndarray, atlas_path: Path,
+                       seed: int = 1515) -> np.ndarray:
+    """Legacy preview using a per-material *bank*, never one fixed atlas cell.
 
-    This is a 2-D preview of the runtime's fine detail, not a substitute for
-    its triplanar projection and PBR normal mapping.
+    The pass15 renderer no longer calls this function: native RGB bands come
+    from cleaned whole-map style families.  Keeping the preview safe avoids the
+    former fixed (7,10,16) cells and shared modular phase reappearing elsewhere.
     """
     atlas = np.asarray(Image.open(atlas_path).convert("RGB"))
     grid, cell, gutter = 5, 512, 8
-    indexes = (7, 10, 16)
+    banks = (np.arange(0, 10), np.arange(5, 20), np.arange(15, 25))
+    rng = np.random.default_rng(seed)
     yy, xx = np.indices((SIZE, SIZE), dtype=np.int32)
     result = np.ones((SIZE, SIZE), dtype=np.float32)
-    for kind, index in enumerate(indexes):
-        row, column = divmod(index, grid)
-        sx = gutter + ((xx * (3 + kind) + yy * (1 + kind)) % cell)
-        sy = gutter + ((yy * (5 + kind) + xx) % cell)
-        sample = srgb_to_linear(atlas[row * (cell + 2 * gutter) + sy,
-                                      column * (cell + 2 * gutter) + sx])
-        lum = sample @ np.array((0.2126, 0.7152, 0.0722), dtype=np.float32)
-        mean = max(float(np.mean(lum)), 1e-3)
-        factor = np.clip(lum / mean, 0.72, 1.28)
-        result[labels == kind] = factor[labels == kind]
+    # Irregular 53 px regions break alignment with both 64 px shape support and
+    # every RGB frequency level.  Each region gets an independent cell/phase.
+    for y0 in range(0, SIZE, 53):
+        for x0 in range(0, SIZE, 53):
+            y1, x1 = min(SIZE, y0 + 61), min(SIZE, x0 + 61)
+            for kind, bank in enumerate(banks):
+                index = int(rng.choice(bank)); row, column = divmod(index, grid)
+                phase_x, phase_y = rng.integers(0, cell, size=2)
+                local_y, local_x = yy[y0:y1, x0:x1], xx[y0:y1, x0:x1]
+                sx = gutter + ((local_x + phase_x) % cell)
+                sy = gutter + ((local_y + phase_y) % cell)
+                sample = srgb_to_linear(atlas[row * (cell + 2 * gutter) + sy,
+                                              column * (cell + 2 * gutter) + sx])
+                lum = sample @ np.array((0.2126, 0.7152, 0.0722), dtype=np.float32)
+                factor = np.clip(lum / max(float(lum.mean()), 1.0e-3), 0.72, 1.28)
+                material = labels[y0:y1, x0:x1] == kind
+                result[y0:y1, x0:x1][material] = factor[material]
     return result
 
 
@@ -2623,12 +3286,30 @@ def heightmap_with_scale(target: TerrainSample, east: TerrainSample, north: Terr
 
 def write_texture_outputs(output: Path, target: TerrainSample, east: TerrainSample,
                           north: TerrainSample, target_labels: np.ndarray,
-                          texture_sources: list[TerrainSample]) -> None:
-    """Run and export only the semantic-guided RGB/source-UV synthesis."""
+                          texture_sources: list[TerrainSample],
+                          macro_low: np.ndarray | None = None,
+                          snap_edges: bool = True,
+                          material_exemplars: dict[int, list[TerrainSample]] | None = None) -> None:
+    """Run and export only the semantic-guided RGB/source-UV synthesis.
+
+    ``snap_edges`` copies the real north/east neighbour imagery a few pixels
+    into the top/right of the tile so a held-out gap joins its true neighbours
+    seamlessly.  That is correct for gap-filling but wrong for pure-material
+    showcase tiles, whose neighbours carry an unrelated material: pass
+    ``snap_edges=False`` to ship the untouched synthesis instead.
+
+    ``material_exemplars`` supplies whole-map high-purity source tiles per
+    material for the native-band relayer (see ``load_material_exemplar_sources``).
+    """
     print("Synthesizing coherent RGB source-coordinate field…", flush=True)
     unblended, donor_map, source_x, source_y = semantic_texture_quilt(
-        target_labels, target, texture_sources, north, east, output)
-    rebuilt, blend_mask = snap_generated_edges(unblended, north.rgb, east.rgb)
+        target_labels, target, texture_sources, north, east, output, macro_low,
+        material_exemplars=material_exemplars)
+    if snap_edges:
+        rebuilt, blend_mask = snap_generated_edges(unblended, north.rgb, east.rgb)
+    else:
+        rebuilt = unblended.copy()
+        blend_mask = np.zeros((SIZE, SIZE), dtype=np.float32)
     Image.fromarray(unblended, "RGB").save(
         output / "texture_reconstruction_target_unblended.png")
     Image.fromarray(rebuilt, "RGB").save(output / "texture_reconstruction_target.png")
@@ -2727,7 +3408,10 @@ def write_texture_outputs(output: Path, target: TerrainSample, east: TerrainSamp
 
 def write_outputs(output: Path, target: TerrainSample, west: TerrainSample, north: TerrainSample,
                   target_labels: np.ndarray, probabilities: np.ndarray, atlas_path: Path,
-                  texture_sources: list[TerrainSample]) -> None:
+                  texture_sources: list[TerrainSample],
+                  macro_low: np.ndarray | None = None,
+                  snap_edges: bool = True,
+                  material_exemplars: dict[int, list[TerrainSample]] | None = None) -> None:
     output.mkdir(parents=True, exist_ok=True)
     print(f"Writing output images to {output}…", flush=True)
     # Raw source overview intentionally includes the red-marked target for audit.
@@ -2743,32 +3427,31 @@ def write_outputs(output: Path, target: TerrainSample, west: TerrainSample, nort
     # intentionally unused: independently stamping per-material detail destroys
     # texture phase.
     _ = atlas_path
-    write_texture_outputs(output, target, west, north, target_labels, texture_sources)
+    write_texture_outputs(output, target, west, north, target_labels, texture_sources,
+                          macro_low, snap_edges=snap_edges,
+                          material_exemplars=material_exemplars)
 
     summary = output / "README.md"
     summary.write_text(
-        "# Procedural gap reconstruction experiment\n\n"
+        "# Procedural gap reconstruction — pass15\n\n"
         "Layout: north donor at upper-left, target at lower-left, east donor at lower-right. "
         "The empty upper-right quadrant is intentionally absent. Red lines mark tile seams in every multi-tile debug image.\n\n"
         "- `raw_three_tiles.png`: source imagery; target visibly retains its red outline for audit.\n"
         "- `raw_heightmaps_metres.png`: raw per-tile DEMs on one shared greyscale elevation range, with metres legend.\n"
         "- `height_material_classes.png`: donor RGB labels and final constrained target labels. "
         "White=snow, grey=rock, green=grass.\n"
-        "- `constrained_patch_classes.png`: cropped final target labels after one halo-constrained quilting pass. "
-        "Patch selection uses shared physical elevation/slope, expected class density, 32 px donor context, and "
-        "signed-distance halo matching; patches use minimum-cost overlap seams before local connected-shape and "
-        "terrain-conditioned pairwise bleed refinement.\n"
-        "- `passes/pass_XX_*.png`: three-way donor/target categorical preview after every patch-synthesis pass and after seam anchoring, coherence, and bleed refinement.\n"
+        "- `constrained_patch_classes.png`: final macro/micro SDF material field.\n"
+        "- `shape_polygons/01_*`, `02_*`, `03_*`: probability seed, transformed 96-224 px macro shapes, and 12-64 px transition-weighted micro breakup.\n"
+        "- `passes/pass_XX_*.png`: three-way donor/target categorical previews for the same three shape stages.\n"
         "- `height_material_probabilities.png`: target expectation from the shared-metre elevation/slope density model.\n"
-        "- `procedural_reconstruction.png`: target RGB generated without reading target RGB. Whole RGB+semantic donor "
-        "patches are selected coarse-to-fine using semantic-layout, RGB-overlap, gradient, terrain orientation, boundary "
-        "conditioning, scale, source-coordinate coherence and donor-reuse costs; minimum-error cuts retain donor high "
-        "frequencies. `_with_seams` and `_without_seams` variants are exported together.\n"
+        "- `procedural_reconstruction.png`: target RGB generated without reading target RGB. Transformed donor imagery "
+        "contributes only broad macro colour. Independent material-balanced clean donors contribute native 2-12 px and "
+        "sub-2 px residual bands; broad material colour is re-anchored separately.\n"
         "- `texture_source_coordinates.png`: source UV visualization; smooth colour ramps are coherent copied regions and "
         "abrupt colour jumps are donor switches. Blue distinguishes source mosaics. Paired seam/no-seam variants are included.\n"
         "- `texture_source_discontinuities.png`: every non-unit source-coordinate transition in red.\n"
         "- `texture_source_field.npz`: exact donor index and integer source X/Y fields for quantitative auditing.\n"
-        "- `texture_synthesis/level_*`: RGB and source-UV state after each coarse-to-fine patch level.\n"
+        "- `texture_synthesis/level_*`: retrieval states plus the final native microtexture relayer and isolated residual diagnostics.\n"
         "- `texture_synthesis_metrics.txt`: coordinate coherence and semantic agreement diagnostics.\n",
         encoding="utf-8")
 
@@ -2784,9 +3467,13 @@ def main() -> None:
     parser.add_argument("--atlas", type=Path, default=ROOT / "textures/runtime/terrain_micro_albedo.png")
     parser.add_argument("--output", type=Path, default=Path("/tmp/je5Z7y"))
     parser.add_argument("--quick", action="store_true",
-                        help="stop after quilting and seam anchoring for faster iteration")
+                        help="use 160 full-map tiles for faster macro/micro iteration")
     parser.add_argument("--texture-only", action="store_true",
                         help="reuse output/constrained_patch_classes.png and rerun only RGB synthesis")
+    parser.add_argument("--legacy-shapes", action="store_true",
+                        help="use the pre-pass15 two-donor categorical patch pipeline")
+    parser.add_argument("--shape-tile-limit", type=int,
+                        help="development-only cap on streamed whole-map shape tiles")
     args = parser.parse_args()
     print("Loading target and donor terrain…", flush=True)
     target = load_sample(args.dataset, *args.target)
@@ -2803,22 +3490,86 @@ def main() -> None:
             CLASS_COLORS[None, None, :, :].astype(np.int32)
         labels = np.sum(difference * difference, axis=3).argmin(axis=2).astype(np.uint8)
         print("Loading target-excluding texture-source mosaics…", flush=True)
-        texture_sources = load_texture_sources(args.dataset, target.x, target.y)
-        write_texture_outputs(args.output, target, west, north, labels, texture_sources)
+        preferred = None
+        shape_metrics = args.output / "macro_micro_metrics.json"
+        macro_low_path = args.output / "macro_low_frequency_filled.png"
+        if shape_metrics.exists():
+            payload = json.loads(shape_metrics.read_text(encoding="utf-8"))
+            preferred = []
+            for values in payload.get("texture_source_coordinates", []):
+                source = tuple(int(value) for value in values)
+                if source != (target.x, target.y) and source not in preferred:
+                    preferred.append(source)
+                if len(preferred) >= 14:
+                    break
+            for values in payload.get("selected_style_sources", []):
+                source = tuple(int(value) for value in values)
+                if source != (target.x, target.y) and source not in preferred:
+                    preferred.append(source)
+                if len(preferred) >= 14:
+                    break
+            for placement in payload.get("placements", []):
+                source = tuple(int(value) for value in placement["source"])
+                if source != (target.x, target.y) and source not in preferred:
+                    preferred.append(source)
+                if len(preferred) >= 14:
+                    break
+            preferred = preferred[:14]
+        texture_sources = load_texture_sources(args.dataset, target.x, target.y, preferred)
+        macro_low = (np.asarray(Image.open(macro_low_path).convert("RGB"))
+                     if macro_low_path.exists() else None)
+        write_texture_outputs(args.output, target, west, north, labels, texture_sources,
+                              macro_low)
         refined = (args.output / "shape_polygons" /
                    "03_final_shapes_combined.png").exists()
         write_audit_outputs(args.output, target, north, west, refined=refined)
         print(f"wrote {args.output}")
         return
-    print("Learning shared elevation/slope material probabilities…", flush=True)
-    probabilities = material_probabilities(target, [west, north])
-    labels = constrained_patch_labels(target, north, west, probabilities, args.output,
-                                      refine=not args.quick)
+    shape_library = None
+    shape_result = None
+    if args.legacy_shapes:
+        print("Learning shared elevation/slope material probabilities…", flush=True)
+        probabilities = material_probabilities(target, [west, north])
+        labels = constrained_patch_labels(target, north, west, probabilities, args.output,
+                                          refine=not args.quick)
+    else:
+        from terrain_shape_synth import WholeMapShapeLibrary, synthesize_macro_micro
+        block = {tuple(args.target)}
+        limit = args.shape_tile_limit if args.shape_tile_limit is not None else (160 if args.quick else None)
+        shape_library = WholeMapShapeLibrary(args.dataset, colour_labels,
+                                             exclude=block, max_tiles=limit)
+        print("Learning whole-map material mass field…", flush=True)
+        whole_map_probabilities = shape_library.predict_probabilities(target.height, target.slope)
+        boundary_probabilities = material_probabilities(target, [west, north])
+        probabilities = 0.72 * whole_map_probabilities + 0.28 * boundary_probabilities
+        probabilities /= np.maximum(probabilities.sum(axis=2, keepdims=True), 1.0e-6)
+        print("Synthesizing transformed macro and micro SDF shapes…", flush=True)
+        shape_result = synthesize_macro_micro(
+            shape_library, target.height, target.slope, probabilities,
+            north.colour_class, west.colour_class)
+        labels = shape_result.labels
+        write_macro_micro_diagnostics(args.output, shape_result, north, west)
     print("Loading target-excluding texture-source mosaics…", flush=True)
-    texture_sources = load_texture_sources(args.dataset, target.x, target.y)
+    preferred = (shape_library.texture_source_coordinates((target.x, target.y))
+                 if shape_library is not None else None)
+    if shape_result is not None and preferred is not None:
+        metrics_path = args.output / "macro_micro_metrics.json"
+        payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+        payload["texture_source_coordinates"] = [
+            [int(value) for value in source] for source in preferred]
+        metrics_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n",
+                                encoding="utf-8")
+    texture_sources = load_texture_sources(args.dataset, target.x, target.y, preferred)
+    macro_low = None
+    if shape_result is not None:
+        macro_low = compose_macro_low_background(
+            shape_result.macro_low_rgb, shape_result.macro_source_map >= 0,
+            labels, texture_sources)
+        Image.fromarray(macro_low, "RGB").save(args.output / "macro_low_frequency_filled.png")
     write_outputs(args.output, target, west, north, labels, probabilities, args.atlas,
-                  texture_sources)
-    write_audit_outputs(args.output, target, north, west, refined=not args.quick)
+                  texture_sources, macro_low)
+    write_audit_outputs(args.output, target, north, west,
+                        refined=(shape_result is not None or not args.quick))
     counts = np.bincount(labels.ravel(), minlength=3)
     print(f"target {target.x}/{target.y}; donor east {west.x}/{west.y}; donor north {north.x}/{north.y}")
     print("target classes: " + ", ".join(f"{name}={count}" for name, count in zip(CLASS_NAMES, counts)))
