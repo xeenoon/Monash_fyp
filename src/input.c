@@ -90,17 +90,9 @@ void input_poll(Input *in, SDL_Window *window)
 
 	const bool *keys = SDL_GetKeyboardState(NULL);
 	in->rotate_sun = keys[SDL_SCANCODE_F12];
-	if (in->mouse_captured)
-	{
-		in->move_forward =
-			(keys[SDL_SCANCODE_W] ? 1.0f : 0.0f) - (keys[SDL_SCANCODE_S] ? 1.0f : 0.0f);
-		in->move_right = (keys[SDL_SCANCODE_D] ? 1.0f : 0.0f) - (keys[SDL_SCANCODE_A] ? 1.0f : 0.0f);
-		in->sprint = keys[SDL_SCANCODE_LSHIFT];
-	}
-	else
-	{
-		in->move_forward = 0.0f;
-		in->move_right = 0.0f;
-		in->sprint = false;
-	}
+	in->move_forward =
+		(keys[SDL_SCANCODE_W] ? 1.0f : 0.0f) - (keys[SDL_SCANCODE_S] ? 1.0f : 0.0f);
+	in->move_right =
+		(keys[SDL_SCANCODE_D] ? 1.0f : 0.0f) - (keys[SDL_SCANCODE_A] ? 1.0f : 0.0f);
+	in->sprint = keys[SDL_SCANCODE_LSHIFT];
 }

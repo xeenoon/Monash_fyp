@@ -18,10 +18,15 @@ mat4s camera_view(const Camera *cam)
 
 mat4s camera_projection(const Camera *cam, float aspect)
 {
+	return camera_projection_fov(cam, aspect, 60.0f);
+}
+
+mat4s camera_projection_fov(const Camera *cam, float aspect, float vertical_fov_degrees)
+{
 	(void)cam;
 	/* For right-handed view space (visible z < 0), this maps the near plane to
 	   depth 1 and approaches 0 at infinity: depth = near / -view_z. */
-	const float focal_length = 1.0f / tanf(glm_rad(60.0f) * 0.5f);
+	const float focal_length = 1.0f / tanf(glm_rad(vertical_fov_degrees) * 0.5f);
 	mat4s projection = GLMS_MAT4_ZERO_INIT;
 	projection.raw[0][0] = focal_length / aspect;
 	projection.raw[1][1] = -focal_length; /* Vulkan framebuffer Y points down. */

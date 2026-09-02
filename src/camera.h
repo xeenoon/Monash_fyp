@@ -21,6 +21,7 @@ vec3s camera_forward(const Camera *cam);
 mat4s camera_view(const Camera *cam);
 /* Right-handed, Vulkan [0,1] infinite reversed-Z projection. */
 mat4s camera_projection(const Camera *cam, float aspect);
+mat4s camera_projection_fov(const Camera *cam, float aspect, float vertical_fov_degrees);
 
 /* Raw values only — the camera knows nothing about the input module. */
 void camera_update(Camera *cam, float move_forward, float move_right, float look_dx, float look_dy,

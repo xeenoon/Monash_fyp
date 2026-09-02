@@ -9,6 +9,7 @@
 #include "benchmark_ground.h"
 #include "camera.h"
 #include "dungeon_scene.h"
+#include "dungeon_camera.h"
 #include "gltf_scene.h"
 #include "input.h"
 #include "material_stability_demo.h"
@@ -212,6 +213,11 @@ int main(int argc, char *argv[])
 		SDL_SetWindowTitle(window, "Dungeon Explorer");
 	if (!SDL_SetWindowRelativeMouseMode(window, true))
 		fprintf(stderr, "Relative mouse mode unavailable: %s\n", SDL_GetError());
+	if (use_dungeon)
+	{
+		SDL_SetWindowRelativeMouseMode(window, false);
+		SDL_ShowCursor();
+	}
 
 	Renderer renderer;
 	ShadowQualitySettings shadow_quality = shadow_quality_from_environment();
@@ -346,6 +352,12 @@ int main(int argc, char *argv[])
 												: (WorldPosition){0.0, 6.0, -45.0})),
 				   .yaw = 90.0f,
 				   .pitch = use_dungeon ? -50.0f : (use_quarry ? -3.0f : -2.0f)};
+	DungeonCamera dungeon_camera = {0};
+	if (use_dungeon)
+	{
+		dungeon_camera_init(&dungeon_camera, dungeon.level.spawn);
+		camera = dungeon_camera.camera;
+	}
 
 	/* Runtime override of the start camera in absolute WORLD coordinates -- the
 	   exact triple printed as "camera pos=" in a shader dump. Unlike
@@ -376,7 +388,7 @@ int main(int argc, char *argv[])
 		fflush(stdout);
 	}
 
-	Input input = {.mouse_captured = true};
+	Input input = {.mouse_captured = !use_dungeon};
 	/* Automated visual comparisons need to survive window focus and pointer
 	   motion without drifting away from the replayed dump camera. */
 	bool freeze_camera = getenv("TERRAIN_FREEZE_CAMERA") &&
@@ -580,9 +592,14 @@ int main(int argc, char *argv[])
 			history_valid = false;
 		}
 
-		if (!freeze_camera)
+		if (!freeze_camera && !use_dungeon && input.mouse_captured)
 			camera_update(&camera, input.move_forward, input.move_right, input.look_dx, input.look_dy,
 						  input.sprint, dt);
+		if (use_dungeon)
+		{
+			dungeon_camera_update(&dungeon_camera, dungeon.level.spawn, dt);
+			camera = dungeon_camera.camera;
+		}
 		if (demo_flyby)
 		{
 			float seconds = fmodf((float)(ticks - start_ticks) / 1000000000.0f, 22.0f);
@@ -757,7 +774,9 @@ int main(int argc, char *argv[])
 		vec2s jitter = temporal_jitter_ndc(temporal_frame++, renderer.swapchain_extent.width,
 										   renderer.swapchain_extent.height);
 		mat4s projection = temporal_jitter_projection(
-			camera_projection(&camera, renderer_aspect(&renderer)), jitter);
+			use_dungeon ? dungeon_camera_projection(&dungeon_camera, renderer_aspect(&renderer))
+						: camera_projection(&camera, renderer_aspect(&renderer)),
+			jitter);
 		mat4s view = camera_view(&camera);
 		mat4s view_projection = glms_mat4_mul(projection, view);
 		if (!use_history)

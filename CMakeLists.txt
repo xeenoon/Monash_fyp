@@ -340,11 +340,21 @@ if(BUILD_TESTING)
     add_executable(dungeon_mesh_tests tests/dungeon_mesh_tests.c)
     target_link_libraries(dungeon_mesh_tests PRIVATE dungeon_level m)
     add_test(NAME dungeon_mesh_generation COMMAND dungeon_mesh_tests)
+
+    add_executable(dungeon_camera_tests
+        tests/dungeon_camera_tests.c
+        src/dungeon_camera.c
+        src/camera.c
+        src/coordinate.c)
+    target_include_directories(dungeon_camera_tests PRIVATE src)
+    target_link_libraries(dungeon_camera_tests PRIVATE cglm::cglm m)
+    add_test(NAME dungeon_top_down_camera COMMAND dungeon_camera_tests)
 endif()
 
 add_executable(terrain_renderer
     src/main.c
     src/dungeon_scene.c
+    src/dungeon_camera.c
     src/input.c
     src/coordinate.c
     src/camera.c
