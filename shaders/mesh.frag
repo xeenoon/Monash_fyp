@@ -64,6 +64,41 @@ mat3 tangent_frame(vec3 interpolated_normal, vec4 interpolated_tangent) {
     return mat3(T, B, N);
 }
 
+bool segment_crosses_blocker(vec2 start, vec2 end, vec4 blocker) {
+    vec2 direction = end - start;
+    float t_min = 0.0;
+    float t_max = 1.0;
+    if (abs(direction.x) < 1e-6) {
+        if (start.x < blocker.x || start.x > blocker.z)
+            return false;
+    } else {
+        float a = (blocker.x - start.x) / direction.x;
+        float b = (blocker.z - start.x) / direction.x;
+        t_min = max(t_min, min(a, b));
+        t_max = min(t_max, max(a, b));
+    }
+    if (abs(direction.y) < 1e-6) {
+        if (start.y < blocker.y || start.y > blocker.w)
+            return false;
+    } else {
+        float a = (blocker.y - start.y) / direction.y;
+        float b = (blocker.w - start.y) / direction.y;
+        t_min = max(t_min, min(a, b));
+        t_max = min(t_max, max(a, b));
+    }
+    /* Do not let the wall carrying a light shadow its own endpoint. */
+    return t_max >= t_min && t_max > 0.002 && t_min < 0.998;
+}
+
+bool point_light_occluded(vec3 surface_position, vec3 light_position) {
+    int blocker_count = clamp(int(frame.point_light_options.w + 0.5), 0, 64);
+    for (int blocker_index = 0; blocker_index < blocker_count; ++blocker_index)
+        if (segment_crosses_blocker(surface_position.xz, light_position.xz,
+                                    frame.point_light_blocker_xz[blocker_index]))
+            return true;
+    return false;
+}
+
 
 /* Static-mesh shading: photogrammetry albedo/ORM/normal sampled directly
    through the asset's own unwrapped UVs. Lighting matches the terrain forward
@@ -146,6 +181,8 @@ void main() {
         float normalized_distance = distance_to_light / max(position_radius.w, 1e-4);
         float attenuation_window = max(1.0 - pow(normalized_distance, 4.0), 0.0);
         float attenuation = attenuation_window * attenuation_window / max(distance2, 0.01);
+        if (point_light_occluded(camera_relative_position, position_radius.xyz))
+            attenuation = 0.0;
         vec3 local_L = to_light / distance_to_light;
         float local_NoL = max(dot(N, local_L), 0.0);
         UeDefaultLit local_bxdf;

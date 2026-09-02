@@ -20,6 +20,7 @@
    prefilter, increasing roughness. See environment_prefilter() in renderer.c. */
 #define ENV_CUBE_MIPS 8u
 #define MAX_POINT_LIGHTS 16u
+#define MAX_POINT_LIGHT_BLOCKERS 64u
 
 typedef enum { SHADOW_FILTER_HARD = 0, SHADOW_FILTER_PCF = 1, SHADOW_FILTER_PCSS = 2 } ShadowFilterMode;
 typedef struct {
@@ -80,7 +81,8 @@ typedef struct
 	   count, diffuse IBL scale, specular IBL scale, reserved. */
 	vec4s point_light_position_radius[MAX_POINT_LIGHTS];
 	vec4s point_light_color_intensity[MAX_POINT_LIGHTS];
-	vec4s point_light_options;
+	vec4s point_light_options; /* light count, IBL scales, blocker count */
+	vec4s point_light_blocker_xz[MAX_POINT_LIGHT_BLOCKERS]; /* min xz, max xz */
 } FrameUniforms;
 
 typedef struct

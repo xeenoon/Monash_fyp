@@ -2,6 +2,43 @@
 
 #include <math.h>
 
+static bool clip_axis(float origin, float direction, float low, float high, float *t_min,
+					  float *t_max)
+{
+	if (fabsf(direction) < 1e-6f)
+		return origin >= low && origin <= high;
+	float a = (low - origin) / direction;
+	float b = (high - origin) / direction;
+	if (a > b)
+	{
+		float swap = a;
+		a = b;
+		b = swap;
+	}
+	*t_min = fmaxf(*t_min, a);
+	*t_max = fminf(*t_max, b);
+	return *t_max >= *t_min;
+}
+
+bool dungeon_light_segment_blocked(DungeonPoint from, DungeonPoint to,
+								   const DungeonCollider *colliders, uint32_t collider_count)
+{
+	if (!colliders)
+		return false;
+	for (uint32_t i = 0; i < collider_count; ++i)
+	{
+		if (colliders[i].type != DUNGEON_COLLIDER_AABB)
+			continue;
+		float t_min = 0.0f, t_max = 1.0f;
+		DungeonRect bounds = colliders[i].bounds;
+		if (clip_axis(from.x, to.x - from.x, bounds.min.x, bounds.max.x, &t_min, &t_max) &&
+			clip_axis(from.z, to.z - from.z, bounds.min.z, bounds.max.z, &t_min, &t_max) &&
+			t_max > 0.002f && t_min < 0.998f)
+			return true;
+	}
+	return false;
+}
+
 float dungeon_light_attenuation(float distance_m, float radius_m)
 {
 	if (radius_m <= 0.0f || distance_m >= radius_m)
@@ -43,4 +80,3 @@ uint32_t dungeon_lighting_build(const DungeonLevel *level, DungeonLight *out, ui
 								.intensity = 34.0f};
 	return count;
 }
-

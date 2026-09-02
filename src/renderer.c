@@ -133,7 +133,9 @@ _Static_assert(offsetof(FrameUniforms, point_light_color_intensity) == 1424,
 			   "FrameUniforms point-light color offset");
 _Static_assert(offsetof(FrameUniforms, point_light_options) == 1680,
 			   "FrameUniforms point-light options offset");
-_Static_assert(sizeof(FrameUniforms) == 1696, "FrameUniforms std140 size");
+_Static_assert(offsetof(FrameUniforms, point_light_blocker_xz) == 1696,
+			   "FrameUniforms point-light blocker offset");
+_Static_assert(sizeof(FrameUniforms) == 2720, "FrameUniforms std140 size");
 _Static_assert(sizeof(DrawPushConstants) == 128, "terrain push constant size");
 _Static_assert(offsetof(TemporalExposure, histogram) == 16,
 			   "TemporalExposure std430 histogram offset");

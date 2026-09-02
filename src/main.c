@@ -890,9 +890,14 @@ int main(int argc, char *argv[])
 							: (vec4s){{0.0f, 1.0f, 1.0f, 0.0f}},
 		};
 		if (use_dungeon)
+		{
 			frame.point_light_options.x = (float)dungeon_scene_write_lights(
 				&dungeon, camera.position, frame.point_light_position_radius,
 				frame.point_light_color_intensity, MAX_POINT_LIGHTS);
+			frame.point_light_options.w = (float)dungeon_scene_write_light_blockers(
+				&dungeon, camera.position, frame.point_light_blocker_xz,
+				MAX_POINT_LIGHT_BLOCKERS);
+		}
 		for (uint32_t i = 0; i < SHADOW_CASCADE_COUNT; ++i)
 			frame.shadow_view_projection[i] = shadow_cascades.view_projection[i];
 #ifdef DEBUG_SHADER_DUMP

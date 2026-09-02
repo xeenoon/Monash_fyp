@@ -126,6 +126,24 @@ uint32_t dungeon_scene_write_lights(const DungeonScene *scene, WorldPosition cam
 	return count;
 }
 
+uint32_t dungeon_scene_write_light_blockers(const DungeonScene *scene,
+										WorldPosition camera_position, vec4s *blockers,
+										uint32_t capacity)
+{
+	if (!scene || !blockers)
+		return 0;
+	uint32_t count = scene->level.collider_count < capacity ? scene->level.collider_count : capacity;
+	for (uint32_t i = 0; i < count; ++i)
+	{
+		DungeonRect bounds = scene->level.colliders[i].bounds;
+		blockers[i] = (vec4s){{bounds.min.x - (float)camera_position.x,
+								 bounds.min.z - (float)camera_position.z,
+								 bounds.max.x - (float)camera_position.x,
+								 bounds.max.z - (float)camera_position.z}};
+	}
+	return count;
+}
+
 void dungeon_scene_destroy(Renderer *renderer, DungeonScene *scene)
 {
 	if (!scene)

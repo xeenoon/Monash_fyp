@@ -17,4 +17,5 @@ typedef struct
 
 uint32_t dungeon_lighting_build(const DungeonLevel *level, DungeonLight *out, uint32_t capacity);
 float dungeon_light_attenuation(float distance_m, float radius_m);
-
+bool dungeon_light_segment_blocked(DungeonPoint from, DungeonPoint to,
+								   const DungeonCollider *colliders, uint32_t collider_count);

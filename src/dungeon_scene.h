@@ -27,4 +27,7 @@ bool dungeon_scene_update(DungeonScene *scene, float move_forward, float move_ri
 						  float camera_yaw_degrees, float dt);
 uint32_t dungeon_scene_write_lights(const DungeonScene *scene, WorldPosition camera_position,
 								   vec4s *positions, vec4s *colors, uint32_t capacity);
+uint32_t dungeon_scene_write_light_blockers(const DungeonScene *scene,
+										WorldPosition camera_position, vec4s *blockers,
+										uint32_t capacity);
 void dungeon_scene_destroy(Renderer *renderer, DungeonScene *scene);
