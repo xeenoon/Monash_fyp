@@ -1,7 +1,9 @@
-# Vulkan terrain renderer (C)
+# Vulkan terrain and dungeon renderer (C)
 
 A deliberately small Vulkan terrain renderer with a free-fly camera,
 camera-relative large-world coordinates, and infinite reversed-Z depth.
+It also contains a playable top-down dungeon scene using the same PBR, HDR,
+shadow, and temporal rendering path.
 
 ## Dependencies
 
@@ -26,6 +28,23 @@ The no-argument scene is the streamed 1 km terrain. The benchmark scenes remain
 available with `TERRAIN_SCENE=coastal_cliff`, `quarry`, `phase_d_demo`, or
 `gltf` (with `TERRAIN_GLTF_PATH`). Use `TERRAIN_DATASET=/path/to/trn` to point
 the terrain scene at a different tile pyramid.
+
+Run the dungeon explorer with:
+
+```sh
+TERRAIN_SCENE=dungeon ./build/terrain_renderer
+```
+
+It loads the checked-in 17 x 13 maze, follows the temporary cube player with a
+fixed top-down perspective camera, and resolves movement against compiled wall
+colliders. The grid is an authoring frontend only; rendering and gameplay use
+the generic level representation described in
+[`docs/dungeon_architecture.md`](docs/dungeon_architecture.md).
+
+The three CC0 dungeon PBR materials are checked in for offline use. Their
+source pages, physical scales, and checksums are recorded in
+[`textures/dungeon/manifest.json`](textures/dungeon/manifest.json). Reproduce
+them with `python3 tools/download_dungeon_materials.py`.
 
 The old example-synthesis algorithm running through the modern renderer is
 preserved in `trn-golden/` and is the default. Its RGB is the exact
@@ -159,6 +178,13 @@ with official road, rail, building, and optional infrastructure vectors before
 building any natural-only `.trn` dataset.
 
 ## Controls
+
+Dungeon:
+
+- W/A/S/D: move the cube relative to the top-down camera
+- Escape: quit
+
+Terrain and inspection scenes:
 
 - Mouse: look around
 - W/A/S/D: move relative to the direction you are looking

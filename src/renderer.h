@@ -215,7 +215,7 @@ typedef struct Renderer
 	VkPipelineLayout temporal_pipeline_layout;
 	VkPipelineLayout atmosphere_pipeline_layout;
 	VkPipeline terrain_pipeline;
-	VkPipeline mesh_pipeline; /* triplanar static-mesh pipeline (imported assets) */
+	VkPipeline mesh_pipeline; /* UV-mapped PBR static-mesh and dungeon pipeline */
 	VkPipeline tone_map_pipeline;
 	VkPipeline atmosphere_composite_pipeline;
 	VkPipeline taa_pipeline;

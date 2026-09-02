@@ -338,6 +338,8 @@ endif()
 if(BUILD_TESTING)
     add_executable(dungeon_grid_tests tests/dungeon_grid_tests.c)
     target_link_libraries(dungeon_grid_tests PRIVATE dungeon_level)
+    target_compile_definitions(dungeon_grid_tests PRIVATE
+        DUNGEON_MAP_PATH="${CMAKE_CURRENT_SOURCE_DIR}/assets/dungeons/example.map")
     add_test(NAME dungeon_grid_compiler COMMAND dungeon_grid_tests)
 
     add_executable(dungeon_mesh_tests tests/dungeon_mesh_tests.c)
@@ -401,6 +403,16 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets/env.hdr")
         "No IBL environment at assets/env.hdr -- the Quarry cliff will use the "
         "hemispheric ambient fallback (Phase B indirect lighting disabled).")
 endif()
+foreach(DUNGEON_ASSET
+        floor_albedo.jpg floor_normal.png floor_orm.png
+        wall_albedo.jpg wall_normal.png wall_orm.png
+        exit_albedo.jpg exit_normal.png exit_orm.png)
+    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/textures/dungeon/runtime/${DUNGEON_ASSET}")
+        message(WARNING
+            "Dungeon material ${DUNGEON_ASSET} is missing; run "
+            "'python3 tools/download_dungeon_materials.py'.")
+    endif()
+endforeach()
 
 # Pinned decoder sources used by the strict static glTF importer.  cgltf:
 # 85cd62382dfea638278962690cf515023f33ed00 (MIT); MikkTSpace:
@@ -457,6 +469,11 @@ if(BUILD_TESTING)
     add_test(NAME phase2_projection_and_precision COMMAND phase2_tests)
 
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME dungeon_material_assets
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/dungeon_assets_tests.py"
+                --manifest "${CMAKE_CURRENT_SOURCE_DIR}/textures/dungeon/manifest.json"
+                --runtime "${CMAKE_CURRENT_SOURCE_DIR}/textures/dungeon/runtime")
     add_test(NAME terrain_macro_colour_map
         COMMAND "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_terrain_macro_tests.py"

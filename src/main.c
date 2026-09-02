@@ -167,6 +167,11 @@ int main(int argc, char *argv[])
 	bool use_quarry = scene && strcmp(scene, "quarry") == 0;
 	bool use_phase_d_demo = scene && strcmp(scene, "phase_d_demo") == 0;
 	bool use_dungeon = scene && strcmp(scene, "dungeon") == 0;
+#ifdef DEBUG_SHADER_DUMP
+	const char *scene_name = use_terrain ? "terrain"
+		: (use_dungeon ? "dungeon"
+					   : (use_phase_d_demo ? "phase_d_demo" : (use_quarry ? "quarry" : "gltf")));
+#endif
 	const char *gltf_path = NULL;
 	/* The large benchmark is intentionally not in git. Terrain is the normal
 	 * no-argument scene; validate the benchmark only when explicitly selected. */
@@ -913,8 +918,7 @@ int main(int argc, char *argv[])
 					 "scene=%s static_mesh_mode=%u demo_split=%u flyby_replay=%u phase=%c "
 					 "sun_azimuth=%.6f sun_orbit=%.6f (replay: TERRAIN_START_SUN_AZIMUTH=%.6f "
 					 "TERRAIN_START_SUN_ORBIT=%.6f)",
-					 use_terrain ? "terrain"
-							 : (use_phase_d_demo ? "phase_d_demo" : (use_quarry ? "quarry" : "gltf")),
+					 scene_name,
 					 static_mesh_shading_mode, demo_split ? 1u : 0u, demo_flyby_phase_d ? 1u : 0u,
 					 phase_d_enabled ? 'D' : 'C', sun_azimuth, sun_orbit_angle, sun_azimuth,
 					 sun_orbit_angle);
@@ -929,9 +933,7 @@ int main(int argc, char *argv[])
 						 "scene=%s static_mesh_mode=%u demo_split=%u flyby_replay=%u phase=%c "
 						 "sun_azimuth=%.6f sun_orbit=%.6f (replay: TERRAIN_START_SUN_AZIMUTH=%.6f "
 						 "TERRAIN_START_SUN_ORBIT=%.6f)",
-						 use_terrain ? "terrain"
-								 : (use_phase_d_demo ? "phase_d_demo"
-													 : (use_quarry ? "quarry" : "gltf")),
+						 scene_name,
 						 static_mesh_shading_mode, demo_split ? 1u : 0u,
 						 demo_flyby_phase_d ? 1u : 0u, phase_d_enabled ? 'D' : 'C', sun_azimuth,
 						 sun_orbit_angle, sun_azimuth, sun_orbit_angle);

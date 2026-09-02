@@ -32,10 +32,24 @@ static void malformed_maps_are_rejected(void)
 	assert(strstr(error.message, "exactly one"));
 }
 
+static void checked_in_example_is_stable(void)
+{
+#ifdef DUNGEON_MAP_PATH
+	DungeonLevel level = {0};
+	DungeonLevelError error = {0};
+	assert(dungeon_grid_compile_file(DUNGEON_MAP_PATH, 2.0f, &level, &error));
+	assert(level.surface_count == 47u);
+	assert(level.solid_count == 22u);
+	assert(level.collider_count == 22u);
+	dungeon_level_destroy(&level);
+#endif
+}
+
 int main(void)
 {
 	valid_map_compiles_to_generic_level();
 	malformed_maps_are_rejected();
+	checked_in_example_is_stable();
 	puts("dungeon grid tests passed");
 	return 0;
 }
