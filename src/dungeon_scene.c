@@ -38,6 +38,15 @@ static DrawPushConstants dungeon_push(const Mesh *mesh, WorldPosition camera_pos
 	};
 }
 
+static DrawPushConstants player_push(const Mesh *mesh, WorldPosition camera_position)
+{
+	DrawPushConstants push = dungeon_push(mesh, camera_position);
+	push.geometry = (vec4s){{0.12f, 0.42f, 0.95f, 1.0f}};
+	push.material = (vec4s){{0.0f, 1.0f, 1.0f, 1.0f}};
+	push.debug.w = 0.0f;
+	return push;
+}
+
 bool dungeon_scene_create(Renderer *renderer, const char *map_path, DungeonScene *out,
 						  DungeonLevelError *error)
 {
@@ -66,6 +75,7 @@ bool dungeon_scene_create(Renderer *renderer, const char *map_path, DungeonScene
 		mesh_upload(renderer, &out->meshes[i]);
 		out->uploaded[i] = true;
 	}
+	dungeon_player_init(&out->player, out->level.spawn);
 	fprintf(stdout, "Dungeon: %s: %u floor runs, %u wall solids, %u draw batches\n", map_path,
 			out->level.surface_count, out->level.solid_count, DUNGEON_MESH_BATCH_COUNT);
 	return true;
@@ -76,12 +86,24 @@ uint32_t dungeon_scene_draws(DungeonScene *scene, WorldPosition camera_position,
 {
 	if (!scene || !out || capacity < DUNGEON_MESH_BATCH_COUNT)
 		return 0;
+	scene->meshes[DUNGEON_MESH_PLAYER].local_to_world.translation =
+		(WorldPosition){scene->player.position.x, scene->level.floor_y + 0.03f,
+						 scene->player.position.z};
 	for (uint32_t i = 0; i < DUNGEON_MESH_BATCH_COUNT; ++i)
 		out[i] = (RendererDraw){.mesh = &scene->meshes[i],
 								.material_set = scene->meshes[i].material_set,
-								.push = dungeon_push(&scene->meshes[i], camera_position),
+								.push = i == DUNGEON_MESH_PLAYER
+									? player_push(&scene->meshes[i], camera_position)
+									: dungeon_push(&scene->meshes[i], camera_position),
 								.static_mesh = true};
 	return DUNGEON_MESH_BATCH_COUNT;
+}
+
+bool dungeon_scene_update(DungeonScene *scene, float move_forward, float move_right,
+						  float camera_yaw_degrees, float dt)
+{
+	return dungeon_player_update(&scene->player, &scene->level, move_forward, move_right,
+								 camera_yaw_degrees, dt);
 }
 
 void dungeon_scene_destroy(Renderer *renderer, DungeonScene *scene)
@@ -96,4 +118,3 @@ void dungeon_scene_destroy(Renderer *renderer, DungeonScene *scene)
 	dungeon_level_destroy(&scene->level);
 	*scene = (DungeonScene){0};
 }
-

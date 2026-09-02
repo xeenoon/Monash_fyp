@@ -597,7 +597,10 @@ int main(int argc, char *argv[])
 						  input.sprint, dt);
 		if (use_dungeon)
 		{
-			dungeon_camera_update(&dungeon_camera, dungeon.level.spawn, dt);
+			if (!freeze_camera && dungeon_scene_update(&dungeon, input.move_forward, input.move_right,
+											 dungeon_camera.camera.yaw, dt))
+				printf("Dungeon exit reached\n");
+			dungeon_camera_update(&dungeon_camera, dungeon.player.position, dt);
 			camera = dungeon_camera.camera;
 		}
 		if (demo_flyby)

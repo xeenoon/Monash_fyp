@@ -21,6 +21,7 @@ int main(void)
 	assert(mesh.batches[DUNGEON_MESH_FLOOR].index_count == 6);
 	assert(mesh.batches[DUNGEON_MESH_WALL].vertex_count == level.solid_count * 24u);
 	assert(mesh.batches[DUNGEON_MESH_EXIT].vertex_count == 24);
+	assert(mesh.batches[DUNGEON_MESH_PLAYER].vertex_count == 24);
 	for (uint32_t batch = 0; batch < DUNGEON_MESH_BATCH_COUNT; ++batch)
 		for (uint32_t i = 0; i < mesh.batches[batch].vertex_count; ++i)
 		{

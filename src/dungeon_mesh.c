@@ -118,10 +118,11 @@ bool dungeon_mesh_build(const DungeonLevel *level, DungeonMeshData *out,
 	if (!level || !out)
 		return mesh_fail(error, "level and output mesh are required");
 	*out = (DungeonMeshData){0};
-	Builder floor = {0}, wall = {0}, exit = {0};
+	Builder floor = {0}, wall = {0}, exit = {0}, player = {0};
 	if (!builder_create(&floor, &out->batches[DUNGEON_MESH_FLOOR], level->surface_count, 2.4f) ||
 		!builder_create(&wall, &out->batches[DUNGEON_MESH_WALL], level->solid_count * 6u, 1.8f) ||
-		!builder_create(&exit, &out->batches[DUNGEON_MESH_EXIT], 6u, 2.0f))
+		!builder_create(&exit, &out->batches[DUNGEON_MESH_EXIT], 6u, 2.0f) ||
+		!builder_create(&player, &out->batches[DUNGEON_MESH_PLAYER], 6u, 1.0f))
 	{
 		dungeon_mesh_destroy(out);
 		return mesh_fail(error, "out of memory building dungeon geometry");
@@ -137,6 +138,8 @@ bool dungeon_mesh_build(const DungeonLevel *level, DungeonMeshData *out,
 	DungeonRect exit_rect = {{level->exit.x - 0.65f, level->exit.z - 0.65f},
 							 {level->exit.x + 0.65f, level->exit.z + 0.65f}};
 	if (!append_box(&exit, exit_rect, level->floor_y + 0.01f, level->floor_y + 0.13f))
+		goto capacity_error;
+	if (!append_box(&player, (DungeonRect){{-0.35f, -0.35f}, {0.35f, 0.35f}}, 0.0f, 0.7f))
 		goto capacity_error;
 	return true;
 

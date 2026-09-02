@@ -10,6 +10,7 @@ typedef enum
 	DUNGEON_MESH_FLOOR,
 	DUNGEON_MESH_WALL,
 	DUNGEON_MESH_EXIT,
+	DUNGEON_MESH_PLAYER,
 	DUNGEON_MESH_BATCH_COUNT
 } DungeonMeshBatchKind;
 
@@ -32,4 +33,3 @@ typedef struct
 bool dungeon_mesh_build(const DungeonLevel *level, DungeonMeshData *out,
 						DungeonLevelError *error);
 void dungeon_mesh_destroy(DungeonMeshData *data);
-
