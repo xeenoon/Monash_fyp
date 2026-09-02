@@ -76,6 +76,7 @@ bool dungeon_scene_create(Renderer *renderer, const char *map_path, DungeonScene
 		out->uploaded[i] = true;
 	}
 	dungeon_player_init(&out->player, out->level.spawn);
+	out->light_count = dungeon_lighting_build(&out->level, out->lights, DUNGEON_MAX_LIGHTS);
 	fprintf(stdout, "Dungeon: %s: %u floor runs, %u wall solids, %u draw batches\n", map_path,
 			out->level.surface_count, out->level.solid_count, DUNGEON_MESH_BATCH_COUNT);
 	return true;
@@ -104,6 +105,24 @@ bool dungeon_scene_update(DungeonScene *scene, float move_forward, float move_ri
 {
 	return dungeon_player_update(&scene->player, &scene->level, move_forward, move_right,
 								 camera_yaw_degrees, dt);
+}
+
+uint32_t dungeon_scene_write_lights(const DungeonScene *scene, WorldPosition camera_position,
+								   vec4s *positions, vec4s *colors, uint32_t capacity)
+{
+	if (!scene || !positions || !colors)
+		return 0;
+	uint32_t count = scene->light_count < capacity ? scene->light_count : capacity;
+	for (uint32_t i = 0; i < count; ++i)
+	{
+		WorldPosition world = {scene->lights[i].position.x, scene->lights[i].height,
+							   scene->lights[i].position.z};
+		CameraRelativePosition relative = coordinate_camera_relative(world, camera_position);
+		positions[i] = (vec4s){{relative.x, relative.y, relative.z, scene->lights[i].radius}};
+		colors[i] = (vec4s){{scene->lights[i].color[0], scene->lights[i].color[1],
+							 scene->lights[i].color[2], scene->lights[i].intensity}};
+	}
+	return count;
 }
 
 void dungeon_scene_destroy(Renderer *renderer, DungeonScene *scene)

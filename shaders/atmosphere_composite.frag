@@ -77,6 +77,10 @@ vec3 debug_atmosphere(float mode) {
    perspective composite. */
 void main() {
     vec3 source = texture(hdr_scene, texcoord).rgb;
+    if (frame.atmosphere_options.z < 0.5) {
+        out_color = vec4(source, 1.0);
+        return;
+    }
     if (frame.debug_view > 11.5 && frame.debug_view < 16.5) {
         out_color = vec4(debug_atmosphere(frame.debug_view), 1.0);
         shader_dump(DUMP_SHADER_ATMOSPHERE_COMPOSITE,

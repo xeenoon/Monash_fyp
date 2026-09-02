@@ -19,6 +19,7 @@
    is the mirror copy of the equirect; mips 1..ENV_CUBE_MIPS-1 are the GGX
    prefilter, increasing roughness. See environment_prefilter() in renderer.c. */
 #define ENV_CUBE_MIPS 8u
+#define MAX_POINT_LIGHTS 16u
 
 typedef enum { SHADOW_FILTER_HARD = 0, SHADOW_FILTER_PCF = 1, SHADOW_FILTER_PCSS = 2 } ShadowFilterMode;
 typedef struct {
@@ -75,6 +76,11 @@ typedef struct
 	   (1/|normal.y|), red blend opacity, reserved. Compiled only when
 	   TERRAIN_STRETCH_OVERLAY is enabled; retained in the UBO for stable ABI. */
 	vec4s stretch_overlay;
+	/* Camera-relative point lights: xyz/radius, RGB/intensity. options holds
+	   count, diffuse IBL scale, specular IBL scale, reserved. */
+	vec4s point_light_position_radius[MAX_POINT_LIGHTS];
+	vec4s point_light_color_intensity[MAX_POINT_LIGHTS];
+	vec4s point_light_options;
 } FrameUniforms;
 
 typedef struct

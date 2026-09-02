@@ -127,7 +127,13 @@ _Static_assert(offsetof(FrameUniforms, shader_dump) == 1104, "FrameUniforms shad
 _Static_assert(offsetof(FrameUniforms, material_curvature) == 1120, "FrameUniforms curvature offset");
 _Static_assert(offsetof(FrameUniforms, material_normal_filter) == 1136, "FrameUniforms normal filter offset");
 _Static_assert(offsetof(FrameUniforms, stretch_overlay) == 1152, "FrameUniforms stretch overlay offset");
-_Static_assert(sizeof(FrameUniforms) == 1168, "FrameUniforms std140 size");
+_Static_assert(offsetof(FrameUniforms, point_light_position_radius) == 1168,
+			   "FrameUniforms point-light position offset");
+_Static_assert(offsetof(FrameUniforms, point_light_color_intensity) == 1424,
+			   "FrameUniforms point-light color offset");
+_Static_assert(offsetof(FrameUniforms, point_light_options) == 1680,
+			   "FrameUniforms point-light options offset");
+_Static_assert(sizeof(FrameUniforms) == 1696, "FrameUniforms std140 size");
 _Static_assert(sizeof(DrawPushConstants) == 128, "terrain push constant size");
 _Static_assert(offsetof(TemporalExposure, histogram) == 16,
 			   "TemporalExposure std430 histogram offset");
@@ -2310,7 +2316,8 @@ static void record_commands(Renderer *r, uint32_t image_index, const FrameUnifor
 	VkCommandBufferBeginInfo begin = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
 	VK_CHECK(vkBeginCommandBuffer(command, &begin));
 
-	record_atmosphere(r, command);
+	if (frame->atmosphere_options.z > 0.5f)
+		record_atmosphere(r, command);
 
 	VkClearValue shadow_clear = {.depthStencil = {1.0f, 0}};
 	for (uint32_t cascade = 0; cascade < SHADOW_CASCADE_COUNT; ++cascade)

@@ -137,6 +137,26 @@ void main() {
     if (frame.debug_view > 10.5 && frame.debug_view < 11.5) { float d=shadow.cascade<4u?texture(shadow_map_raw,vec3(shadow.coordinate.xy,float(shadow.cascade))).r:1.; out_color=vec4(vec3(d),1); return; }
     vec3 direct = (bxdf.diffuse + bxdf.specular) *
                   frame.sun_radiance.rgb * NoL * visibility;
+    int point_light_count = clamp(int(frame.point_light_options.x + 0.5), 0, 16);
+    for (int light_index = 0; light_index < point_light_count; ++light_index) {
+        vec4 position_radius = frame.point_light_position_radius[light_index];
+        vec3 to_light = position_radius.xyz - camera_relative_position;
+        float distance2 = dot(to_light, to_light);
+        float distance_to_light = sqrt(max(distance2, 1e-8));
+        float normalized_distance = distance_to_light / max(position_radius.w, 1e-4);
+        float attenuation_window = max(1.0 - pow(normalized_distance, 4.0), 0.0);
+        float attenuation = attenuation_window * attenuation_window / max(distance2, 0.01);
+        vec3 local_L = to_light / distance_to_light;
+        float local_NoL = max(dot(N, local_L), 0.0);
+        UeDefaultLit local_bxdf;
+        if (default_lit)
+            local_bxdf = ue_default_lit_bxdf(indirect_diffuse, F0, roughness, N, V, local_L);
+        else
+            local_bxdf = legacy_quarry_bxdf(base_color, metallic, roughness, N, V, local_L);
+        vec4 color_intensity = frame.point_light_color_intensity[light_index];
+        direct += (local_bxdf.diffuse + local_bxdf.specular) * color_intensity.rgb *
+                  color_intensity.w * local_NoL * attenuation;
+    }
     /* Sky diffuse IBL (Phase B1). Falls back to the original hemispheric
        constant when no HDR was loaded, or when the F3 cycle has it switched
        off (material_factors.z), so the render is byte-identical to pre-
@@ -151,14 +171,14 @@ void main() {
         diffuse_ibl_enabled, specular_ibl_enabled);
     float cavity_sample = texture(cavity_map, uv).r;
     float cavity_visibility = material_visibility(cavity_sample, draw.debug.x);
-    vec3 irradiance = environment.irradiance;
+    vec3 irradiance = environment.irradiance * frame.point_light_options.y;
     vec3 ambient = indirect_diffuse * irradiance * ao * cavity_visibility;
     /* Sky specular IBL (Phase B2). Its own F3 step (material_factors.w),
        one past diffuse-only, so B1 and B2 can be compared independently.
        Reuses the analytic split-sum energy terms already computed for the
        direct BRDF instead of a baked LUT. Its dedicated, view/roughness-aware
        reflection visibility consumes AO; direct light remains unaffected. */
-    vec3 specular_ibl = environment.final_specular;
+    vec3 specular_ibl = environment.final_specular * frame.point_light_options.z;
     if (frame.debug_view > 2.5 && frame.debug_view < 3.5) { out_color = vec4(N * .5 + .5, 1); return; }
     if (frame.debug_view > 3.5 && frame.debug_view < 4.5) { out_color = vec4(vec3(authored_roughness), 1); return; }
     if (frame.debug_view > 4.5 && frame.debug_view < 5.5) { out_color = vec4(vec3(detail.geometric_floor), 1); return; }

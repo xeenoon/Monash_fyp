@@ -328,7 +328,8 @@ add_library(dungeon_level STATIC
     src/dungeon_grid.c
     src/dungeon_mesh.c
     src/dungeon_collision.c
-    src/dungeon_player.c)
+    src/dungeon_player.c
+    src/dungeon_lighting.c)
 target_include_directories(dungeon_level PUBLIC src)
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(dungeon_level PRIVATE -Wall -Wextra -Wpedantic)
@@ -355,6 +356,10 @@ if(BUILD_TESTING)
     add_executable(dungeon_collision_tests tests/dungeon_collision_tests.c)
     target_link_libraries(dungeon_collision_tests PRIVATE dungeon_level cglm::cglm m)
     add_test(NAME dungeon_player_collision COMMAND dungeon_collision_tests)
+
+    add_executable(dungeon_lighting_tests tests/dungeon_lighting_tests.c)
+    target_link_libraries(dungeon_lighting_tests PRIVATE dungeon_level m)
+    add_test(NAME dungeon_indoor_lighting COMMAND dungeon_lighting_tests)
 endif()
 
 add_executable(terrain_renderer

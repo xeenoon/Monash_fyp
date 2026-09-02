@@ -40,6 +40,9 @@ layout(set = 0, binding = 0) uniform FrameUniforms {
     vec4  material_curvature;       /* scale, bias, exponent */
     vec4  material_normal_filter;   /* variance scale, cap, length epsilon */
     vec4  stretch_overlay;          /* diagnostic overlay settings; ABI retained when omitted */
+    vec4  point_light_position_radius[16];
+    vec4  point_light_color_intensity[16];
+    vec4  point_light_options;      /* count, diffuse IBL scale, specular IBL scale, reserved */
 } frame;
 
 layout(set = 0, binding = 1) uniform sampler2DArrayShadow shadow_map;

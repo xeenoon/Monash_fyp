@@ -428,7 +428,7 @@ int main(int argc, char *argv[])
 	/* The terrain overview occupies a small part of a much darker sky frame;
 	 * scene-average adaptation otherwise overexposes it and hides the material
 	 * frequencies. E can still enable adaptation interactively. */
-	bool auto_exposure_enabled = !use_terrain;
+	bool auto_exposure_enabled = !use_terrain && !use_dungeon;
 	AtmosphereParameters atmosphere = atmosphere_earth();
 	bool running = true;
 #ifdef DEBUG_SHADER_DUMP
@@ -847,7 +847,8 @@ int main(int argc, char *argv[])
 						 atmosphere.sun_angular_radius_rad, shadow_quality.blocker_search_m}},
 			.shadow_pcss = (vec4s){{shadow_quality.max_filter_radius_texels,
 									(float)renderer.shadow_resolution, 0.0f, 0.0f}},
-			.sun_radiance = (vec4s){{1.6f, 1.5f, 1.35f, 0.0f}},
+			.sun_radiance = use_dungeon ? (vec4s){{0.10f, 0.12f, 0.16f, 0.0f}}
+										 : (vec4s){{1.6f, 1.5f, 1.35f, 0.0f}},
 			.atmosphere_radii = (vec4s){{atmosphere.bottom_radius_km, atmosphere.top_radius_km,
 										 fmaxf((float)camera.position.y * 0.001f, 0.001f),
 										 atmosphere.sun_angular_radius_rad}},
@@ -866,8 +867,8 @@ int main(int argc, char *argv[])
 			.atmosphere_ground =
 				(vec4s){{atmosphere.ground_albedo[0], atmosphere.ground_albedo[1],
 						 atmosphere.ground_albedo[2], atmosphere.multiple_scattering_factor}},
-			.atmosphere_options =
-				(vec4s){{atmosphere.aerial_max_distance_km, (float)atmosphere_slice, 0.0f, 0.0f}},
+			.atmosphere_options = (vec4s){{atmosphere.aerial_max_distance_km,
+										   (float)atmosphere_slice, use_dungeon ? 0.0f : 1.0f, 0.0f}},
 			.temporal_parameters =
 				(vec4s){{use_history ? 1.0f : 0.0f, dt, 0.0f, auto_exposure_enabled ? 1.0f : 0.0f}},
 			.temporal_jitter = (vec4s){{jitter.x, jitter.y, previous_jitter.x, previous_jitter.y}},
@@ -879,7 +880,14 @@ int main(int argc, char *argv[])
 			.material_normal_filter = (vec4s){{1.0f, 0.20f, 0.0001f, 0.0f}},
 			.stretch_overlay = (vec4s){{stretch_overlay.enabled ? 1.0f : 0.0f,
 										stretch_overlay.threshold, stretch_overlay.opacity, 0.0f}},
+			.point_light_options =
+				use_dungeon ? (vec4s){{0.0f, 0.16f, 0.22f, 0.0f}}
+							: (vec4s){{0.0f, 1.0f, 1.0f, 0.0f}},
 		};
+		if (use_dungeon)
+			frame.point_light_options.x = (float)dungeon_scene_write_lights(
+				&dungeon, camera.position, frame.point_light_position_radius,
+				frame.point_light_color_intensity, MAX_POINT_LIGHTS);
 		for (uint32_t i = 0; i < SHADOW_CASCADE_COUNT; ++i)
 			frame.shadow_view_projection[i] = shadow_cascades.view_projection[i];
 #ifdef DEBUG_SHADER_DUMP
