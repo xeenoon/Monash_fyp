@@ -18,6 +18,21 @@ static void wall_stops_and_slides(void)
 	assert(slid.z > 0.9f);
 }
 
+static void parallel_motion_does_not_snap_to_a_wall_corner(void)
+{
+	DungeonCollider wall = {.type = DUNGEON_COLLIDER_AABB,
+						  .bounds = {{1.0f, -2.0f}, {2.0f, 2.0f}}};
+	DungeonPoint moved = dungeon_collision_move(&wall, 1, (DungeonPoint){1.5f, 2.34f},
+										  (DungeonPoint){0.5f, 0.0f}, 0.35f);
+	assert(moved.x > 1.99f);
+	assert(fabsf(moved.z - 2.35f) < 1e-4f);
+
+	DungeonPoint other_side = dungeon_collision_move(
+		&wall, 1, (DungeonPoint){1.5f, -2.34f}, (DungeonPoint){-0.5f, 0.0f}, 0.35f);
+	assert(other_side.x < 1.01f);
+	assert(fabsf(other_side.z + 2.35f) < 1e-4f);
+}
+
 static void player_movement_is_normalized_and_reaches_exit(void)
 {
 	DungeonLevel level = {.exit = {2.0f, 2.0f}};
@@ -37,6 +52,7 @@ static void player_movement_is_normalized_and_reaches_exit(void)
 int main(void)
 {
 	wall_stops_and_slides();
+	parallel_motion_does_not_snap_to_a_wall_corner();
 	player_movement_is_normalized_and_reaches_exit();
 	puts("dungeon collision tests passed");
 	return 0;

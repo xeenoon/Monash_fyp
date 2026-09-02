@@ -33,13 +33,25 @@ static DungeonPoint move_axis(const DungeonCollider *colliders, uint32_t count, 
 		{
 			float dz = result.z - clampf(result.z, bounds.min.z, bounds.max.z);
 			float reach = sqrtf(fmaxf(radius * radius - dz * dz, 0.0f));
-			result.x = amount > 0.0f ? bounds.min.x - reach : bounds.max.x + reach;
+			float low = bounds.min.x - reach, high = bounds.max.x + reach;
+			if (amount > 0.0f && start.x <= low)
+				result.x = low;
+			else if (amount < 0.0f && start.x >= high)
+				result.x = high;
+			else if (amount == 0.0f)
+				result.x = result.x - low < high - result.x ? low : high;
 		}
 		else
 		{
 			float dx = result.x - clampf(result.x, bounds.min.x, bounds.max.x);
 			float reach = sqrtf(fmaxf(radius * radius - dx * dx, 0.0f));
-			result.z = amount > 0.0f ? bounds.min.z - reach : bounds.max.z + reach;
+			float low = bounds.min.z - reach, high = bounds.max.z + reach;
+			if (amount > 0.0f && start.z <= low)
+				result.z = low;
+			else if (amount < 0.0f && start.z >= high)
+				result.z = high;
+			else if (amount == 0.0f)
+				result.z = result.z - low < high - result.z ? low : high;
 		}
 	}
 	return result;
@@ -63,4 +75,3 @@ DungeonPoint dungeon_collision_move(const DungeonCollider *colliders, uint32_t c
 	}
 	return result;
 }
-
