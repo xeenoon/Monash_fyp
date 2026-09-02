@@ -325,7 +325,8 @@ endif()
 
 add_library(dungeon_level STATIC
     src/dungeon_level.c
-    src/dungeon_grid.c)
+    src/dungeon_grid.c
+    src/dungeon_mesh.c)
 target_include_directories(dungeon_level PUBLIC src)
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(dungeon_level PRIVATE -Wall -Wextra -Wpedantic)
@@ -335,6 +336,10 @@ if(BUILD_TESTING)
     add_executable(dungeon_grid_tests tests/dungeon_grid_tests.c)
     target_link_libraries(dungeon_grid_tests PRIVATE dungeon_level)
     add_test(NAME dungeon_grid_compiler COMMAND dungeon_grid_tests)
+
+    add_executable(dungeon_mesh_tests tests/dungeon_mesh_tests.c)
+    target_link_libraries(dungeon_mesh_tests PRIVATE dungeon_level m)
+    add_test(NAME dungeon_mesh_generation COMMAND dungeon_mesh_tests)
 endif()
 
 add_executable(terrain_renderer
