@@ -43,6 +43,7 @@ static DrawPushConstants player_push(const Mesh *mesh, WorldPosition camera_posi
 	DrawPushConstants push = dungeon_push(mesh, camera_position);
 	push.geometry = (vec4s){{0.12f, 0.42f, 0.95f, 1.0f}};
 	push.material = (vec4s){{0.0f, 1.0f, 1.0f, 1.0f}};
+	push.debug.y = 1.0f; /* dynamic object: reject stale temporal history */
 	push.debug.w = 0.0f;
 	return push;
 }

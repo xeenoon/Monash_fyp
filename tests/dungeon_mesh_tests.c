@@ -19,7 +19,7 @@ int main(void)
 	assert(dungeon_mesh_build(&level, &mesh, &error));
 	assert(mesh.batches[DUNGEON_MESH_FLOOR].vertex_count == 4);
 	assert(mesh.batches[DUNGEON_MESH_FLOOR].index_count == 6);
-	assert(mesh.batches[DUNGEON_MESH_WALL].vertex_count == level.solid_count * 24u);
+	assert(mesh.batches[DUNGEON_MESH_WALL].vertex_count == level.solid_count * 56u);
 	assert(mesh.batches[DUNGEON_MESH_EXIT].vertex_count == 24);
 	assert(mesh.batches[DUNGEON_MESH_PLAYER].vertex_count == 24);
 	for (uint32_t batch = 0; batch < DUNGEON_MESH_BATCH_COUNT; ++batch)

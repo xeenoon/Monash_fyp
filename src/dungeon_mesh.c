@@ -112,6 +112,66 @@ static bool append_box(Builder *builder, DungeonRect rectangle, float low, float
 	return true;
 }
 
+static bool append_beveled_wall(Builder *builder, DungeonRect rectangle, float low, float high,
+								float bevel)
+{
+	float half_width = (rectangle.max.x - rectangle.min.x) * 0.5f;
+	float half_depth = (rectangle.max.z - rectangle.min.z) * 0.5f;
+	bevel = fminf(bevel, fminf(half_width, half_depth) * 0.25f);
+	DungeonPoint ring[8] = {
+		{rectangle.min.x + bevel, rectangle.min.z},
+		{rectangle.max.x - bevel, rectangle.min.z},
+		{rectangle.max.x, rectangle.min.z + bevel},
+		{rectangle.max.x, rectangle.max.z - bevel},
+		{rectangle.max.x - bevel, rectangle.max.z},
+		{rectangle.min.x + bevel, rectangle.max.z},
+		{rectangle.min.x, rectangle.max.z - bevel},
+		{rectangle.min.x, rectangle.min.z + bevel},
+	};
+	float scale = 1.0f / builder->batch->material_width_m;
+	for (uint32_t edge = 0; edge < 8; ++edge)
+	{
+		DungeonPoint a = ring[edge], b = ring[(edge + 1u) % 8u];
+		float dx = b.x - a.x, dz = b.z - a.z;
+		float length = sqrtf(dx * dx + dz * dz);
+		float p[4][3] = {{a.x, low, a.z}, {b.x, low, b.z}, {b.x, high, b.z},
+						 {a.x, high, a.z}};
+		float normal[3] = {dz / length, 0.0f, -dx / length};
+		float tangent[4] = {dx / length, 0.0f, dz / length, -1.0f};
+		float uv[4][2] = {{0, 0}, {length * scale, 0},
+						   {length * scale, (high - low) * scale},
+						   {0, (high - low) * scale}};
+		if (!append_quad(builder, p, normal, tangent, uv))
+			return false;
+	}
+	/* Eight independent top triangles keep the simple mesh builder generic and
+	 * avoid a special polygon index path. The tiny extra vertices are paid once
+	 * at level load and give every exposed wall edge a real highlight. */
+	DungeonPoint center = {(rectangle.min.x + rectangle.max.x) * 0.5f,
+						   (rectangle.min.z + rectangle.max.z) * 0.5f};
+	for (uint32_t edge = 0; edge < 8; ++edge)
+	{
+		DungeonPoint a = ring[edge], b = ring[(edge + 1u) % 8u];
+		float p[4][3] = {{center.x, high, center.z}, {a.x, high, a.z}, {b.x, high, b.z},
+						 {b.x, high, b.z}};
+		float normal[3] = {0, 1, 0};
+		float tangent[4] = {1, 0, 0, -1};
+		float uv[4][2] = {{center.x * scale, center.z * scale},
+						   {a.x * scale, a.z * scale},
+						   {b.x * scale, b.z * scale},
+						   {b.x * scale, b.z * scale}};
+		uint32_t old_vertex_count = builder->batch->vertex_count;
+		uint32_t old_index_count = builder->batch->index_count;
+		if (!append_quad(builder, p, normal, tangent, uv))
+			return false;
+		/* Degenerate the quad's second triangle, leaving one indexed triangle
+		 * while retaining the builder's fixed-capacity bookkeeping. */
+		builder->batch->vertex_count = old_vertex_count + 3u;
+		builder->batch->index_count = old_index_count + 3u;
+	}
+	return true;
+}
+
 bool dungeon_mesh_build(const DungeonLevel *level, DungeonMeshData *out,
 						DungeonLevelError *error)
 {
@@ -120,7 +180,7 @@ bool dungeon_mesh_build(const DungeonLevel *level, DungeonMeshData *out,
 	*out = (DungeonMeshData){0};
 	Builder floor = {0}, wall = {0}, exit = {0}, player = {0};
 	if (!builder_create(&floor, &out->batches[DUNGEON_MESH_FLOOR], level->surface_count, 2.4f) ||
-		!builder_create(&wall, &out->batches[DUNGEON_MESH_WALL], level->solid_count * 6u, 1.8f) ||
+		!builder_create(&wall, &out->batches[DUNGEON_MESH_WALL], level->solid_count * 16u, 1.8f) ||
 		!builder_create(&exit, &out->batches[DUNGEON_MESH_EXIT], 6u, 2.0f) ||
 		!builder_create(&player, &out->batches[DUNGEON_MESH_PLAYER], 6u, 1.0f))
 	{
@@ -132,8 +192,8 @@ bool dungeon_mesh_build(const DungeonLevel *level, DungeonMeshData *out,
 							   level->surfaces[i].elevation, true))
 			goto capacity_error;
 	for (uint32_t i = 0; i < level->solid_count; ++i)
-		if (!append_box(&wall, level->solids[i].footprint, level->solids[i].base_y,
-						level->solids[i].base_y + level->solids[i].height))
+		if (!append_beveled_wall(&wall, level->solids[i].footprint, level->solids[i].base_y,
+								  level->solids[i].base_y + level->solids[i].height, 0.04f))
 			goto capacity_error;
 	DungeonRect exit_rect = {{level->exit.x - 0.65f, level->exit.z - 0.65f},
 							 {level->exit.x + 0.65f, level->exit.z + 0.65f}};

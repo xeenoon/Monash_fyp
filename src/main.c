@@ -847,7 +847,7 @@ int main(int argc, char *argv[])
 						 atmosphere.sun_angular_radius_rad, shadow_quality.blocker_search_m}},
 			.shadow_pcss = (vec4s){{shadow_quality.max_filter_radius_texels,
 									(float)renderer.shadow_resolution, 0.0f, 0.0f}},
-			.sun_radiance = use_dungeon ? (vec4s){{0.10f, 0.12f, 0.16f, 0.0f}}
+			.sun_radiance = use_dungeon ? (vec4s){{0.22f, 0.20f, 0.18f, 0.0f}}
 										 : (vec4s){{1.6f, 1.5f, 1.35f, 0.0f}},
 			.atmosphere_radii = (vec4s){{atmosphere.bottom_radius_km, atmosphere.top_radius_km,
 										 fmaxf((float)camera.position.y * 0.001f, 0.001f),
@@ -881,7 +881,7 @@ int main(int argc, char *argv[])
 			.stretch_overlay = (vec4s){{stretch_overlay.enabled ? 1.0f : 0.0f,
 										stretch_overlay.threshold, stretch_overlay.opacity, 0.0f}},
 			.point_light_options =
-				use_dungeon ? (vec4s){{0.0f, 0.16f, 0.22f, 0.0f}}
+				use_dungeon ? (vec4s){{0.0f, 0.25f, 0.25f, 0.0f}}
 							: (vec4s){{0.0f, 1.0f, 1.0f, 0.0f}},
 		};
 		if (use_dungeon)

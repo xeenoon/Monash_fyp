@@ -190,7 +190,7 @@ void main() {
     out_color = vec4(final_hdr, 1.0);
     vec2 current_uv = current_clip.xy / current_clip.w * 0.5 + 0.5;
     vec2 previous_uv = previous_clip.xy / previous_clip.w * 0.5 + 0.5;
-    out_motion = previous_uv - current_uv;
+    out_motion = draw.debug.y > 0.5 ? vec2(2.0) : previous_uv - current_uv;
 
     /* See SHADER_DUMP_LEGEND["terrain/mesh"] in renderer.c for the f0..f19 layout. */
     shader_dump(DUMP_SHADER_MESH,

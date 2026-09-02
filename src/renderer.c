@@ -2517,9 +2517,8 @@ void renderer_draw_frame(Renderer *r, const FrameUniforms *frame, const Renderer
 	/* Resize/out-of-date recreation owns the GPU history lifetime. Even if the
 	   caller's camera history is continuous, never sample newly-created images. */
 	FrameUniforms effective_frame = *frame;
-	// effective_frame.temporal_parameters.x =
-	//	frame->temporal_parameters.x > 0.5f && r->temporal_history_valid ? 1.0f : 0.0f;
-	effective_frame.temporal_parameters.x = 0; // TEMP DEBUG
+	effective_frame.temporal_parameters.x =
+		frame->temporal_parameters.x > 0.5f && r->temporal_history_valid ? 1.0f : 0.0f;
 
 	effective_frame.temporal_parameters.z = r->swapchain_format == VK_FORMAT_B8G8R8A8_SRGB ||
 													r->swapchain_format == VK_FORMAT_R8G8B8A8_SRGB
