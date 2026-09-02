@@ -4,9 +4,12 @@
 #include "dungeon_lighting.h"
 #include "dungeon_mesh.h"
 #include "dungeon_player.h"
+#include "gltf_scene.h"
 #include "renderer.h"
 
 #include <stdbool.h>
+
+#define DUNGEON_MAX_DRAWS (DUNGEON_MESH_BATCH_COUNT + DUNGEON_MAX_LIGHTS)
 
 typedef struct
 {
@@ -17,6 +20,9 @@ typedef struct
 	DungeonPlayer player;
 	DungeonLight lights[DUNGEON_MAX_LIGHTS];
 	uint32_t light_count;
+	GltfScene torch;
+	LocalToWorldTransform torch_transforms[DUNGEON_MAX_LIGHTS];
+	uint32_t torch_count;
 } DungeonScene;
 
 bool dungeon_scene_create(Renderer *renderer, const char *map_path, DungeonScene *out,

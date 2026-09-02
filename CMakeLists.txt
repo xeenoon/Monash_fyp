@@ -429,6 +429,7 @@ target_compile_definitions(terrain_renderer PRIVATE
     GRADED_ALPS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/alps-data/trn-alps-16km-graded"
     ENV_HDR_PATH="${CMAKE_CURRENT_SOURCE_DIR}/assets/env.hdr"
     DUNGEON_MAP_PATH="${CMAKE_CURRENT_SOURCE_DIR}/assets/dungeons/example.map"
+    DUNGEON_TORCH_PATH="${CMAKE_CURRENT_SOURCE_DIR}/assets/dungeons/torch/walltorch.gltf"
     DUNGEON_TEXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/textures/dungeon/runtime"
     CGLM_FORCE_DEPTH_ZERO_TO_ONE)
 if(DEBUG_SHADER_DUMP)

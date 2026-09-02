@@ -1,0 +1,98 @@
+{
+  "asset": {
+    "version": "2.0",
+    "generator": "convert_wall_torch.py"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "Wall torch"
+    }
+  ],
+  "meshes": [
+    {
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0
+          },
+          "indices": 1,
+          "material": 0
+        }
+      ]
+    }
+  ],
+  "materials": [
+    {
+      "name": "Dark iron and wood",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.16,
+          0.07,
+          0.025,
+          1.0
+        ],
+        "metallicFactor": 0.3,
+        "roughnessFactor": 0.72
+      }
+    }
+  ],
+  "buffers": [
+    {
+      "byteLength": 1332,
+      "uri": "data:application/octet-stream;base64,b57qOpKWkj8jMiy+b57qOiSckj8qHSy+/reSPDnutD/tR4q95WGhPAtGtT+hSo295WGhPHQHuT+9jGK9/reSPB4buT8DQ1a9/reSPImYuj8+BUC9BHP0PFX2vT/mBVi9BHP0PLrawj9GCA+9/reSPLJLwD+c+dW87Q0+O2Jnkj8cCCm+7Q0+O/Rskj8j8yi+flLtPLEWsz9PHha9HooCPVM/sz+eew+9HooCPb0Atz8y5q68flLtPJZDtz/woq+8flLtPAHBuD9nJ4O8vMtFPTvkuj/DZKq6vMtFPZ/Ivz/zVIc8flLtPNZzvj/jpZs7AAAAgDhKkj9qEye+AAAAgMpPkj9y/ia+AAAAgA7zsT/27o+8AAAAgNr+sT/5MWa8AAAAgETAtT+P/MG5AAAAgPMftj87qhq7AAAAgF6dtz9Iikg7AAAAAEj+uD8qxvk8AAAAAADjvT8x60U9AAAAAIdQvT8iN8M87Q0+u2Jnkj8cCCm+7Q0+u/Rskj8j8yi+flLtvLEWsz9PHha9HooCvVM/sz+eew+9HooCvb0Atz8y5q68flLtvJZDtz/woq+8flLtvAHBuD9nJ4O8vMtFvTvkuj/DZKq6vMtFvZ/Ivz/zVIc8flLtvNZzvj/jpZs7b57qupKWkj8jMiy+b57quiSckj8qHSy+/reSvDnutD/tR4q95WGhvAtGtT+hSo295WGhvHQHuT+9jGK9/reSvB4buT8DQ1a9/reSvImYuj8+BUC9BHP0vFX2vT/mBVi9BHP0vLrawj9GCA+9/reSvLJLwD+c+dW8HhuBuz1Etz/KT6q9HhuBu5MYuD/KT6q9HhuBO5MYuD/KT6q9HhuBOz1Etz/KT6q9HhuBu5MYuD8KgDG+HhuBO5MYuD8KgDG+HhuBOz1Etz8KgDG+HhuBuz1Etz8KgDG+AQALAAoAAQAKAAAAAgAMAAsAAgALAAEAAwANAAwAAwAMAAIABAAOAA0ABAANAAMABQAPAA4ABQAOAAQABgAQAA8ABgAPAAUABwARABAABwAQAAYACAASABEACAARAAcACQATABIACQASAAgACwAVABQACwAUAAoADAAWABUADAAVAAsADQAXABYADQAWAAwADgAYABcADgAXAA0ADwAZABgADwAYAA4AEAAaABkAEAAZAA8AEQAbABoAEQAaABAAEgAcABsAEgAbABEAEwAdABwAEwAcABIAFQAfAB4AFQAeABQAFgAgAB8AFgAfABUAFwAhACAAFwAgABYAGAAiACEAGAAhABcAGQAjACIAGQAiABgAGgAkACMAGgAjABkAGwAlACQAGwAkABoAHAAmACUAHAAlABsAHQAnACYAHQAmABwAHwApACgAHwAoAB4AIAAqACkAIAApAB8AIQArACoAIQAqACAAIgAsACsAIgArACEAIwAtACwAIwAsACIAJAAuAC0AJAAtACMAJQAvAC4AJQAuACQAJgAwAC8AJgAvACUAJwAxADAAJwAwACYAKQABAAAAKQAAACgAKgACAAEAKgABACkAKwADAAIAKwACACoAOQA2ADcAOQA3ADgALQAFAAQALQAEACwALgAGAAUALgAFAC0ALwAHAAYALwAGAC4AMAAIAAcAMAAHAC8AMQAJAAgAMQAIADAAMgA1AAMAMgADACsAMwAyACsAMwArACwANAAzACwANAAsAAQANQA0AAQANQAEAAMANgA5ADIANgAyADMANwA2ADMANwAzADQAOAA3ADQAOAA0ADUAOQA4ADUAOQA1ADIA"
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 696,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 696,
+      "byteLength": 636,
+      "target": 34963
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 58,
+      "type": "VEC3",
+      "min": [
+        -0.04829,
+        1.14289,
+        -0.17334
+      ],
+      "max": [
+        0.04829,
+        1.5223,
+        0.04832
+      ]
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5123,
+      "count": 318,
+      "type": "SCALAR",
+      "min": [
+        0
+      ],
+      "max": [
+        57
+      ]
+    }
+  ]
+}

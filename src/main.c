@@ -692,7 +692,7 @@ int main(int argc, char *argv[])
 										   shadows_enabled, phase_d_enabled ? 1.f : 0.f);
 		ground_push.debug.y = 0.0f; /* ground retains the neutral cavity descriptor */
 		RendererDraw ground_draw = {.mesh = &ground.mesh, .push = ground_push, .static_mesh = true};
-		RendererDraw dungeon_draws[DUNGEON_MESH_BATCH_COUNT] = {0};
+		RendererDraw dungeon_draws[DUNGEON_MAX_DRAWS] = {0};
 		const RendererDraw *active_draws = use_terrain ? terrain_draws : &quarry_draw;
 		uint32_t active_draw_count = use_terrain ? terrain_draw_count : 1u;
 		const RendererDraw *active_shadow_draws =
@@ -703,7 +703,7 @@ int main(int argc, char *argv[])
 		if (use_dungeon)
 		{
 			active_draw_count = dungeon_scene_draws(&dungeon, camera.position, dungeon_draws,
-											 DUNGEON_MESH_BATCH_COUNT);
+											 DUNGEON_MAX_DRAWS);
 			active_draws = dungeon_draws;
 			active_shadow_draws = dungeon_draws;
 			active_shadow_draw_count = active_draw_count;

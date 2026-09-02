@@ -2,10 +2,16 @@
 
 #include "dungeon_grid.h"
 
+#include <float.h>
+#include <math.h>
 #include <stdio.h>
 
 #ifndef DUNGEON_TEXTURE_DIR
 #define DUNGEON_TEXTURE_DIR "textures/dungeon/runtime"
+#endif
+
+#ifndef DUNGEON_TORCH_PATH
+#define DUNGEON_TORCH_PATH "assets/dungeons/torch/walltorch.gltf"
 #endif
 
 static const char *const ALBEDO_PATHS[DUNGEON_MESH_BATCH_COUNT] = {
@@ -48,6 +54,58 @@ static DrawPushConstants player_push(const Mesh *mesh, WorldPosition camera_posi
 	return push;
 }
 
+static DrawPushConstants torch_push(const LocalToWorldTransform *transform,
+									const GltfMaterial *material, WorldPosition camera_position)
+{
+	return (DrawPushConstants){
+		.local_to_camera_relative =
+			coordinate_local_to_camera_relative(transform, camera_position),
+		.geometry = {{material->base_color_factor[0], material->base_color_factor[1],
+					  material->base_color_factor[2], material->base_color_factor[3]}},
+		.elevation_uv = {{material->roughness_factor, material->normal_scale,
+						  material->occlusion_strength, 0.0f}},
+		.material = {{material->metallic_factor, 1.0f, 1.0f, 1.0f}},
+		.debug = {{0.0f, 0.0f, 1.0f, 1.0f}},
+	};
+}
+
+static bool mount_torch(const DungeonLevel *level, DungeonLight *light,
+						LocalToWorldTransform *transform)
+{
+	float best_distance2 = FLT_MAX;
+	DungeonPoint mount = {0}, inward = {0};
+	for (uint32_t i = 0; i < level->collider_count; ++i)
+	{
+		DungeonRect wall = level->colliders[i].bounds;
+		DungeonPoint point = {
+			fminf(fmaxf(light->position.x, wall.min.x), wall.max.x),
+			fminf(fmaxf(light->position.z, wall.min.z), wall.max.z),
+		};
+		float dx = light->position.x - point.x, dz = light->position.z - point.z;
+		float distance2 = dx * dx + dz * dz;
+		if (distance2 > 1e-6f && distance2 < best_distance2)
+		{
+			float inverse_distance = 1.0f / sqrtf(distance2);
+			best_distance2 = distance2;
+			mount = point;
+			inward = (DungeonPoint){dx * inverse_distance, dz * inverse_distance};
+		}
+	}
+	if (best_distance2 == FLT_MAX)
+		return false;
+	/* The source torch projects along local -Z. Keep its back plate just clear
+	   of the wall and put the point light at the head of the mesh. */
+	mount.x += inward.x * 0.01f;
+	mount.z += inward.z * 0.01f;
+	light->position =
+		(DungeonPoint){mount.x + inward.x * 0.18f, mount.z + inward.z * 0.18f};
+	light->height = level->floor_y + 1.58f;
+	double yaw = atan2(-(double)inward.x, -(double)inward.z);
+	*transform = coordinate_rotation_y(
+		yaw, (WorldPosition){mount.x, level->floor_y + 0.05f, mount.z});
+	return true;
+}
+
 bool dungeon_scene_create(Renderer *renderer, const char *map_path, DungeonScene *out,
 						  DungeonLevelError *error)
 {
@@ -78,8 +136,25 @@ bool dungeon_scene_create(Renderer *renderer, const char *map_path, DungeonScene
 	}
 	dungeon_player_init(&out->player, out->level.spawn);
 	out->light_count = dungeon_lighting_build(&out->level, out->lights, DUNGEON_MAX_LIGHTS);
+	GltfLoadError torch_error = {0};
+	if (gltf_scene_create(renderer, DUNGEON_TORCH_PATH,
+					  &(GltfLoadOptions){.placement =
+									 coordinate_identity_transform((WorldPosition){0})},
+					  &out->torch, &torch_error) != GLTF_LOAD_OK)
+	{
+		if (error)
+			snprintf(error->message, sizeof(error->message), "could not load dungeon torch: %.220s",
+					 torch_error.message);
+		dungeon_scene_destroy(renderer, out);
+		return false;
+	}
+	for (uint32_t i = 0; i < out->light_count; ++i)
+		if (mount_torch(&out->level, &out->lights[i],
+						&out->torch_transforms[out->torch_count]))
+			++out->torch_count;
 	fprintf(stdout, "Dungeon: %s: %u floor runs, %u wall solids, %u draw batches\n", map_path,
-			out->level.surface_count, out->level.solid_count, DUNGEON_MESH_BATCH_COUNT);
+			out->level.surface_count, out->level.solid_count,
+			DUNGEON_MESH_BATCH_COUNT + out->torch_count * out->torch.primitive_count);
 	return true;
 }
 
@@ -98,7 +173,23 @@ uint32_t dungeon_scene_draws(DungeonScene *scene, WorldPosition camera_position,
 									? player_push(&scene->meshes[i], camera_position)
 									: dungeon_push(&scene->meshes[i], camera_position),
 								.static_mesh = true};
-	return DUNGEON_MESH_BATCH_COUNT;
+	uint32_t draw_count = DUNGEON_MESH_BATCH_COUNT;
+	for (uint32_t instance = 0; instance < scene->torch_count; ++instance)
+		for (uint32_t primitive_index = 0; primitive_index < scene->torch.primitive_count;
+			 ++primitive_index)
+		{
+			if (draw_count >= capacity)
+				return draw_count;
+			GltfPrimitive *primitive = &scene->torch.primitives[primitive_index];
+			GltfMaterial *material = &scene->torch.materials[primitive->material_index];
+			out[draw_count++] = (RendererDraw){
+				.mesh = &primitive->mesh,
+				.material_set = material->descriptor_set,
+				.push = torch_push(&scene->torch_transforms[instance], material, camera_position),
+				.static_mesh = true,
+			};
+		}
+	return draw_count;
 }
 
 bool dungeon_scene_update(DungeonScene *scene, float move_forward, float move_right,
@@ -149,9 +240,14 @@ void dungeon_scene_destroy(Renderer *renderer, DungeonScene *scene)
 	if (!scene)
 		return;
 	if (renderer)
+	{
+		gltf_scene_destroy(renderer, &scene->torch);
 		for (uint32_t i = 0; i < DUNGEON_MESH_BATCH_COUNT; ++i)
 			if (scene->uploaded[i])
 				mesh_destroy(renderer, &scene->meshes[i]);
+	}
+	else
+		gltf_scene_destroy(NULL, &scene->torch);
 	dungeon_mesh_destroy(&scene->geometry);
 	dungeon_level_destroy(&scene->level);
 	*scene = (DungeonScene){0};
