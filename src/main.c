@@ -8,6 +8,7 @@
 #include "atmosphere.h"
 #include "benchmark_ground.h"
 #include "camera.h"
+#include "dungeon_scene.h"
 #include "gltf_scene.h"
 #include "input.h"
 #include "material_stability_demo.h"
@@ -164,6 +165,7 @@ int main(int argc, char *argv[])
 	bool use_terrain = !scene || strcmp(scene, "terrain") == 0;
 	bool use_quarry = scene && strcmp(scene, "quarry") == 0;
 	bool use_phase_d_demo = scene && strcmp(scene, "phase_d_demo") == 0;
+	bool use_dungeon = scene && strcmp(scene, "dungeon") == 0;
 	const char *gltf_path = NULL;
 	/* The large benchmark is intentionally not in git. Terrain is the normal
 	 * no-argument scene; validate the benchmark only when explicitly selected. */
@@ -186,10 +188,10 @@ int main(int argc, char *argv[])
 			return EXIT_FAILURE;
 		}
 	}
-	else if (!use_terrain && !use_quarry && !use_phase_d_demo)
+	else if (!use_terrain && !use_quarry && !use_phase_d_demo && !use_dungeon)
 	{
 		fprintf(stderr,
-				"Supported scene selectors: terrain, coastal_cliff, quarry, phase_d_demo, or gltf.\n");
+				"Supported scene selectors: terrain, dungeon, coastal_cliff, quarry, phase_d_demo, or gltf.\n");
 		return EXIT_FAILURE;
 	}
 	if (!SDL_Init(SDL_INIT_VIDEO))
@@ -206,6 +208,8 @@ int main(int argc, char *argv[])
 	}
 	if (use_phase_d_demo)
 		SDL_SetWindowTitle(window, "Phase D — stabilized material detail");
+	else if (use_dungeon)
+		SDL_SetWindowTitle(window, "Dungeon Explorer");
 	if (!SDL_SetWindowRelativeMouseMode(window, true))
 		fprintf(stderr, "Relative mouse mode unavailable: %s\n", SDL_GetError());
 
@@ -220,6 +224,7 @@ int main(int argc, char *argv[])
 	GltfScene gltf = {0};
 	GltfLoadError gltf_error = {0};
 	MaterialStabilityDemo demo = {0};
+	DungeonScene dungeon = {0};
 	GltfLoadResult load_result = GLTF_LOAD_OK;
 	if (use_terrain)
 	{
@@ -271,6 +276,15 @@ int main(int argc, char *argv[])
 	}
 	else if (use_phase_d_demo)
 		load_result = GLTF_LOAD_OK;
+	else if (use_dungeon)
+	{
+		DungeonLevelError dungeon_error = {0};
+		if (!dungeon_scene_create(&renderer, DUNGEON_MAP_PATH, &dungeon, &dungeon_error))
+		{
+			fprintf(stderr, "Could not load dungeon: %s\n", dungeon_error.message);
+			load_result = GLTF_LOAD_INVALID;
+		}
+	}
 	else if (use_quarry)
 		load_result = quarry_create(&renderer, &quarry, QUARRY_DIR) ? GLTF_LOAD_OK
 																	 : GLTF_LOAD_IO_ERROR;
@@ -289,7 +303,7 @@ int main(int argc, char *argv[])
 						 &gltf, &gltf_error);
 	if ((use_terrain && !terrain) || load_result != GLTF_LOAD_OK)
 	{
-		if (!use_terrain)
+		if (!use_terrain && !use_dungeon)
 			fprintf(stderr, "Could not load %s: %s\n", use_quarry ? QUARRY_DIR : gltf_path,
 					use_quarry ? "Quarry loader failed" : gltf_error.message);
 		renderer_shutdown(&renderer);
@@ -324,12 +338,14 @@ int main(int argc, char *argv[])
 											   TERRAIN_START_POS_Z},
 				   .yaw = TERRAIN_START_YAW,
 				   .pitch = TERRAIN_START_PITCH}
-		: (Camera){.position = use_phase_d_demo
+		: (Camera){.position = use_dungeon
+							 ? (WorldPosition){0.0, 22.0, -18.0}
+							 : (use_phase_d_demo
 								 ? (WorldPosition){0.0, 1.0, -18.0}
 								 : (use_quarry ? (WorldPosition){0.0, 8.0, -25.0}
-														: (WorldPosition){0.0, 6.0, -45.0}),
+												: (WorldPosition){0.0, 6.0, -45.0})),
 				   .yaw = 90.0f,
-				   .pitch = use_quarry ? -3.0f : -2.0f};
+				   .pitch = use_dungeon ? -50.0f : (use_quarry ? -3.0f : -2.0f)};
 
 	/* Runtime override of the start camera in absolute WORLD coordinates -- the
 	   exact triple printed as "camera pos=" in a shader dump. Unlike
@@ -651,6 +667,7 @@ int main(int argc, char *argv[])
 										   shadows_enabled, phase_d_enabled ? 1.f : 0.f);
 		ground_push.debug.y = 0.0f; /* ground retains the neutral cavity descriptor */
 		RendererDraw ground_draw = {.mesh = &ground.mesh, .push = ground_push, .static_mesh = true};
+		RendererDraw dungeon_draws[DUNGEON_MESH_BATCH_COUNT] = {0};
 		const RendererDraw *active_draws = use_terrain ? terrain_draws : &quarry_draw;
 		uint32_t active_draw_count = use_terrain ? terrain_draw_count : 1u;
 		const RendererDraw *active_shadow_draws =
@@ -658,6 +675,14 @@ int main(int argc, char *argv[])
 		uint32_t active_shadow_draw_count =
 			use_terrain ? terrain_shadow_draw_count : active_draw_count;
 		RendererDraw *allocated_draws = NULL;
+		if (use_dungeon)
+		{
+			active_draw_count = dungeon_scene_draws(&dungeon, camera.position, dungeon_draws,
+											 DUNGEON_MESH_BATCH_COUNT);
+			active_draws = dungeon_draws;
+			active_shadow_draws = dungeon_draws;
+			active_shadow_draw_count = active_draw_count;
+		}
 		if (use_quarry)
 		{
 			allocated_draws = calloc(2, sizeof(*allocated_draws));
@@ -673,7 +698,7 @@ int main(int argc, char *argv[])
 			active_draw_count = 2;
 			active_shadow_draw_count = 2;
 		}
-		if (!use_terrain && !use_quarry)
+		if (!use_terrain && !use_quarry && !use_dungeon)
 		{
 			active_draw_count = use_phase_d_demo ? (demo_split ? 2u : 1u) : gltf.primitive_count;
 			allocated_draws = calloc(active_draw_count, sizeof(*allocated_draws));
@@ -900,6 +925,8 @@ int main(int argc, char *argv[])
 	renderer_wait_idle(&renderer);
 	if (use_terrain)
 		terrain_runtime_destroy(terrain);
+	else if (use_dungeon)
+		dungeon_scene_destroy(&renderer, &dungeon);
 	else if (use_quarry)
 	{
 		benchmark_ground_destroy(&renderer, &ground);
