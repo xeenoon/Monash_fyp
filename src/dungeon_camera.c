@@ -15,9 +15,9 @@ static WorldPosition desired_position(const DungeonCamera *camera, DungeonPoint 
 void dungeon_camera_init(DungeonCamera *camera, DungeonPoint target)
 {
 	*camera = (DungeonCamera){
-		.camera = {.yaw = 90.0f, .pitch = -58.0f},
-		.height = 12.0f,
-		.trailing_distance = 7.5f,
+		.camera = {.yaw = 90.0f, .pitch = -76.0f},
+		.height = 14.0f,
+		.trailing_distance = 3.5f,
 		.follow_sharpness = 10.0f,
 		.vertical_fov_degrees = 48.0f,
 	};
@@ -39,4 +39,3 @@ mat4s dungeon_camera_projection(const DungeonCamera *camera, float aspect)
 {
 	return camera_projection_fov(&camera->camera, aspect, camera->vertical_fov_degrees);
 }
-

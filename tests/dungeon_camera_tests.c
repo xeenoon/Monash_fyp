@@ -9,8 +9,9 @@ int main(void)
 	DungeonCamera camera;
 	dungeon_camera_init(&camera, (DungeonPoint){2.0f, 3.0f});
 	assert(fabs(camera.camera.position.x - 2.0) < 1e-6);
-	assert(fabs(camera.camera.position.y - 12.0) < 1e-6);
-	assert(fabs(camera.camera.position.z - -4.5) < 1e-6);
+	assert(fabs(camera.camera.position.y - 14.0) < 1e-6);
+	assert(fabs(camera.camera.position.z - -0.5) < 1e-6);
+	assert(camera.camera.pitch < -70.0f && camera.camera.pitch > -85.0f);
 	double before = camera.camera.position.x;
 	dungeon_camera_update(&camera, (DungeonPoint){12.0f, 3.0f}, 1.0f / 60.0f);
 	assert(camera.camera.position.x > before);
