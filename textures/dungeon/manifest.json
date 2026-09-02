@@ -1,0 +1,41 @@
+{
+  "license": "CC0-1.0",
+  "license_url": "https://polyhaven.com/license",
+  "provider": "polyhaven",
+  "resolution": "2k",
+  "materials": [
+    {
+      "role": "floor",
+      "id": "cobblestone_floor_001",
+      "page": "https://polyhaven.com/a/cobblestone_floor_001",
+      "width_m": 2.4,
+      "files": {
+        "albedo": {"channel": "Diffuse", "extension": "jpg", "md5": "273c075d7e7cab056a36a23969924c6a"},
+        "normal": {"channel": "nor_gl", "extension": "png", "md5": "8dc579e62c5c56d46dd22455ecdd8a41"},
+        "orm": {"channel": "arm", "extension": "png", "md5": "db72f1fffa598f17c9f37fcec3a143bb"}
+      }
+    },
+    {
+      "role": "wall",
+      "id": "rock_wall_07",
+      "page": "https://polyhaven.com/a/rock_wall_07",
+      "width_m": 1.8,
+      "files": {
+        "albedo": {"channel": "Diffuse", "extension": "jpg", "md5": "befd1e1ae48fd7b04a5a88e702ded6da"},
+        "normal": {"channel": "nor_gl", "extension": "png", "md5": "d46e8bb025e9160f297b23685ac725e9"},
+        "orm": {"channel": "arm", "extension": "png", "md5": "9b0ee9eb3676fc9793617c9cfd8838c3"}
+      }
+    },
+    {
+      "role": "exit",
+      "id": "medieval_wood",
+      "page": "https://polyhaven.com/a/medieval_wood",
+      "width_m": 2.0,
+      "files": {
+        "albedo": {"channel": "Diffuse", "extension": "jpg", "md5": "81a7282eec920b55d045f5200a5a2bb5"},
+        "normal": {"channel": "nor_gl", "extension": "png", "md5": "5e4bc4b88af099da33f3669440588224"},
+        "orm": {"channel": "arm", "extension": "png", "md5": "37b377b4a439d6f18acaa963fd830894"}
+      }
+    }
+  ]
+}
