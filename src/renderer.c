@@ -42,6 +42,8 @@ _Static_assert(sizeof(DumpRecord) == SHADER_DUMP_RECORD_FLOATS * 4u,
 #define DUMP_SHADER_TEMPORAL_RESOLVE 5u
 #define DUMP_SHADER_ENVIRONMENT_IBL 6u
 #define DUMP_SHADER_MATERIAL_DETAIL 7u
+#define DUMP_SHADER_DUNGEON_SURFACE 8u
+#define DUMP_SHADER_DUNGEON_PUDDLE 9u
 
 static const char *shader_dump_name(uint32_t shader_id)
 {
@@ -63,6 +65,10 @@ static const char *shader_dump_name(uint32_t shader_id)
 		return "environment_ibl";
 	case DUMP_SHADER_MATERIAL_DETAIL:
 		return "material_detail";
+	case DUMP_SHADER_DUNGEON_SURFACE:
+		return "dungeon_surface";
+	case DUMP_SHADER_DUNGEON_PUDDLE:
+		return "dungeon_puddle";
 	default:
 		return "unknown";
 	}
@@ -260,10 +266,12 @@ VkDescriptorSet renderer_allocate_pbr5_set(Renderer *r, const Texture *albedo, c
 										 .pSetLayouts = &r->material_set_layout};
 	VkDescriptorSet set;
 	VK_CHECK(vkAllocateDescriptorSets(r->device, &alloc, &set));
-	const Texture *textures[5] = {albedo, orm, normal_map, occlusion, cavity};
-	VkDescriptorImageInfo images[5];
-	VkWriteDescriptorSet writes[5];
-	for (uint32_t i = 0; i < 5; ++i)
+	/* Populate the entire shared layout, including the terrain-only binding.
+	 * Leaving it uninitialized can expose invalid descriptors to drivers. */
+	const Texture *textures[6] = {albedo, orm, normal_map, occlusion, cavity, albedo};
+	VkDescriptorImageInfo images[6];
+	VkWriteDescriptorSet writes[6];
+	for (uint32_t i = 0; i < 6; ++i)
 	{
 		images[i] =
 			(VkDescriptorImageInfo){.sampler = textures[i]->sampler,
@@ -277,7 +285,7 @@ VkDescriptorSet renderer_allocate_pbr5_set(Renderer *r, const Texture *albedo, c
 								   .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 								   .pImageInfo = &images[i]};
 	}
-	vkUpdateDescriptorSets(r->device, 5, writes, 0, NULL);
+	vkUpdateDescriptorSets(r->device, 6, writes, 0, NULL);
 	return set;
 }
 
@@ -1393,8 +1401,13 @@ static void environment_prefilter(Renderer *r)
 
 /* Terrain and imported static meshes share every graphics-pipeline state except
    their shaders, so both are built from this one description. */
-static void create_scene_pipeline(Renderer *r, const char *vert_name, const char *frag_name,
-								  VkPipeline *out_pipeline)
+/* alpha_blend selects the puddle variant: attachment 0 (colour) blends
+   src-over and depth writes are disabled so puddles never occlude anything
+   behind them in later passes; attachment 1 (motion) is never blended
+   regardless, and depth testing stays on either way. false reproduces the
+   terrain/mesh pipelines' original state byte-for-byte. */
+static void create_scene_pipeline_ex(Renderer *r, const char *vert_name, const char *frag_name,
+									 VkPipeline *out_pipeline, bool alpha_blend)
 {
 	char vert_path[1024], frag_path[1024];
 	snprintf(vert_path, sizeof(vert_path), "%s/%s.spv", SHADER_DIR, vert_name);
@@ -1439,12 +1452,24 @@ static void create_scene_pipeline(Renderer *r, const char *vert_name, const char
 	VkPipelineDepthStencilStateCreateInfo depth = {
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
 		.depthTestEnable = VK_TRUE,
-		.depthWriteEnable = VK_TRUE,
+		.depthWriteEnable = alpha_blend ? VK_FALSE : VK_TRUE,
 		.depthCompareOp = VK_COMPARE_OP_GREATER_OR_EQUAL};
 	VkPipelineColorBlendAttachmentState blend_attachments[2] = {
 		{.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
 						   VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT}};
 	blend_attachments[1] = blend_attachments[0];
+	if (alpha_blend)
+	{
+		blend_attachments[0].blendEnable = VK_TRUE;
+		blend_attachments[0].srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+		blend_attachments[0].dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+		blend_attachments[0].colorBlendOp = VK_BLEND_OP_ADD;
+		blend_attachments[0].srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+		blend_attachments[0].dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+		blend_attachments[0].alphaBlendOp = VK_BLEND_OP_ADD;
+		/* Attachment 1 (motion) stays exactly as blend_attachments[1] was
+		   copied above: blending disabled, same write mask. */
+	}
 	VkPipelineColorBlendStateCreateInfo blending = {
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
 		.attachmentCount = 2,
@@ -1475,10 +1500,20 @@ static void create_scene_pipeline(Renderer *r, const char *vert_name, const char
 	vkDestroyShaderModule(r->device, vert, NULL);
 }
 
+static void create_scene_pipeline(Renderer *r, const char *vert_name, const char *frag_name,
+								  VkPipeline *out_pipeline)
+{
+	create_scene_pipeline_ex(r, vert_name, frag_name, out_pipeline, false);
+}
+
 static void create_terrain_pipeline(Renderer *r)
 {
 	create_scene_pipeline(r, "terrain.vert", "terrain.frag", &r->terrain_pipeline);
 	create_scene_pipeline(r, "mesh.vert", "mesh.frag", &r->mesh_pipeline);
+	create_scene_pipeline(r, "mesh.vert", "dungeon_surface.frag", &r->dungeon_surface_pipeline);
+	create_scene_pipeline(r, "mesh.vert", "dungeon_moss.frag", &r->dungeon_moss_pipeline);
+	create_scene_pipeline_ex(r, "mesh.vert", "dungeon_puddle.frag", &r->dungeon_puddle_pipeline,
+							true);
 }
 
 static void create_shadow_pipeline(Renderer *r)
@@ -1925,6 +1960,9 @@ static void destroy_swapchain(Renderer *r)
 	vkDestroyPipeline(r->device, r->tone_map_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->taa_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->atmosphere_composite_pipeline, NULL);
+	vkDestroyPipeline(r->device, r->dungeon_puddle_pipeline, NULL);
+	vkDestroyPipeline(r->device, r->dungeon_surface_pipeline, NULL);
+	vkDestroyPipeline(r->device, r->dungeon_moss_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->mesh_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->terrain_pipeline, NULL);
 	vkDestroyRenderPass(r->device, r->display_render_pass, NULL);
@@ -1967,6 +2005,9 @@ void renderer_reload_pipeline(Renderer *r)
 	vkDestroyPipeline(r->device, r->tone_map_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->taa_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->atmosphere_composite_pipeline, NULL);
+	vkDestroyPipeline(r->device, r->dungeon_puddle_pipeline, NULL);
+	vkDestroyPipeline(r->device, r->dungeon_surface_pipeline, NULL);
+	vkDestroyPipeline(r->device, r->dungeon_moss_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->mesh_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->terrain_pipeline, NULL);
 	create_shadow_pipeline(r);
@@ -2046,6 +2087,12 @@ static const char *const SHADER_DUMP_LEGEND[] = {
 	"# legend: material_detail f0=authored_roughness f1=effective_roughness f2=geometric_floor f3=geometric_variance "
 	"f4=filtered_normal_length f5=mip_variance f6=mip_kernel f7=mip_roughness f8=AO_visibility f9=cavity_visibility "
 	"f10=phase_D_active f11=normal_strength f12-14=final_pre_TAA_HDR f15=normal_map_LOD f16-19=_\n",
+	"# legend: dungeon_surface f0=moss_mask f1=moss_noise f2=recess_mask f3=ao_term "
+	"f4-6=base_color_after_moss f7=moss_mask f8-10=world_position f11=metallic f12-14=normal "
+	"f15=roughness_after_moss f16-18=final_HDR f19=authored_roughness_before_moss\n",
+	"# legend: dungeon_puddle f0=rim_fade f1=fresnel f2=reflection_hit_distance f3=roughness "
+	"f4-6=base_color f7=alpha f8-10=normal f11=NoV f12-14=reflection_color f15=specular_strength "
+	"f16-18=final_HDR f19=ripple_height\n",
 };
 
 /* Optional CPU-side output filters, applied only at write time (the GPU always
@@ -2066,7 +2113,7 @@ static ShaderDumpFilter shader_dump_read_filters(void)
 	const char *shader_env = getenv("DUMP_SHADER");
 	if (shader_env)
 	{
-		for (uint32_t id = 0; id <= DUMP_SHADER_MATERIAL_DETAIL; ++id)
+		for (uint32_t id = 0; id <= DUMP_SHADER_DUNGEON_PUDDLE; ++id)
 		{
 			if (strcasecmp(shader_env, shader_dump_name(id)) == 0)
 			{
@@ -2386,7 +2433,22 @@ static void record_commands(Renderer *r, uint32_t image_index, const FrameUnifor
 	VkPipeline bound_pipeline = VK_NULL_HANDLE;
 	for (uint32_t i = 0; i < draw_count; ++i)
 	{
-		VkPipeline wanted = draws[i].static_mesh ? r->mesh_pipeline : r->terrain_pipeline;
+		VkPipeline wanted;
+		switch (draws[i].pipeline)
+		{
+		case RENDERER_PIPELINE_DUNGEON_MOSS:
+			wanted = r->dungeon_moss_pipeline;
+			break;
+		case RENDERER_PIPELINE_DUNGEON_SURFACE:
+			wanted = r->dungeon_surface_pipeline;
+			break;
+		case RENDERER_PIPELINE_DUNGEON_PUDDLE:
+			wanted = r->dungeon_puddle_pipeline;
+			break;
+		default:
+			wanted = draws[i].static_mesh ? r->mesh_pipeline : r->terrain_pipeline;
+			break;
+		}
 		if (wanted != bound_pipeline)
 		{
 			vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, wanted);

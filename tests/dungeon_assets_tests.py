@@ -35,6 +35,10 @@ def main() -> int:
             assert path.is_file(), path
             assert path.stat().st_size > 1024, path
             assert md5(path) == selection["md5"], path
+    for material in manifest.get("local_materials", []):
+        path = args.runtime / material["file"]
+        assert path.is_file(), path
+        assert md5(path) == material["md5"], path
     print("dungeon asset tests passed")
     return 0
 

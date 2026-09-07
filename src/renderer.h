@@ -124,6 +124,19 @@ typedef struct
 	vec4s debug;
 } DrawPushConstants;
 
+/* Selects a fragment-shader permutation beyond the terrain/mesh split that
+   `static_mesh` already picks. RENDERER_PIPELINE_AUTO (zero, so every
+   existing RendererDraw{} initializer keeps working unmodified) preserves
+   the static_mesh-based choice; the dungeon variants share mesh.vert and
+   only swap the fragment shader (and, for puddles, blend state). */
+typedef enum
+{
+	RENDERER_PIPELINE_AUTO = 0,
+	RENDERER_PIPELINE_DUNGEON_MOSS, /* opaque leaf geometry, two-sided foliage lighting */
+	RENDERER_PIPELINE_DUNGEON_SURFACE, /* mesh.frag + textured moss */
+	RENDERER_PIPELINE_DUNGEON_PUDDLE,	/* alpha-blended, depth-write off */
+} RendererPipelineKind;
+
 typedef struct
 {
 	const Mesh *mesh;
@@ -134,6 +147,7 @@ typedef struct
 	/* Route through the triplanar static-mesh pipeline instead of the terrain
 	   pipeline. Terrain tiles leave this false; imported meshes set it. */
 	bool static_mesh;
+	RendererPipelineKind pipeline; /* AUTO defers to static_mesh above */
 } RendererDraw;
 
 typedef struct { const char *environment_path; ShadowQualitySettings shadow_quality; } RendererConfig;
@@ -218,6 +232,9 @@ typedef struct Renderer
 	VkPipelineLayout atmosphere_pipeline_layout;
 	VkPipeline terrain_pipeline;
 	VkPipeline mesh_pipeline; /* UV-mapped PBR static-mesh and dungeon pipeline */
+	VkPipeline dungeon_moss_pipeline;
+	VkPipeline dungeon_surface_pipeline; /* mesh.vert + dungeon_surface.frag (moss) */
+	VkPipeline dungeon_puddle_pipeline;  /* mesh.vert + dungeon_puddle.frag (alpha-blended) */
 	VkPipeline tone_map_pipeline;
 	VkPipeline atmosphere_composite_pipeline;
 	VkPipeline taa_pipeline;

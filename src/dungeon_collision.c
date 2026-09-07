@@ -2,59 +2,62 @@
 
 #include <math.h>
 
-static float clampf(float value, float low, float high)
+static DungeonPoint closest_point_on_segment(DungeonPoint point, DungeonSegment segment)
 {
-	return value < low ? low : value > high ? high : value;
+	float dx = segment.b.x - segment.a.x, dz = segment.b.z - segment.a.z;
+	float length2 = dx * dx + dz * dz;
+	float t = length2 > 1e-12f
+				 ? ((point.x - segment.a.x) * dx + (point.z - segment.a.z) * dz) / length2
+				 : 0.0f;
+	t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+	return (DungeonPoint){segment.a.x + dx * t, segment.a.z + dz * t};
 }
 
-static bool overlaps(DungeonPoint point, float radius, DungeonRect bounds)
+/* Pushes `point` outside every colliding segment by exactly `radius`, one
+ * pass over the full collider list. Called several times per substep so
+ * corners -- where resolving one wall can push into its neighbour -- settle
+ * instead of leaving the player embedded a little in one of them. */
+static DungeonPoint resolve_once(const DungeonCollider *colliders, uint32_t count, DungeonPoint point,
+								 float radius)
 {
-	float closest_x = clampf(point.x, bounds.min.x, bounds.max.x);
-	float closest_z = clampf(point.z, bounds.min.z, bounds.max.z);
-	float dx = point.x - closest_x, dz = point.z - closest_z;
-	return dx * dx + dz * dz < radius * radius;
-}
-
-static DungeonPoint move_axis(const DungeonCollider *colliders, uint32_t count, DungeonPoint start,
-							  float amount, float radius, bool x_axis)
-{
-	DungeonPoint result = start;
-	if (x_axis)
-		result.x += amount;
-	else
-		result.z += amount;
 	for (uint32_t i = 0; i < count; ++i)
 	{
-		if (colliders[i].type != DUNGEON_COLLIDER_AABB || !overlaps(result, radius,
-															colliders[i].bounds))
+		if (colliders[i].type != DUNGEON_COLLIDER_SEGMENT)
 			continue;
-		DungeonRect bounds = colliders[i].bounds;
-		if (x_axis)
+		DungeonSegment segment = colliders[i].segment;
+		DungeonPoint closest = closest_point_on_segment(point, segment);
+		float dx = point.x - closest.x, dz = point.z - closest.z;
+		float distance = sqrtf(dx * dx + dz * dz);
+		if (distance >= radius)
+			continue;
+		float push_x, push_z;
+		if (distance > 1e-6f)
 		{
-			float dz = result.z - clampf(result.z, bounds.min.z, bounds.max.z);
-			float reach = sqrtf(fmaxf(radius * radius - dz * dz, 0.0f));
-			float low = bounds.min.x - reach, high = bounds.max.x + reach;
-			if (amount > 0.0f && start.x <= low)
-				result.x = low;
-			else if (amount < 0.0f && start.x >= high)
-				result.x = high;
-			else if (amount == 0.0f)
-				result.x = result.x - low < high - result.x ? low : high;
+			push_x = dx / distance;
+			push_z = dz / distance;
 		}
 		else
 		{
-			float dx = result.x - clampf(result.x, bounds.min.x, bounds.max.x);
-			float reach = sqrtf(fmaxf(radius * radius - dx * dx, 0.0f));
-			float low = bounds.min.z - reach, high = bounds.max.z + reach;
-			if (amount > 0.0f && start.z <= low)
-				result.z = low;
-			else if (amount < 0.0f && start.z >= high)
-				result.z = high;
-			else if (amount == 0.0f)
-				result.z = result.z - low < high - result.z ? low : high;
+			/* Degenerate: centre sits exactly on the wall line. Push toward
+			 * open floor using the contour's winding (open floor is on the
+			 * left of a->b) rather than an arbitrary direction. */
+			float ex = segment.b.x - segment.a.x, ez = segment.b.z - segment.a.z;
+			float length = sqrtf(ex * ex + ez * ez);
+			if (length < 1e-6f)
+			{
+				push_x = 0.0f;
+				push_z = 1.0f;
+			}
+			else
+			{
+				push_x = -ez / length;
+				push_z = ex / length;
+			}
 		}
+		point.x = closest.x + push_x * radius;
+		point.z = closest.z + push_z * radius;
 	}
-	return result;
+	return point;
 }
 
 DungeonPoint dungeon_collision_move(const DungeonCollider *colliders, uint32_t collider_count,
@@ -70,8 +73,10 @@ DungeonPoint dungeon_collision_move(const DungeonCollider *colliders, uint32_t c
 	DungeonPoint result = start;
 	for (uint32_t i = 0; i < steps; ++i)
 	{
-		result = move_axis(colliders, collider_count, result, step.x, radius, true);
-		result = move_axis(colliders, collider_count, result, step.z, radius, false);
+		result.x += step.x;
+		result.z += step.z;
+		for (uint32_t iteration = 0; iteration < 4u; ++iteration)
+			result = resolve_once(colliders, collider_count, result, radius);
 	}
 	return result;
 }

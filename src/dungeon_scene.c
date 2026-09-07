@@ -1,10 +1,12 @@
 #include "dungeon_scene.h"
 
+#include "dungeon_cave.h"
 #include "dungeon_grid.h"
 
 #include <float.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #ifndef DUNGEON_TEXTURE_DIR
 #define DUNGEON_TEXTURE_DIR "textures/dungeon/runtime"
@@ -18,6 +20,7 @@ static const char *const ALBEDO_PATHS[DUNGEON_MESH_BATCH_COUNT] = {
 	DUNGEON_TEXTURE_DIR "/floor_albedo.jpg",
 	DUNGEON_TEXTURE_DIR "/wall_albedo.jpg",
 	DUNGEON_TEXTURE_DIR "/exit_albedo.jpg",
+	[DUNGEON_MESH_MOSS] = DUNGEON_TEXTURE_DIR "/moss.jpeg",
 };
 
 static const char *const ORM_PATHS[DUNGEON_MESH_BATCH_COUNT] = {
@@ -54,6 +57,17 @@ static DrawPushConstants player_push(const Mesh *mesh, WorldPosition camera_posi
 	return push;
 }
 
+/* Untextured near-black water; real reflections are Phase 5 (fake, walls
+ * only) -- for now this just keeps puddles visually distinct from the floor
+ * they sit on. */
+static DrawPushConstants puddle_push(const Mesh *mesh, WorldPosition camera_position)
+{
+	DrawPushConstants push = dungeon_push(mesh, camera_position);
+	push.geometry = (vec4s){{0.02f, 0.03f, 0.045f, 1.0f}};
+	push.material = (vec4s){{0.0f, 1.0f, 0.0f, 0.0f}};
+	return push;
+}
+
 static DrawPushConstants torch_push(const LocalToWorldTransform *transform,
 									const GltfMaterial *material, WorldPosition camera_position)
 {
@@ -69,6 +83,17 @@ static DrawPushConstants torch_push(const LocalToWorldTransform *transform,
 	};
 }
 
+static DungeonPoint segment_closest_point(DungeonPoint point, DungeonSegment segment)
+{
+	float dx = segment.b.x - segment.a.x, dz = segment.b.z - segment.a.z;
+	float length2 = dx * dx + dz * dz;
+	float t = length2 > 1e-12f
+				 ? ((point.x - segment.a.x) * dx + (point.z - segment.a.z) * dz) / length2
+				 : 0.0f;
+	t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+	return (DungeonPoint){segment.a.x + dx * t, segment.a.z + dz * t};
+}
+
 static bool mount_torch(const DungeonLevel *level, DungeonLight *light,
 						LocalToWorldTransform *transform)
 {
@@ -76,11 +101,9 @@ static bool mount_torch(const DungeonLevel *level, DungeonLight *light,
 	DungeonPoint mount = {0}, inward = {0};
 	for (uint32_t i = 0; i < level->collider_count; ++i)
 	{
-		DungeonRect wall = level->colliders[i].bounds;
-		DungeonPoint point = {
-			fminf(fmaxf(light->position.x, wall.min.x), wall.max.x),
-			fminf(fmaxf(light->position.z, wall.min.z), wall.max.z),
-		};
+		if (level->colliders[i].type != DUNGEON_COLLIDER_SEGMENT)
+			continue;
+		DungeonPoint point = segment_closest_point(light->position, level->colliders[i].segment);
 		float dx = light->position.x - point.x, dz = light->position.z - point.z;
 		float distance2 = dx * dx + dz * dz;
 		if (distance2 > 1e-6f && distance2 < best_distance2)
@@ -106,21 +129,36 @@ static bool mount_torch(const DungeonLevel *level, DungeonLight *light,
 	return true;
 }
 
-bool dungeon_scene_create(Renderer *renderer, const char *map_path, DungeonScene *out,
-						  DungeonLevelError *error)
+bool dungeon_scene_create(Renderer *renderer, DungeonScene *out, DungeonLevelError *error)
 {
-	if (!renderer || !map_path || !out)
+	if (!renderer || !out)
 		return false;
 	*out = (DungeonScene){0};
-	if (!dungeon_grid_compile_file(map_path, 2.0f, &out->level, error) ||
-		!dungeon_mesh_build(&out->level, &out->geometry, error))
+	const char *map_override = getenv("DUNGEON_MAP");
+	bool compiled;
+	if (map_override)
+		compiled = dungeon_grid_compile_file(map_override, 2.0f, &out->level, error);
+	else
+	{
+		uint32_t seed = 1u;
+		const char *seed_env = getenv("DUNGEON_SEED");
+		if (seed_env)
+			seed = (uint32_t)strtoul(seed_env, NULL, 10);
+		DungeonCaveParams params = dungeon_cave_default_params(seed);
+		compiled = dungeon_cave_compile(&params, &out->level, error);
+	}
+	if (!compiled || !dungeon_mesh_build(&out->level, &out->geometry, error))
 	{
 		dungeon_scene_destroy(renderer, out);
 		return false;
 	}
+	texture_load(renderer->device, renderer->allocator, renderer->upload, &out->moss_albedo,
+		DUNGEON_TEXTURE_DIR "/moss.jpeg", renderer->max_anisotropy);
 	for (uint32_t i = 0; i < DUNGEON_MESH_BATCH_COUNT; ++i)
 	{
 		DungeonMeshBatch *batch = &out->geometry.batches[i];
+		if (!batch->vertex_count)
+			continue; /* e.g. no puddles were placed; leave uploaded[i] false */
 		out->meshes[i] = (Mesh){
 			.local_to_world = coordinate_identity_transform((WorldPosition){0}),
 			.vertices = batch->vertices,
@@ -133,7 +171,22 @@ bool dungeon_scene_create(Renderer *renderer, const char *map_path, DungeonScene
 		};
 		mesh_upload(renderer, &out->meshes[i]);
 		out->uploaded[i] = true;
+		if (i == DUNGEON_MESH_FLOOR || i == DUNGEON_MESH_WALL)
+		{
+			/* The surface permutation uses binding 3 for the user's moss JPEG. */
+			VkDescriptorImageInfo image = {.sampler = out->moss_albedo.sampler,
+				.imageView = out->moss_albedo.view,
+				.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+			VkWriteDescriptorSet write = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+				.dstSet = out->meshes[i].material_set, .dstBinding = 3,
+				.descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.pImageInfo = &image};
+			vkUpdateDescriptorSets(renderer->device, 1, &write, 0, NULL);
+		}
 	}
+	fprintf(stdout, "Moss: %u tufts, %u triangles\n",
+		out->geometry.batches[DUNGEON_MESH_MOSS].vertex_count / 180u,
+		out->geometry.batches[DUNGEON_MESH_MOSS].index_count / 3u);
 	dungeon_player_init(&out->player, out->level.spawn);
 	out->light_count = dungeon_lighting_build(&out->level, out->lights, DUNGEON_MAX_LIGHTS);
 	GltfLoadError torch_error = {0};
@@ -152,34 +205,48 @@ bool dungeon_scene_create(Renderer *renderer, const char *map_path, DungeonScene
 		if (mount_torch(&out->level, &out->lights[i],
 						&out->torch_transforms[out->torch_count]))
 			++out->torch_count;
-	fprintf(stdout, "Dungeon: %s: %u floor runs, %u wall solids, %u draw batches\n", map_path,
-			out->level.surface_count, out->level.solid_count,
-			DUNGEON_MESH_BATCH_COUNT + out->torch_count * out->torch.primitive_count);
+	uint32_t uploaded_batches = 0;
+	for (uint32_t i = 0; i < DUNGEON_MESH_BATCH_COUNT; ++i)
+		uploaded_batches += out->uploaded[i] ? 1u : 0u;
+	fprintf(stdout,
+		   "Dungeon: %s: %u collider segments, %u puddles, %u draw batches\n",
+		   map_override ? map_override : "procedural cave", out->level.collider_count,
+		   out->level.puddle_count, uploaded_batches + out->torch_count * out->torch.primitive_count);
 	return true;
 }
 
 uint32_t dungeon_scene_draws(DungeonScene *scene, WorldPosition camera_position,
-							 RendererDraw *out, uint32_t capacity)
+							 RendererDraw *out, uint32_t capacity, uint32_t *out_shadow_draw_count)
 {
-	if (!scene || !out || capacity < DUNGEON_MESH_BATCH_COUNT)
+	if (!scene || !out)
 		return 0;
 	scene->meshes[DUNGEON_MESH_PLAYER].local_to_world.translation =
 		(WorldPosition){scene->player.position.x, scene->level.floor_y + 0.03f,
 						 scene->player.position.z};
-	for (uint32_t i = 0; i < DUNGEON_MESH_BATCH_COUNT; ++i)
-		out[i] = (RendererDraw){.mesh = &scene->meshes[i],
-								.material_set = scene->meshes[i].material_set,
-								.push = i == DUNGEON_MESH_PLAYER
-									? player_push(&scene->meshes[i], camera_position)
-									: dungeon_push(&scene->meshes[i], camera_position),
-								.static_mesh = true};
-	uint32_t draw_count = DUNGEON_MESH_BATCH_COUNT;
-	for (uint32_t instance = 0; instance < scene->torch_count; ++instance)
+	uint32_t draw_count = 0;
+	for (uint32_t i = 0; i < DUNGEON_MESH_BATCH_COUNT && draw_count < capacity; ++i)
+	{
+		if (i == DUNGEON_MESH_PUDDLE || !scene->uploaded[i])
+			continue; /* puddles are appended last, below, and excluded from shadows */
+		out[draw_count++] = (RendererDraw){.mesh = &scene->meshes[i],
+											.material_set = scene->meshes[i].material_set,
+											.push = i == DUNGEON_MESH_PLAYER
+												? player_push(&scene->meshes[i], camera_position)
+												: dungeon_push(&scene->meshes[i], camera_position),
+											.static_mesh = true,
+											.pipeline = (i == DUNGEON_MESH_WALL || i == DUNGEON_MESH_FLOOR)
+												? RENDERER_PIPELINE_DUNGEON_SURFACE
+												: i == DUNGEON_MESH_MOSS ? RENDERER_PIPELINE_DUNGEON_MOSS
+												: RENDERER_PIPELINE_AUTO};
+		/* Opaque surfaces use alpha to carry floor height in mesh coordinates. */
+		out[draw_count - 1].push.geometry.w = scene->level.floor_y;
+	}
+	for (uint32_t instance = 0; instance < scene->torch_count && draw_count < capacity; ++instance)
 		for (uint32_t primitive_index = 0; primitive_index < scene->torch.primitive_count;
 			 ++primitive_index)
 		{
 			if (draw_count >= capacity)
-				return draw_count;
+				break;
 			GltfPrimitive *primitive = &scene->torch.primitives[primitive_index];
 			GltfMaterial *material = &scene->torch.materials[primitive->material_index];
 			out[draw_count++] = (RendererDraw){
@@ -189,6 +256,15 @@ uint32_t dungeon_scene_draws(DungeonScene *scene, WorldPosition camera_position,
 				.static_mesh = true,
 			};
 		}
+	if (out_shadow_draw_count)
+		*out_shadow_draw_count = draw_count; /* a flat coplanar disc casts nothing worth shadowing */
+	if (scene->uploaded[DUNGEON_MESH_PUDDLE] && draw_count < capacity)
+		out[draw_count++] = (RendererDraw){
+			.mesh = &scene->meshes[DUNGEON_MESH_PUDDLE],
+			.material_set = scene->meshes[DUNGEON_MESH_PUDDLE].material_set,
+			.push = puddle_push(&scene->meshes[DUNGEON_MESH_PUDDLE], camera_position),
+			.static_mesh = true,
+			.pipeline = RENDERER_PIPELINE_DUNGEON_PUDDLE};
 	return draw_count;
 }
 
@@ -217,22 +293,53 @@ uint32_t dungeon_scene_write_lights(const DungeonScene *scene, WorldPosition cam
 	return count;
 }
 
+static int compare_blocker_distance2(const void *lhs, const void *rhs)
+{
+	const float *a = lhs, *b = rhs;
+	return a[0] < b[0] ? -1 : (a[0] > b[0] ? 1 : 0);
+}
+
 uint32_t dungeon_scene_write_light_blockers(const DungeonScene *scene,
 										WorldPosition camera_position, vec4s *blockers,
 										uint32_t capacity)
 {
 	if (!scene || !blockers)
 		return 0;
-	uint32_t count = scene->level.collider_count < capacity ? scene->level.collider_count : capacity;
-	for (uint32_t i = 0; i < count; ++i)
+	const DungeonLevel *level = &scene->level;
+	DungeonPoint camera_xz = {(float)camera_position.x, (float)camera_position.z};
+	if (level->occluder_count <= capacity)
 	{
-		DungeonRect bounds = scene->level.colliders[i].bounds;
-		blockers[i] = (vec4s){{bounds.min.x - (float)camera_position.x,
-								 bounds.min.z - (float)camera_position.z,
-								 bounds.max.x - (float)camera_position.x,
-								 bounds.max.z - (float)camera_position.z}};
+		for (uint32_t i = 0; i < level->occluder_count; ++i)
+		{
+			DungeonSegment segment = level->occluders[i];
+			blockers[i] = (vec4s){{segment.a.x - camera_xz.x, segment.a.z - camera_xz.z,
+									 segment.b.x - camera_xz.x, segment.b.z - camera_xz.z}};
+		}
+		return level->occluder_count;
 	}
-	return count;
+	/* More occluders than the fixed-size shader array holds: keep whichever
+	 * are nearest the camera. Runs once per frame over at most a few hundred
+	 * segments, so a plain sort is cheap enough not to need anything
+	 * cleverer. */
+	float(*ranked)[2] = malloc(level->occluder_count * sizeof(*ranked));
+	if (!ranked)
+		return 0;
+	for (uint32_t i = 0; i < level->occluder_count; ++i)
+	{
+		DungeonPoint closest = segment_closest_point(camera_xz, level->occluders[i]);
+		float dx = camera_xz.x - closest.x, dz = camera_xz.z - closest.z;
+		ranked[i][0] = dx * dx + dz * dz;
+		ranked[i][1] = (float)i;
+	}
+	qsort(ranked, level->occluder_count, sizeof(*ranked), compare_blocker_distance2);
+	for (uint32_t i = 0; i < capacity; ++i)
+	{
+		DungeonSegment segment = level->occluders[(uint32_t)ranked[i][1]];
+		blockers[i] = (vec4s){{segment.a.x - camera_xz.x, segment.a.z - camera_xz.z,
+								 segment.b.x - camera_xz.x, segment.b.z - camera_xz.z}};
+	}
+	free(ranked);
+	return capacity;
 }
 
 void dungeon_scene_destroy(Renderer *renderer, DungeonScene *scene)
@@ -245,6 +352,7 @@ void dungeon_scene_destroy(Renderer *renderer, DungeonScene *scene)
 		for (uint32_t i = 0; i < DUNGEON_MESH_BATCH_COUNT; ++i)
 			if (scene->uploaded[i])
 				mesh_destroy(renderer, &scene->meshes[i]);
+		texture_destroy(renderer->device, renderer->allocator, &scene->moss_albedo);
 	}
 	else
 		gltf_scene_destroy(NULL, &scene->torch);

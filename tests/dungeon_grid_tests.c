@@ -10,9 +10,12 @@ static void valid_map_compiles_to_generic_level(void)
 	DungeonLevel level = {0};
 	DungeonLevelError error = {0};
 	assert(dungeon_grid_compile_text(map, 2.0f, &level, &error));
-	assert(level.surface_count == 3);
-	assert(level.solid_count > 0);
-	assert(level.collider_count == level.solid_count);
+	assert(level.floor_triangles.vertex_count > 0u);
+	assert(level.plateau_triangles.vertex_count > 0u);
+	assert(level.contours.loop_count >= 1u);
+	assert(level.collider_count > 0u);
+	assert(level.occluder_count > 0u);
+	assert(level.puddle_count == 0u); /* the ASCII frontend places no puddles */
 	assert(level.spawn.x == -2.0f && level.spawn.z == -2.0f);
 	assert(level.exit.x == 2.0f && level.exit.z == 2.0f);
 	dungeon_level_destroy(&level);
@@ -38,9 +41,10 @@ static void checked_in_example_is_stable(void)
 	DungeonLevel level = {0};
 	DungeonLevelError error = {0};
 	assert(dungeon_grid_compile_file(DUNGEON_MAP_PATH, 2.0f, &level, &error));
-	assert(level.surface_count == 47u);
-	assert(level.solid_count == 22u);
-	assert(level.collider_count == 22u);
+	assert(level.floor_triangles.vertex_count > 0u);
+	assert(level.plateau_triangles.vertex_count > 0u);
+	assert(level.collider_count > 0u);
+	assert(level.spawn.x != level.exit.x || level.spawn.z != level.exit.z);
 	dungeon_level_destroy(&level);
 #endif
 }

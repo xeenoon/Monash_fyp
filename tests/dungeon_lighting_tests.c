@@ -11,7 +11,7 @@ int main(void)
 	assert(dungeon_light_attenuation(5.0f, 5.0f) == 0.0f);
 	assert(dungeon_light_attenuation(6.0f, 5.0f) == 0.0f);
 	DungeonCollider blocker = {
-		.type = DUNGEON_COLLIDER_AABB, .bounds = {{1.0f, -1.0f}, {2.0f, 1.0f}}};
+		.type = DUNGEON_COLLIDER_SEGMENT, .segment = {{1.0f, -1.0f}, {1.0f, 1.0f}}};
 	assert(dungeon_light_segment_blocked((DungeonPoint){0.0f, 0.0f},
 									   (DungeonPoint){3.0f, 0.0f}, &blocker, 1));
 	assert(!dungeon_light_segment_blocked((DungeonPoint){0.0f, 2.0f},

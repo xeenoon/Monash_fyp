@@ -25,15 +25,6 @@ static bool fail(DungeonLevelError *error, size_t line, size_t column, const cha
 	return false;
 }
 
-static DungeonRect cell_rect(size_t x, size_t z, size_t width, size_t height, float cell_size)
-{
-	float origin_x = -(float)width * cell_size * 0.5f;
-	float origin_z = -(float)height * cell_size * 0.5f;
-	return (DungeonRect){{origin_x + (float)x * cell_size, origin_z + (float)z * cell_size},
-						 {origin_x + (float)(x + 1) * cell_size,
-						  origin_z + (float)(z + 1) * cell_size}};
-}
-
 static bool walkable(char cell)
 {
 	return cell == '.' || cell == 'S' || cell == 'E';
@@ -158,90 +149,39 @@ static bool validate_markers_and_reachability(const Grid *grid, size_t *spawn_in
 								 *exit_index % grid->width + 1, "exit is unreachable from spawn");
 }
 
-static bool compile_surfaces(const Grid *grid, float cell_size, DungeonLevel *level,
-							 DungeonLevelError *error)
+static DungeonPoint cell_center(const Grid *grid, float cell_size, size_t x, size_t z)
 {
-	/* Merge horizontal runs. This keeps the output generic and compact while
-	 * retaining uncomplicated metre-scaled UV generation downstream. */
-	level->surfaces = calloc(grid->width * grid->height, sizeof(*level->surfaces));
-	if (!level->surfaces)
-		return fail(error, 0, 0, "out of memory");
-	for (size_t z = 0; z < grid->height; ++z)
-	{
-		for (size_t x = 0; x < grid->width;)
-		{
-			if (!walkable(grid->cells[z * grid->width + x]))
-			{
-				++x;
-				continue;
-			}
-			size_t end = x + 1;
-			while (end < grid->width && walkable(grid->cells[z * grid->width + end]))
-				++end;
-			DungeonRect first = cell_rect(x, z, grid->width, grid->height, cell_size);
-			DungeonRect last = cell_rect(end - 1, z, grid->width, grid->height, cell_size);
-			level->surfaces[level->surface_count++] = (DungeonSurface){
-				.footprint = {first.min, last.max}, .elevation = 0.0f, .material = 0};
-			x = end;
-		}
-	}
-	return true;
+	float origin_x = -(float)grid->width * cell_size * 0.5f;
+	float origin_z = -(float)grid->height * cell_size * 0.5f;
+	return (DungeonPoint){origin_x + ((float)x + 0.5f) * cell_size,
+						  origin_z + ((float)z + 0.5f) * cell_size};
 }
 
-static bool compile_solids(const Grid *grid, float cell_size, DungeonLevel *level,
-						  DungeonLevelError *error)
+/* Rasterizes the char grid into a field whose corners sit at cell CENTERS,
+ * with one extra ring of always-solid corners around the outside. Placing
+ * corners at centers (rather than at cell boundaries) means the crossing
+ * marching squares finds between two hard 0/1 corners falls exactly halfway
+ * between them -- i.e. exactly on the true shared cell edge -- so the ASCII
+ * frontend still reconstructs crisp rectilinear rooms despite going through
+ * the same continuous-field pipeline as the cave generator. The solid outer
+ * ring guarantees a closed border, same invariant dungeon_cave keeps by
+ * staying inside its margin. */
+static bool rasterize(const Grid *grid, float cell_size, DungeonField *out)
 {
-	size_t count = grid->width * grid->height;
-	bool *used = calloc(count, sizeof(*used));
-	level->solids = calloc(count, sizeof(*level->solids));
-	level->colliders = calloc(count, sizeof(*level->colliders));
-	if (!used || !level->solids || !level->colliders)
-	{
-		free(used);
-		return fail(error, 0, 0, "out of memory");
-	}
-	for (size_t z = 0; z < grid->height; ++z)
-	{
-		for (size_t x = 0; x < grid->width; ++x)
+	uint32_t width = (uint32_t)grid->width + 2u;
+	uint32_t height = (uint32_t)grid->height + 2u;
+	float origin_x = -(float)grid->width * cell_size * 0.5f - 0.5f * cell_size;
+	float origin_z = -(float)grid->height * cell_size * 0.5f - 0.5f * cell_size;
+	if (!dungeon_field_create(width, height, cell_size, (DungeonPoint){origin_x, origin_z}, out))
+		return false;
+	for (uint32_t fz = 0; fz < height; ++fz)
+		for (uint32_t fx = 0; fx < width; ++fx)
 		{
-			size_t index = z * grid->width + x;
-			if (grid->cells[index] != '#' || used[index])
-				continue;
-			size_t run_width = 1;
-			while (x + run_width < grid->width &&
-				   grid->cells[z * grid->width + x + run_width] == '#' &&
-				   !used[z * grid->width + x + run_width])
-				++run_width;
-			size_t run_height = 1;
-			for (;;)
-			{
-				size_t nz = z + run_height;
-				if (nz >= grid->height)
-					break;
-				bool full = true;
-				for (size_t rx = 0; rx < run_width; ++rx)
-					if (grid->cells[nz * grid->width + x + rx] != '#' ||
-						used[nz * grid->width + x + rx])
-						full = false;
-				if (!full)
-					break;
-				++run_height;
-			}
-			for (size_t rz = 0; rz < run_height; ++rz)
-				for (size_t rx = 0; rx < run_width; ++rx)
-					used[(z + rz) * grid->width + x + rx] = true;
-			DungeonRect first = cell_rect(x, z, grid->width, grid->height, cell_size);
-			DungeonRect last =
-				cell_rect(x + run_width - 1, z + run_height - 1, grid->width, grid->height,
-						  cell_size);
-			DungeonRect bounds = {first.min, last.max};
-			level->solids[level->solid_count++] =
-				(DungeonSolid){.footprint = bounds, .base_y = 0.0f, .height = 2.4f, .material = 1};
-			level->colliders[level->collider_count++] =
-				(DungeonCollider){.type = DUNGEON_COLLIDER_AABB, .bounds = bounds};
+			long cx = (long)fx - 1, cz = (long)fz - 1;
+			bool open = cx >= 0 && cz >= 0 && (size_t)cx < grid->width && (size_t)cz < grid->height &&
+					   walkable(grid->cells[(size_t)cz * grid->width + (size_t)cx]);
+			dungeon_field_set(out, fx, fz, open ? 1.0f : 0.0f);
 		}
-	}
-	free(used);
 	return true;
 }
 
@@ -264,22 +204,17 @@ bool dungeon_grid_compile_text(const char *text, float cell_size, DungeonLevel *
 		grid_destroy(&grid);
 		return false;
 	}
-	out->cell_size = cell_size;
-	out->floor_y = 0.0f;
-	DungeonRect spawn_rect = cell_rect(spawn % grid.width, spawn / grid.width, grid.width,
-									grid.height, cell_size);
-	DungeonRect exit_rect = cell_rect(exit % grid.width, exit / grid.width, grid.width, grid.height,
-								 cell_size);
-	out->spawn = (DungeonPoint){(spawn_rect.min.x + spawn_rect.max.x) * 0.5f,
-							  (spawn_rect.min.z + spawn_rect.max.z) * 0.5f};
-	out->exit = (DungeonPoint){(exit_rect.min.x + exit_rect.max.x) * 0.5f,
-						   (exit_rect.min.z + exit_rect.max.z) * 0.5f};
-	bool ok = compile_surfaces(&grid, cell_size, out, error) &&
-			  compile_solids(&grid, cell_size, out, error);
+	DungeonPoint spawn_point = cell_center(&grid, cell_size, spawn % grid.width, spawn / grid.width);
+	DungeonPoint exit_point = cell_center(&grid, cell_size, exit % grid.width, exit / grid.width);
+	DungeonField field = {0};
+	if (!rasterize(&grid, cell_size, &field))
+	{
+		grid_destroy(&grid);
+		return fail(error, 0, 0, "out of memory rasterizing map");
+	}
 	grid_destroy(&grid);
-	if (!ok)
-		dungeon_level_destroy(out);
-	return ok;
+	return dungeon_level_compile_field(&field, spawn_point, exit_point, NULL, 0u, 0.0f, 2.4f, out,
+									   error);
 }
 
 bool dungeon_grid_compile_file(const char *path, float cell_size, DungeonLevel *out,
@@ -317,4 +252,3 @@ bool dungeon_grid_compile_file(const char *path, float cell_size, DungeonLevel *
 	free(text);
 	return ok;
 }
-

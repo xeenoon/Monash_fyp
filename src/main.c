@@ -290,7 +290,7 @@ int main(int argc, char *argv[])
 	else if (use_dungeon)
 	{
 		DungeonLevelError dungeon_error = {0};
-		if (!dungeon_scene_create(&renderer, DUNGEON_MAP_PATH, &dungeon, &dungeon_error))
+		if (!dungeon_scene_create(&renderer, &dungeon, &dungeon_error))
 		{
 			fprintf(stderr, "Could not load dungeon: %s\n", dungeon_error.message);
 			load_result = GLTF_LOAD_INVALID;
@@ -703,10 +703,9 @@ int main(int argc, char *argv[])
 		if (use_dungeon)
 		{
 			active_draw_count = dungeon_scene_draws(&dungeon, camera.position, dungeon_draws,
-											 DUNGEON_MAX_DRAWS);
+											 DUNGEON_MAX_DRAWS, &active_shadow_draw_count);
 			active_draws = dungeon_draws;
 			active_shadow_draws = dungeon_draws;
-			active_shadow_draw_count = active_draw_count;
 		}
 		if (use_quarry)
 		{

@@ -3,11 +3,11 @@ project(terrain_renderer C)
 
 include(CTest)
 
-# Debug-only diagnostic: every instrumented fragment shader (see shaders/shader_dump.glsl)
-# writes a per-fragment record buffer that the 'X' key dumps to a CSV file (cleared
-# with 'C' or a clean build). Off by default; enable with -DDEBUG_SHADER_DUMP=ON.
-# See renderer_dump_shader_data.
-option(DEBUG_SHADER_DUMP "Enable the 'X'-key per-fragment shader data dump" OFF)
+# Every regular build includes the opt-in-at-runtime per-fragment diagnostic
+# sink (see shaders/shader_dump.glsl): X captures a frame and C clears the dump.
+# Keep an escape hatch for memory-constrained builds, but make diagnostics the
+# default so a normal configure is immediately able to capture rendering bugs.
+option(DEBUG_SHADER_DUMP "Enable the 'X'-key per-fragment shader data dump" ON)
 option(TERRAIN_STRETCH_OVERLAY
     "Compile the diagnostic red terrain texture-stretch overlay" OFF)
 option(TERRAIN_GOLDEN
@@ -73,7 +73,8 @@ endif()
 # nested #ifdef combinations with no inventory. Shared includes (common.glsl)
 # are picked up automatically via the per-shader depfile below, so editing an
 # include rebuilds every dependent shader.
-foreach(SHADER cube.vert cube.frag terrain.vert terrain.frag mesh.vert mesh.frag shadow.vert
+foreach(SHADER cube.vert cube.frag terrain.vert terrain.frag mesh.vert mesh.frag
+               dungeon_surface.frag dungeon_moss.frag dungeon_puddle.frag shadow.vert
                fullscreen.vert tonemap.frag atmosphere_composite.frag
                temporal_resolve.frag luminance_histogram.comp exposure.comp
                atmosphere_transmittance.comp
@@ -325,6 +326,9 @@ endif()
 
 add_library(dungeon_level STATIC
     src/dungeon_level.c
+    src/dungeon_field.c
+    src/dungeon_cave.c
+    src/dungeon_contour.c
     src/dungeon_grid.c
     src/dungeon_mesh.c
     src/dungeon_collision.c
@@ -337,7 +341,7 @@ endif()
 
 if(BUILD_TESTING)
     add_executable(dungeon_grid_tests tests/dungeon_grid_tests.c)
-    target_link_libraries(dungeon_grid_tests PRIVATE dungeon_level)
+    target_link_libraries(dungeon_grid_tests PRIVATE dungeon_level m)
     target_compile_definitions(dungeon_grid_tests PRIVATE
         DUNGEON_MAP_PATH="${CMAKE_CURRENT_SOURCE_DIR}/assets/dungeons/example.map")
     add_test(NAME dungeon_grid_compiler COMMAND dungeon_grid_tests)
@@ -362,7 +366,20 @@ if(BUILD_TESTING)
     add_executable(dungeon_lighting_tests tests/dungeon_lighting_tests.c)
     target_link_libraries(dungeon_lighting_tests PRIVATE dungeon_level m)
     add_test(NAME dungeon_indoor_lighting COMMAND dungeon_lighting_tests)
+
+    add_executable(dungeon_contour_tests tests/dungeon_contour_tests.c)
+    target_link_libraries(dungeon_contour_tests PRIVATE dungeon_level m)
+    add_test(NAME dungeon_marching_squares COMMAND dungeon_contour_tests)
+
+    add_executable(dungeon_cave_tests tests/dungeon_cave_tests.c)
+    target_link_libraries(dungeon_cave_tests PRIVATE dungeon_level m)
+    add_test(NAME dungeon_cave_generation COMMAND dungeon_cave_tests)
 endif()
+
+# Dev tool: dumps a generated cave's field for tools/preview_cave.py to render
+# as a PNG, so layouts are inspected from a file rather than the running game.
+add_executable(dungeon_cave_dump tools/dungeon_cave_dump.c)
+target_link_libraries(dungeon_cave_dump PRIVATE dungeon_level m)
 
 add_executable(terrain_renderer
     src/main.c
@@ -428,7 +445,6 @@ target_compile_definitions(terrain_renderer PRIVATE
     UNSHADOWED_ALPS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/alps-data/trn-alps-16km"
     GRADED_ALPS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/alps-data/trn-alps-16km-graded"
     ENV_HDR_PATH="${CMAKE_CURRENT_SOURCE_DIR}/assets/env.hdr"
-    DUNGEON_MAP_PATH="${CMAKE_CURRENT_SOURCE_DIR}/assets/dungeons/example.map"
     DUNGEON_TORCH_PATH="${CMAKE_CURRENT_SOURCE_DIR}/assets/dungeons/torch/walltorch.gltf"
     DUNGEON_TEXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/textures/dungeon/runtime"
     CGLM_FORCE_DEPTH_ZERO_TO_ONE)

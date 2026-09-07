@@ -5,12 +5,11 @@
 #include "pbr_common.glsl"
 #include "environment_lighting.glsl"
 #include "material_detail.glsl"
+#include "dungeon_noise.glsl"
 #include "shader_dump.glsl"
 
-/* Opaque, single-pass forward shading with no discard/gl_FragDepth write:
-   safe to resolve the depth test before running the fragment shader, which
-   also collapses shader_dump() records toward ~1/pixel instead of counting
-   every overdrawn fragment. */
+/* Dungeon floor/wall PBR permutation. Moss uses the user-provided JPEG at
+   binding 3; height above the floor excludes the plateau cap. */
 layout(early_fragment_tests) in;
 
 layout(location = 0) in vec2 uv;
@@ -19,14 +18,15 @@ layout(location = 2) in vec4 tangent;
 layout(location = 3) in vec3 camera_relative_position;
 layout(location = 4) in vec4 current_clip;
 layout(location = 5) in vec4 previous_clip;
+layout(location = 6) in vec3 local_position;
 layout(location = 0) out vec4 out_color;
 layout(location = 1) out vec2 out_motion;
 
 layout(set = 1, binding = 0) uniform sampler2D albedo_map;
 layout(set = 1, binding = 1) uniform sampler2D orm_map;
 layout(set = 1, binding = 2) uniform sampler2D normal_map;
-layout(set = 1, binding = 3) uniform sampler2D occlusion_map;
-layout(set = 1, binding = 4) uniform sampler2D cavity_map;
+layout(set = 1, binding = 3) uniform sampler2D moss_albedo_map;
+
 
 layout(push_constant) uniform DrawData {
     mat4 local_to_camera_relative;
@@ -42,8 +42,6 @@ vec3 fallback_tangent(vec3 N) {
     return normalize(cross(axis, N));
 }
 
-/* glTF tangents may be absent or collapse while being interpolated. Rebuild a
-   stable orthonormal frame in that case, and always renormalize it per pixel. */
 mat3 tangent_frame(vec3 interpolated_normal, vec4 interpolated_tangent) {
     float normal_length2 = dot(interpolated_normal, interpolated_normal);
     vec3 N = normal_length2 > 1e-10
@@ -59,25 +57,21 @@ mat3 tangent_frame(vec3 interpolated_normal, vec4 interpolated_tangent) {
         : projected_tangent * inversesqrt(tangent_length2);
     float handedness = interpolated_tangent.w < 0.0 ? -1.0 : 1.0;
     vec3 B = normalize(cross(N, T)) * handedness;
-    /* Recompute T so all three interpolated axes are mutually orthogonal. */
     T = normalize(cross(B, N)) * handedness;
     return mat3(T, B, N);
 }
 
-/* `blocker` is a wall-footprint segment (ax,az,bx,bz) -- the dungeon's cave
-   walls are not axis-aligned, so this is a 2D segment/segment intersection,
-   not a slab test against a bounding rectangle. Mirrors the CPU-side
-   segments_intersect() in dungeon_lighting.c exactly. */
+/* `blocker` is a wall-footprint segment (ax,az,bx,bz) -- see the matching
+   comment in mesh.frag. */
 bool segment_crosses_blocker(vec2 start, vec2 end, vec4 blocker) {
     vec2 d1 = end - start;
     vec2 d2 = blocker.zw - blocker.xy;
     float denom = d1.x * d2.y - d1.y * d2.x;
     if (abs(denom) < 1e-9)
-        return false; /* parallel (or collinear); never occludes */
+        return false;
     vec2 e = blocker.xy - start;
     float t = (e.x * d2.y - e.y * d2.x) / denom;
     float u = (e.x * d1.y - e.y * d1.x) / denom;
-    /* Do not let the wall carrying a light shadow its own endpoint. */
     return t > 0.002 && t < 0.998 && u >= 0.0 && u <= 1.0;
 }
 
@@ -90,10 +84,6 @@ bool point_light_occluded(vec3 surface_position, vec3 light_position) {
     return false;
 }
 
-
-/* Static-mesh shading: photogrammetry albedo/ORM/normal sampled directly
-   through the asset's own unwrapped UVs. Lighting matches the terrain forward
-   pass so the two stay visually consistent. */
 void main() {
     vec4 base_color_sample = texture(albedo_map, uv);
     vec3 base_color = base_color_sample.rgb * draw.geometry.rgb;
@@ -105,6 +95,33 @@ void main() {
     vec3 tangent_normal = filtered_normal / filtered_normal_length;
     tangent_normal.xy *= normal_scale;
     tangent_normal = normalize(tangent_normal);
+
+    vec3 world_position = local_position; // dungeon meshes are authored in world metres
+    float height_above_floor = local_position.y - draw.geometry.w;
+    // The cap shares the wall batch. Fade out before its upper edge; downward
+    // facing surfaces never support moss, even if ceilings are added later.
+    float surface_mask = (1.0 - smoothstep(0.75, 1.65, height_above_floor)) *
+                         smoothstep(-0.1, 0.2, normalize(normal).y + 0.5);
+    // Same fixed cluster field as the CPU foliage scatter; never camera phased.
+    float cluster = sin(world_position.x * 0.83 + sin(world_position.z * 0.57)) *
+                  sin(world_position.z * 0.91 + sin(world_position.x * 0.43));
+    float moss_noise = cluster * 0.5 + 0.5;
+    float moss_ao_term = 1.0 - orm.r;
+    float recess_mask = smoothstep(0.035, 0.14, moss_ao_term);
+    float base_width = abs(normalize(normal).y) > 0.5 ? 2.4 : 1.8;
+    // Double the old physical scale. Blend independently offset/rotated
+    // samples with a slow, fixed mask to break the repeated square image.
+    vec2 moss_uv = uv * base_width * 0.5;
+    vec3 moss_a = texture(moss_albedo_map, moss_uv).rgb;
+    vec3 moss_b = texture(moss_albedo_map, mat2(0.6, 0.8, -0.8, 0.6) * moss_uv * 0.83 + 0.37).rgb;
+    float variation = smoothstep(-0.16, 0.16, dungeon_fbm(world_position.xz * 0.37));
+    vec3 moss_color = mix(moss_a, moss_b, variation);
+    float moss_mask = surface_mask * 0.65 * smoothstep(0.28, 0.65, cluster + recess_mask * 0.06);
+    base_color = mix(base_color, moss_color, moss_mask);
+    // Keep the underlying stone relief, softened by the moss cover.
+    tangent_normal = normalize(mix(tangent_normal,
+        normalize(vec3(tangent_normal.xy * 0.4, tangent_normal.z)), moss_mask));
+
     bool default_lit = draw.material_factors.y > 0.5;
     vec3 geometric_normal = normalize(normal);
     vec3 mapped_normal;
@@ -112,7 +129,6 @@ void main() {
         mat3 tbn = tangent_frame(normal, tangent);
         mapped_normal = normalize(tbn * tangent_normal);
     } else {
-        /* Exact legacy tangent construction, including its unguarded inputs. */
         vec3 legacy_normal = normalize(normal);
         vec3 T = normalize(tangent.xyz -
                            legacy_normal * dot(legacy_normal, tangent.xyz));
@@ -122,14 +138,14 @@ void main() {
     }
     vec3 L = normalize(-frame.sun_direction.xyz);
     vec3 V = normalize(-camera_relative_position);
-    /* Default Lit normal maps must shade the visible hemisphere. Preserve the
-       legacy Quarry path verbatim for its F3 comparison. */
     if (default_lit && dot(mapped_normal, V) < 0.0)
         mapped_normal = -mapped_normal;
     vec3 N = mapped_normal;
     float NoL = max(dot(N, L), 0.0);
     float authored_roughness = material_authored_roughness(orm.g, draw.elevation_uv.x,
                                                             draw.elevation_uv.w);
+    float authored_roughness_before_moss = authored_roughness;
+    authored_roughness = mix(authored_roughness, 0.92, moss_mask); /* moss reads matte */
     MaterialDetailResult detail = material_detail_evaluate(geometric_normal,
         filtered_normal_length, normal_scale, authored_roughness, draw.debug.w > 0.0);
     float roughness = detail.effective_roughness;
@@ -153,14 +169,6 @@ void main() {
     }
     ShadowResult shadow = shadow_evaluate(camera_relative_position, normalize(normal));
     float visibility = mix(1.0, shadow.visibility, draw.debug.z);
-    if (frame.debug_view > 6.5 && frame.debug_view < 7.5) {
-        const vec3 colors[5] = vec3[5](vec3(.95,.18,.12),vec3(.18,.82,.25),vec3(.15,.45,1),vec3(.95,.75,.1),vec3(.1));
-        out_color = vec4(colors[shadow.cascade], 1); return;
-    }
-    if (frame.debug_view > 7.5 && frame.debug_view < 8.5) { out_color = vec4(shadow.coordinate,1); return; }
-    if (frame.debug_view > 8.5 && frame.debug_view < 9.5) { out_color = vec4(vec3(visibility),1); return; }
-    if (frame.debug_view > 9.5 && frame.debug_view < 10.5) { out_color = vec4(vec3(clamp(shadow.receiver_bias/max(frame.shadow_parameters.x,1e-5),0,1)),1); return; }
-    if (frame.debug_view > 10.5 && frame.debug_view < 11.5) { float d=shadow.cascade<4u?texture(shadow_map_raw,vec3(shadow.coordinate.xy,float(shadow.cascade))).r:1.; out_color=vec4(vec3(d),1); return; }
     vec3 direct = (bxdf.diffuse + bxdf.specular) *
                   frame.sun_radiance.rgb * NoL * visibility;
     int point_light_count = clamp(int(frame.point_light_options.x + 0.5), 0, 16);
@@ -185,60 +193,29 @@ void main() {
         direct += (local_bxdf.diffuse + local_bxdf.specular) * color_intensity.rgb *
                   color_intensity.w * local_NoL * attenuation;
     }
-    /* Sky diffuse IBL (Phase B1). Falls back to the original hemispheric
-       constant when no HDR was loaded, or when the F3 cycle has it switched
-       off (material_factors.z), so the render is byte-identical to pre-
-       Phase-B in either case. AO (orm.r) applies only here, never to direct
-       or specular. */
     bool diffuse_ibl_enabled = draw.material_factors.z > 0.5;
     bool specular_ibl_enabled = draw.material_factors.w > 0.5;
     float ao_strength = draw.elevation_uv.z;
-    float ao = 1.0 + ao_strength * (texture(occlusion_map, uv).r - 1.0);
+    float ao = 1.0 + ao_strength * (orm.r - 1.0);
     EnvironmentLightingResult environment = environment_evaluate(
         camera_relative_position, N, V, roughness, F0, ao,
         diffuse_ibl_enabled, specular_ibl_enabled);
-    float cavity_sample = texture(cavity_map, uv).r;
+    float cavity_sample = 1.0;
     float cavity_visibility = material_visibility(cavity_sample, draw.debug.x);
     vec3 irradiance = environment.irradiance * frame.point_light_options.y;
     vec3 ambient = indirect_diffuse * irradiance * ao * cavity_visibility;
-    /* Sky specular IBL (Phase B2). Its own F3 step (material_factors.w),
-       one past diffuse-only, so B1 and B2 can be compared independently.
-       Reuses the analytic split-sum energy terms already computed for the
-       direct BRDF instead of a baked LUT. Its dedicated, view/roughness-aware
-       reflection visibility consumes AO; direct light remains unaffected. */
     vec3 specular_ibl = environment.final_specular * frame.point_light_options.z;
-    if (frame.debug_view > 2.5 && frame.debug_view < 3.5) { out_color = vec4(N * .5 + .5, 1); return; }
-    if (frame.debug_view > 3.5 && frame.debug_view < 4.5) { out_color = vec4(vec3(authored_roughness), 1); return; }
-    if (frame.debug_view > 4.5 && frame.debug_view < 5.5) { out_color = vec4(vec3(detail.geometric_floor), 1); return; }
-    /* Effective material-detail diagnostic: authored (R), effective (G),
-       curvature floor (B).  Green therefore appears only where D raises it. */
-    if (frame.debug_view > 5.5 && frame.debug_view < 6.5) { out_color = vec4(authored_roughness, roughness, detail.geometric_floor, 1); return; }
-    if (frame.debug_view > 20.5 && frame.debug_view < 21.5) { out_color = vec4(vec3(clamp((roughness - authored_roughness) * 20.0, 0.0, 1.0)), 1); return; }
     vec3 final_hdr = direct + ambient + specular_ibl;
     out_color = vec4(final_hdr, 1.0);
     vec2 current_uv = current_clip.xy / current_clip.w * 0.5 + 0.5;
     vec2 previous_uv = previous_clip.xy / previous_clip.w * 0.5 + 0.5;
     out_motion = draw.debug.y > 0.5 ? vec2(2.0) : previous_uv - current_uv;
 
-    /* See SHADER_DUMP_LEGEND["terrain/mesh"] in renderer.c for the f0..f19 layout. */
-    shader_dump(DUMP_SHADER_MESH,
-                vec4(uv, roughness, NoL),
-                vec4(base_color, visibility),
-                vec4(N, metallic),
-                vec4(camera_relative_position, default_lit ? 1.0 : 0.0),
-                vec4(irradiance, ao));
-    shader_dump(DUMP_SHADER_ENVIRONMENT_IBL,
-                vec4(environment.reflection_direction, environment.mip),
-                vec4(environment.sampled_reflection_radiance, environment.NoV),
-                vec4(environment.ggx_specular_energy, environment.reflection_visibility),
-                vec4(environment.unoccluded_specular, orm.r),
-                vec4(environment.final_specular, roughness));
-    shader_dump(DUMP_SHADER_MATERIAL_DETAIL,
-                vec4(detail.authored_roughness, detail.effective_roughness,
-                     detail.geometric_floor, detail.geometric_variance),
-                vec4(detail.filtered_normal_length, detail.mip_variance,
-                     detail.mip_kernel, detail.mip_roughness),
-                vec4(ao * cavity_visibility, cavity_visibility, draw.debug.w > 0.0 ? 1.0 : 0.0,
-                     normal_scale),
-                vec4(final_hdr, textureQueryLod(normal_map, uv).x), vec4(0.0));
+    /* See SHADER_DUMP_LEGEND["dungeon_surface"] in renderer.c for the f0..f19 layout. */
+    shader_dump(DUMP_SHADER_DUNGEON_SURFACE,
+                vec4(moss_mask, moss_noise, recess_mask, moss_ao_term),
+                vec4(base_color, moss_mask),
+                vec4(world_position, metallic),
+                vec4(N, roughness),
+                vec4(final_hdr, authored_roughness_before_moss));
 }

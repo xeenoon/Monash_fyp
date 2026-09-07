@@ -1,56 +1,38 @@
 #pragma once
 
+#include "dungeon_contour.h"
+#include "dungeon_field.h"
+#include "dungeon_geometry.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
 typedef struct
 {
-	float x, z;
-} DungeonPoint;
+	/* The field and its raw (full-resolution) contour loops, kept around
+	 * because lighting placement and future tooling need to resample the
+	 * cave, not just draw it. */
+	DungeonField field;
+	DungeonContourSet contours;
 
-typedef struct
-{
-	DungeonPoint min, max;
-} DungeonRect;
+	/* Flat XZ triangle fills sharing the contours' exact boundary -- lifted
+	 * to floor_y / (floor_y + wall_height) by dungeon_mesh_build. */
+	DungeonTriangleMesh floor_triangles;
+	DungeonTriangleMesh plateau_triangles;
 
-typedef struct
-{
-	DungeonRect footprint;
-	float elevation;
-	uint32_t material;
-} DungeonSurface;
-
-typedef struct
-{
-	DungeonRect footprint;
-	float base_y, height;
-	uint32_t material;
-} DungeonSolid;
-
-typedef enum
-{
-	DUNGEON_COLLIDER_AABB
-} DungeonColliderType;
-
-typedef struct
-{
-	DungeonColliderType type;
-	DungeonRect bounds;
-} DungeonCollider;
-
-typedef struct
-{
-	DungeonSurface *surfaces;
-	uint32_t surface_count;
-	DungeonSolid *solids;
-	uint32_t solid_count;
-	DungeonCollider *colliders;
+	DungeonCollider *colliders; /* contour decimated to ~0.4 m, for the player */
 	uint32_t collider_count;
+	DungeonSegment *occluders; /* contour decimated to ~1.0 m, for light blockers */
+	uint32_t occluder_count;
+
+	DungeonPuddle *puddles;
+	uint32_t puddle_count;
+
 	DungeonPoint spawn;
 	DungeonPoint exit;
-	float cell_size;
 	float floor_y;
+	float wall_height;
 } DungeonLevel;
 
 typedef struct
@@ -60,5 +42,15 @@ typedef struct
 	size_t column;
 } DungeonLevelError;
 
-void dungeon_level_destroy(DungeonLevel *level);
+/* Shared compile path: turns a rasterized occupancy field into every piece of
+ * derived geometry a frontend needs (contours, floor/plateau fills, collider
+ * and occluder segments). Both dungeon_grid (ASCII maps) and dungeon_cave
+ * (procedural caves) rasterize into a DungeonField and call this -- nothing
+ * past this point knows or cares which frontend produced the field. Takes
+ * ownership of `field` (moved into the output on success; destroyed on
+ * failure) and copies `puddles`. */
+bool dungeon_level_compile_field(DungeonField *field, DungeonPoint spawn, DungeonPoint exit,
+								 const DungeonPuddle *puddles, uint32_t puddle_count, float floor_y,
+								 float wall_height, DungeonLevel *out, DungeonLevelError *error);
 
+void dungeon_level_destroy(DungeonLevel *level);

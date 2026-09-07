@@ -1,4 +1,4 @@
-/* Shared per-fragment diagnostic sink (debug builds only). Any fragment shader
+/* Shared per-fragment diagnostic sink (enabled in regular builds by default). Any fragment shader
    can #include this and call shader_dump() unconditionally: outside
    DEBUG_SHADER_DUMP builds it compiles to a no-op, so call sites never need
    their own #ifdef. Requires "common.glsl" to be included first (needs `frame`).
@@ -20,6 +20,8 @@
 #define DUMP_SHADER_TEMPORAL_RESOLVE 5.0
 #define DUMP_SHADER_ENVIRONMENT_IBL 6.0
 #define DUMP_SHADER_MATERIAL_DETAIL 7.0
+#define DUMP_SHADER_DUNGEON_SURFACE 8.0
+#define DUMP_SHADER_DUNGEON_PUDDLE 9.0
 
 #ifdef DEBUG_SHADER_DUMP
 
@@ -59,7 +61,7 @@ bool dump_enabled() {
 }
 
 void shader_dump(float shader_id, vec4 v0, vec4 v1, vec4 v2, vec4 v3, vec4 v4) {
-    /* no-op outside debug-dump builds */
+    /* no-op when shader-dump support is explicitly disabled */
 }
 
 #endif // DEBUG_SHADER_DUMP

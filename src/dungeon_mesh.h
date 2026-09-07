@@ -8,9 +8,11 @@
 typedef enum
 {
 	DUNGEON_MESH_FLOOR,
-	DUNGEON_MESH_WALL,
+	DUNGEON_MESH_WALL, /* also carries the rock plateau cap -- same material */
 	DUNGEON_MESH_EXIT,
 	DUNGEON_MESH_PLAYER,
+	DUNGEON_MESH_PUDDLE, /* untextured; radial fade packed into texcoord.x */
+	DUNGEON_MESH_MOSS, /* static bent fronds, real leaf silhouettes */
 	DUNGEON_MESH_BATCH_COUNT
 } DungeonMeshBatchKind;
 

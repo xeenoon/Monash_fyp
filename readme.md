@@ -35,10 +35,26 @@ Run the dungeon explorer with:
 TERRAIN_SCENE=dungeon ./build/terrain_renderer
 ```
 
-It loads the checked-in 17 x 13 maze, follows the temporary cube player with a
-fixed top-down perspective camera, and resolves movement against compiled wall
-colliders. The grid is an authoring frontend only; rendering and gameplay use
-the generic level representation described in
+By default this generates a procedural cave (winding corridors, chambers,
+puddles) from `DUNGEON_SEED` (a `uint32_t`, default 1) -- try a few different
+seeds:
+
+```sh
+TERRAIN_SCENE=dungeon DUNGEON_SEED=7 ./build/terrain_renderer
+```
+
+`DUNGEON_MAP=<path>` switches to the legacy ASCII-grid frontend instead (e.g.
+the checked-in `assets/dungeons/example.map`), for hand-authored layouts or
+debugging:
+
+```sh
+TERRAIN_SCENE=dungeon DUNGEON_MAP=assets/dungeons/example.map ./build/terrain_renderer
+```
+
+The player follows a temporary cube with a fixed top-down perspective camera,
+sliding along swept-circle-vs-wall collision. Both frontends rasterize into
+the same occupancy field and marching-squares pipeline; nothing past that
+point knows or cares which one produced the level. See
 [`docs/dungeon_architecture.md`](docs/dungeon_architecture.md).
 
 The three CC0 dungeon PBR materials are checked in for offline use. Their
@@ -208,8 +224,9 @@ Terrain and inspection scenes:
 
 Set `TERRAIN_FREEZE_CAMERA=1` when capturing a replayed dump viewpoint so
 window focus and pointer motion cannot move the camera between comparisons.
-When built with `-DDEBUG_SHADER_DUMP=ON`, press `X` to append a shader capture
-and `C` to clear it. Inspect captures as a fullscreen, local pixel view with:
+Regular builds include shader-dump support: press `X` to append a shader capture
+and `C` to clear it. Memory-constrained builds can opt out with
+`-DDEBUG_SHADER_DUMP=OFF`. Inspect captures as a fullscreen, local pixel view with:
 
 ```sh
 python3 tools/shader_dump_viewer.py debug_dumps/shader_dump.txt

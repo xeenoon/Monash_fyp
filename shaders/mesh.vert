@@ -12,6 +12,7 @@ layout(location = 2) out vec4 tangent;
 layout(location = 3) out vec3 camera_relative_position;
 layout(location = 4) out vec4 current_clip;
 layout(location = 5) out vec4 previous_clip;
+layout(location = 6) out vec3 local_position;
 
 layout(push_constant) uniform DrawData {
     mat4 local_to_camera_relative;
@@ -29,6 +30,7 @@ void main() {
     vec4 camera_relative = draw.local_to_camera_relative * vec4(in_position, 1.0);
     mat3 rotation = mat3(draw.local_to_camera_relative);
     uv = in_texcoord;
+    local_position = in_position;
     normal = normalize(rotation * in_normal);
     tangent = vec4(normalize(rotation * in_tangent.xyz), in_tangent.w);
     camera_relative_position = camera_relative.xyz;

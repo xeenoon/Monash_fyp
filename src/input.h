@@ -23,8 +23,8 @@ typedef struct
 	bool rotate_sun;				/* F12 held                */
 	bool previous_atmosphere_slice;
 	bool next_atmosphere_slice;
-	bool dump_shader_data;	/* X pressed (debug builds) */
-	bool clear_shader_dump; /* C pressed (debug builds) */
+	bool dump_shader_data;	/* X pressed (dump-enabled builds) */
+	bool clear_shader_dump; /* C pressed (dump-enabled builds) */
 	bool toggle_auto_exposure; /* E pressed */
 } Input;
 

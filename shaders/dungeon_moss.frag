@@ -97,8 +97,8 @@ bool point_light_occluded(vec3 surface_position, vec3 light_position) {
 void main() {
     vec4 base_color_sample = texture(albedo_map, uv);
     vec3 base_color = base_color_sample.rgb * draw.geometry.rgb;
-    vec3 orm = texture(orm_map, uv).rgb;
-    vec3 filtered_normal = texture(normal_map, uv).xyz * 2.0 - 1.0;
+    vec3 orm = vec3(1.0, 0.92, 0.0); // dry foliage: matte, dielectric
+    vec3 filtered_normal = vec3(0.0, 0.0, 1.0); // real bent leaf normals
     float normal_scale = draw.elevation_uv.y;
     float filtered_normal_length = clamp(length(filtered_normal),
                                          frame.material_normal_filter.z, 1.0);
@@ -127,6 +127,9 @@ void main() {
     if (default_lit && dot(mapped_normal, V) < 0.0)
         mapped_normal = -mapped_normal;
     vec3 N = mapped_normal;
+    // Microfiber edge response, kept subtle; all energy still comes from
+    // the scene lights. The geometry supplies the actual silhouette/relief.
+    base_color *= 0.90 + 0.18 * pow(1.0 - abs(dot(N, V)), 3.0);
     float NoL = max(dot(N, L), 0.0);
     float authored_roughness = material_authored_roughness(orm.g, draw.elevation_uv.x,
                                                             draw.elevation_uv.w);
@@ -163,6 +166,8 @@ void main() {
     if (frame.debug_view > 10.5 && frame.debug_view < 11.5) { float d=shadow.cascade<4u?texture(shadow_map_raw,vec3(shadow.coordinate.xy,float(shadow.cascade))).r:1.; out_color=vec4(vec3(d),1); return; }
     vec3 direct = (bxdf.diffuse + bxdf.specular) *
                   frame.sun_radiance.rgb * NoL * visibility;
+    direct += base_color * (0.12 / 3.14159265) * max(dot(-N, L), 0.0) *
+              frame.sun_radiance.rgb * visibility;
     int point_light_count = clamp(int(frame.point_light_options.x + 0.5), 0, 16);
     for (int light_index = 0; light_index < point_light_count; ++light_index) {
         vec4 position_radius = frame.point_light_position_radius[light_index];
@@ -184,6 +189,10 @@ void main() {
         vec4 color_intensity = frame.point_light_color_intensity[light_index];
         direct += (local_bxdf.diffuse + local_bxdf.specular) * color_intensity.rgb *
                   color_intensity.w * local_NoL * attenuation;
+        // Thin leaves transmit some backlight. Blocker attenuation applies
+        // to both sides, so foliage cannot glow through dungeon walls.
+        direct += base_color * (0.12 / 3.14159265) * max(dot(-N, local_L), 0.0) *
+                  color_intensity.rgb * color_intensity.w * attenuation;
     }
     /* Sky diffuse IBL (Phase B1). Falls back to the original hemispheric
        constant when no HDR was loaded, or when the F3 cycle has it switched
@@ -193,7 +202,7 @@ void main() {
     bool diffuse_ibl_enabled = draw.material_factors.z > 0.5;
     bool specular_ibl_enabled = draw.material_factors.w > 0.5;
     float ao_strength = draw.elevation_uv.z;
-    float ao = 1.0 + ao_strength * (texture(occlusion_map, uv).r - 1.0);
+    float ao = 1.0 + ao_strength * (0.9 - 1.0);
     EnvironmentLightingResult environment = environment_evaluate(
         camera_relative_position, N, V, roughness, F0, ao,
         diffuse_ibl_enabled, specular_ibl_enabled);
