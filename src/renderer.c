@@ -2088,7 +2088,7 @@ static const char *const SHADER_DUMP_LEGEND[] = {
 	"f4=filtered_normal_length f5=mip_variance f6=mip_kernel f7=mip_roughness f8=AO_visibility f9=cavity_visibility "
 	"f10=phase_D_active f11=normal_strength f12-14=final_pre_TAA_HDR f15=normal_map_LOD f16-19=_\n",
 	"# legend: dungeon_surface f0=moss_mask f1=moss_noise f2=recess_mask f3=ao_term "
-	"f4-6=base_color_after_moss f7=moss_mask f8-10=world_position f11=metallic f12-14=normal "
+	"f4-6=base_color_after_moss f7=crack_mask f8-10=world_position f11=metallic f12-14=normal "
 	"f15=roughness_after_moss f16-18=final_HDR f19=authored_roughness_before_moss\n",
 	"# legend: dungeon_puddle f0=rim_fade f1=fresnel f2=reflection_hit_distance f3=roughness "
 	"f4-6=base_color f7=alpha f8-10=normal f11=NoV f12-14=reflection_color f15=specular_strength "

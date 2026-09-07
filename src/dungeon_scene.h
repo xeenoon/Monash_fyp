@@ -9,7 +9,7 @@
 
 #include <stdbool.h>
 
-#define DUNGEON_MAX_DRAWS (DUNGEON_MESH_BATCH_COUNT + DUNGEON_MAX_LIGHTS)
+#define DUNGEON_MAX_DRAWS (DUNGEON_MESH_BATCH_COUNT + DUNGEON_MAX_LIGHTS + 1u)
 
 typedef struct
 {

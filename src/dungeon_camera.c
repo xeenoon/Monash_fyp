@@ -24,6 +24,28 @@ void dungeon_camera_init(DungeonCamera *camera, DungeonPoint target)
 	camera->camera.position = desired_position(camera, target);
 }
 
+/* Rotate the existing orbit offset immediately; following still smooths
+ * target movement without letting rotation pull the cube off-centre. */
+void dungeon_camera_orbit(DungeonCamera *camera, float yaw_input, float pitch_input, float dt)
+{
+	if (!camera || dt <= 0.0f || !isfinite(dt)) return;
+	float old_yaw = glm_rad(camera->camera.yaw);
+	double target_x = camera->camera.position.x + cosf(old_yaw) * camera->trailing_distance;
+	double target_z = camera->camera.position.z + sinf(old_yaw) * camera->trailing_distance;
+	camera->camera.yaw = fmodf(camera->camera.yaw + yaw_input * 85.0f * dt + 360.0f, 360.0f);
+	if (pitch_input != 0.0f)
+	{
+		float radius = hypotf(camera->height, camera->trailing_distance);
+		camera->camera.pitch = fminf(-35.0f, fmaxf(-82.0f, camera->camera.pitch + pitch_input * 45.0f * dt));
+		camera->height = -sinf(glm_rad(camera->camera.pitch)) * radius;
+		camera->trailing_distance = cosf(glm_rad(camera->camera.pitch)) * radius;
+	}
+	float yaw = glm_rad(camera->camera.yaw);
+	camera->camera.position.x = target_x - cosf(yaw) * camera->trailing_distance;
+	camera->camera.position.z = target_z - sinf(yaw) * camera->trailing_distance;
+	camera->camera.position.y = camera->height;
+}
+
 void dungeon_camera_update(DungeonCamera *camera, DungeonPoint target, float dt)
 {
 	if (!camera || dt <= 0.0f)

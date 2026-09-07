@@ -83,6 +83,18 @@ static DrawPushConstants torch_push(const LocalToWorldTransform *transform,
 	};
 }
 
+/* The source torch's handle starts at local Y=1.14289. Seat that
+ * point on the cube top; its head and light share this transform. */
+static LocalToWorldTransform player_torch_transform(const DungeonScene *scene)
+{
+	const double scale = 1.35;
+	LocalToWorldTransform transform = coordinate_identity_transform((WorldPosition){
+		scene->player.position.x, scene->level.floor_y + 0.73 - 1.14289 * scale,
+		scene->player.position.z + 0.06251 * scale});
+	for (int i = 0; i < 3; ++i) transform.rotation[i][i] = scale;
+	return transform;
+}
+
 static DungeonPoint segment_closest_point(DungeonPoint point, DungeonSegment segment)
 {
 	float dx = segment.b.x - segment.a.x, dz = segment.b.z - segment.a.z;
@@ -241,6 +253,17 @@ uint32_t dungeon_scene_draws(DungeonScene *scene, WorldPosition camera_position,
 		/* Opaque surfaces use alpha to carry floor height in mesh coordinates. */
 		out[draw_count - 1].push.geometry.w = scene->level.floor_y;
 	}
+	/* Reserve the carried torch before optional wall fixtures. */
+	LocalToWorldTransform carried = player_torch_transform(scene);
+	for (uint32_t i = 0; i < scene->torch.primitive_count && draw_count < capacity; ++i)
+	{
+		GltfPrimitive *primitive = &scene->torch.primitives[i];
+		GltfMaterial *material = &scene->torch.materials[primitive->material_index];
+		DrawPushConstants push = torch_push(&carried, material, camera_position);
+		push.debug.y = 1.0f; /* carried object: reject stale temporal history */
+		out[draw_count++] = (RendererDraw){.mesh = &primitive->mesh,
+			.material_set = material->descriptor_set, .push = push, .static_mesh = true};
+	}
 	for (uint32_t instance = 0; instance < scene->torch_count && draw_count < capacity; ++instance)
 		for (uint32_t primitive_index = 0; primitive_index < scene->torch.primitive_count;
 			 ++primitive_index)
@@ -278,19 +301,25 @@ bool dungeon_scene_update(DungeonScene *scene, float move_forward, float move_ri
 uint32_t dungeon_scene_write_lights(const DungeonScene *scene, WorldPosition camera_position,
 								   vec4s *positions, vec4s *colors, uint32_t capacity)
 {
-	if (!scene || !positions || !colors)
+	if (!scene || !positions || !colors || capacity == 0)
 		return 0;
-	uint32_t count = scene->light_count < capacity ? scene->light_count : capacity;
+	/* Slot zero is always the player light, even if the light budget is full. */
+	LocalToWorldTransform carried = player_torch_transform(scene);
+	WorldPosition head = coordinate_local_to_world(&carried, (TileLocalPosition){0, 1.56f, -0.13f});
+	CameraRelativePosition relative = coordinate_camera_relative(head, camera_position);
+	positions[0] = (vec4s){{relative.x, relative.y, relative.z, 7.5f}};
+	colors[0] = (vec4s){{1.0f, 0.76f, 0.48f, 32.0f}};
+	uint32_t count = scene->light_count < capacity - 1u ? scene->light_count : capacity - 1u;
 	for (uint32_t i = 0; i < count; ++i)
 	{
 		WorldPosition world = {scene->lights[i].position.x, scene->lights[i].height,
 							   scene->lights[i].position.z};
 		CameraRelativePosition relative = coordinate_camera_relative(world, camera_position);
-		positions[i] = (vec4s){{relative.x, relative.y, relative.z, scene->lights[i].radius}};
-		colors[i] = (vec4s){{scene->lights[i].color[0], scene->lights[i].color[1],
+		positions[i + 1u] = (vec4s){{relative.x, relative.y, relative.z, scene->lights[i].radius}};
+		colors[i + 1u] = (vec4s){{scene->lights[i].color[0], scene->lights[i].color[1],
 							 scene->lights[i].color[2], scene->lights[i].intensity}};
 	}
-	return count;
+	return count + 1u;
 }
 
 static int compare_blocker_distance2(const void *lhs, const void *rhs)

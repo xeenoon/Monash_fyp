@@ -13,6 +13,7 @@ typedef struct
 } DungeonCamera;
 
 void dungeon_camera_init(DungeonCamera *camera, DungeonPoint target);
+void dungeon_camera_orbit(DungeonCamera *camera, float yaw_input, float pitch_input, float dt);
 void dungeon_camera_update(DungeonCamera *camera, DungeonPoint target, float dt);
 mat4s dungeon_camera_projection(const DungeonCamera *camera, float aspect);
 

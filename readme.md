@@ -51,7 +51,7 @@ debugging:
 TERRAIN_SCENE=dungeon DUNGEON_MAP=assets/dungeons/example.map ./build/terrain_renderer
 ```
 
-The player follows a temporary cube with a fixed top-down perspective camera,
+The player follows a temporary cube with an orbiting top-down perspective camera,
 sliding along swept-circle-vs-wall collision. Both frontends rasterize into
 the same occupancy field and marching-squares pipeline; nothing past that
 point knows or cares which one produced the level. See
@@ -198,6 +198,9 @@ building any natural-only `.trn` dataset.
 Dungeon:
 
 - W/A/S/D: move the cube relative to the top-down camera
+- Left/right arrows: orbit around the cube
+- Up/down arrows: tilt the camera (82° to 35° downward)
+- A torch mounted on the cube lights the surrounding floor and walls as you move
 - Escape: quit
 
 Terrain and inspection scenes:

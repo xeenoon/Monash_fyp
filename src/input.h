@@ -6,6 +6,7 @@
 typedef struct
 {
 	float look_dx, look_dy;			/* mouse delta this frame  */
+	float orbit_yaw, orbit_pitch; /* arrow keys */
 	float move_forward, move_right; /* -1..1 from WASD         */
 	bool sprint;					/* shift held              */
 	bool quit;						/* window close / escape   */

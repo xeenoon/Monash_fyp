@@ -84,6 +84,32 @@ bool point_light_occluded(vec3 surface_position, vec3 light_position) {
     return false;
 }
 
+float crack_segment_distance(vec2 p, vec2 a, vec2 b) {
+    vec2 edge = b - a;
+    return length(p - a - edge * clamp(dot(p-a, edge) / dot(edge, edge), 0.0, 1.0));
+}
+
+// Sparse broken branches, fixed in the brick UVs. Keep endpoints inside
+// each cell so the discontinuous cell hash never creates a square seam.
+float brick_crack_distance(vec2 p) {
+    vec2 cell = floor(p);
+    vec2 seed = dungeon_hash2(cell + 53.7) * 0.5 + 0.5;
+    if (seed.x < 0.64) return 1.0;
+    vec2 f = fract(p);
+    if (seed.y > 0.5) f = f.yx;
+    vec2 a = vec2(0.15, 0.20 + seed.y * 0.25);
+    vec2 b = vec2(0.43 + seed.y * 0.12, 0.43);
+    vec2 c = vec2(0.82, 0.68 + seed.y * 0.15);
+    float d = min(crack_segment_distance(f,a,b), crack_segment_distance(f,b,c));
+    if (seed.x > 0.82)
+        d = min(d, crack_segment_distance(f,b,vec2(0.29,0.84)));
+    return d;
+}
+
+float brick_crack_height(vec2 p) {
+    return -0.018 * (1.0 - smoothstep(0.0, 0.022, brick_crack_distance(p)));
+}
+
 void main() {
     vec4 base_color_sample = texture(albedo_map, uv);
     vec3 base_color = base_color_sample.rgb * draw.geometry.rgb;
@@ -95,6 +121,21 @@ void main() {
     vec3 tangent_normal = filtered_normal / filtered_normal_length;
     tangent_normal.xy *= normal_scale;
     tangent_normal = normalize(tangent_normal);
+
+    // Millimetre-wide fissures with bevel normals and a dark recessed core.
+    float brick_width = abs(normalize(normal).y) > 0.5 ? 2.4 : 1.8;
+    vec2 crack_uv = uv * brick_width / 0.7;
+    float crack_distance = brick_crack_distance(crack_uv);
+    float crack_aa = max(fwidth(crack_distance), 0.001);
+    float crack_mask = 1.0 - smoothstep(0.004, 0.010 + crack_aa, crack_distance);
+    base_color *= 1.0 - crack_mask * 0.72;
+    orm.r *= 1.0 - crack_mask * 0.45;
+    orm.g = mix(orm.g, 0.96, crack_mask);
+    const float crack_step = 0.006;
+    vec2 crack_slope = vec2(
+        brick_crack_height(crack_uv + vec2(crack_step,0)) - brick_crack_height(crack_uv - vec2(crack_step,0)),
+        brick_crack_height(crack_uv + vec2(0,crack_step)) - brick_crack_height(crack_uv - vec2(0,crack_step))) / (2.0 * crack_step);
+    tangent_normal = normalize(vec3(tangent_normal.xy - crack_slope * 0.4, tangent_normal.z));
 
     vec3 world_position = local_position; // dungeon meshes are authored in world metres
     float height_above_floor = local_position.y - draw.geometry.w;
@@ -214,7 +255,7 @@ void main() {
     /* See SHADER_DUMP_LEGEND["dungeon_surface"] in renderer.c for the f0..f19 layout. */
     shader_dump(DUMP_SHADER_DUNGEON_SURFACE,
                 vec4(moss_mask, moss_noise, recess_mask, moss_ao_term),
-                vec4(base_color, moss_mask),
+                vec4(base_color, crack_mask),
                 vec4(world_position, metallic),
                 vec4(N, roughness),
                 vec4(final_hdr, authored_roughness_before_moss));

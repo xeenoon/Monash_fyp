@@ -602,6 +602,8 @@ int main(int argc, char *argv[])
 						  input.sprint, dt);
 		if (use_dungeon)
 		{
+			if (!freeze_camera)
+				dungeon_camera_orbit(&dungeon_camera, input.orbit_yaw, input.orbit_pitch, dt);
 			if (!freeze_camera && dungeon_scene_update(&dungeon, input.move_forward, input.move_right,
 											 dungeon_camera.camera.yaw, dt))
 				printf("Dungeon exit reached\n");
