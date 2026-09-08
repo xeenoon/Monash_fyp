@@ -23,8 +23,10 @@ typedef enum
 	DUNGEON_MESH_LOCK_BODY,	   /* the lock casing itself, above the mechanism */
 	DUNGEON_MESH_LOCK_HOUSING, /* cutaway panel below the casing */
 	DUNGEON_MESH_LOCK_CHANNEL, /* one pin's bore through the housing */
+	DUNGEON_MESH_LOCK_SPRING,  /* one coil of the spring above a pin */
 	DUNGEON_MESH_LOCK_PIN,	   /* one pin; it RISES in its bore */
-	DUNGEON_MESH_LOCK_NOTCH,   /* small tick: a pin's shear mark, a dial pip */
+	DUNGEON_MESH_LOCK_NOTCH,   /* small tick: a dial pad or a progress pip */
+	DUNGEON_MESH_LOCK_PICK,	   /* the pick, swung to whichever pin is selected */
 	DUNGEON_MESH_LOCK_DIAL,	   /* vault dial face */
 	DUNGEON_MESH_BATCH_COUNT
 } DungeonMeshBatchKind;

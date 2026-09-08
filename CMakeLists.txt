@@ -334,7 +334,9 @@ add_library(dungeon_level STATIC
     src/dungeon_collision.c
     src/dungeon_player.c
     src/dungeon_lighting.c
+    src/dungeon_shadow.c
     src/dungeon_lock.c
+    src/dungeon_lock_layout.c
     src/dungeon_session.c)
 target_include_directories(dungeon_level PUBLIC src)
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
@@ -343,6 +345,9 @@ endif()
 
 if(BUILD_TESTING)
     add_executable(dungeon_grid_tests tests/dungeon_grid_tests.c)
+    add_executable(dungeon_shadow_tests tests/dungeon_shadow_tests.c)
+    target_link_libraries(dungeon_shadow_tests PRIVATE dungeon_level m)
+    add_test(NAME dungeon_triangle_shadows COMMAND dungeon_shadow_tests)
     target_link_libraries(dungeon_grid_tests PRIVATE dungeon_level m)
     target_compile_definitions(dungeon_grid_tests PRIVATE
         DUNGEON_MAP_PATH="${CMAKE_CURRENT_SOURCE_DIR}/assets/dungeons/example.map")
@@ -380,6 +385,10 @@ if(BUILD_TESTING)
     add_executable(dungeon_lock_tests tests/dungeon_lock_tests.c)
     target_link_libraries(dungeon_lock_tests PRIVATE dungeon_level m)
     add_test(NAME dungeon_lock_puzzles COMMAND dungeon_lock_tests)
+
+    add_executable(dungeon_lock_layout_tests tests/dungeon_lock_layout_tests.c)
+    target_link_libraries(dungeon_lock_layout_tests PRIVATE dungeon_level m)
+    add_test(NAME dungeon_lock_pick_clearance COMMAND dungeon_lock_layout_tests)
 
     add_executable(dungeon_session_tests tests/dungeon_session_tests.c)
     target_link_libraries(dungeon_session_tests PRIVATE dungeon_level m)

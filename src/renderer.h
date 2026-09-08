@@ -20,7 +20,6 @@
    prefilter, increasing roughness. See environment_prefilter() in renderer.c. */
 #define ENV_CUBE_MIPS 8u
 #define MAX_POINT_LIGHTS 16u
-#define MAX_POINT_LIGHT_BLOCKERS 64u
 
 typedef enum { SHADOW_FILTER_HARD = 0, SHADOW_FILTER_PCF = 1, SHADOW_FILTER_PCSS = 2 } ShadowFilterMode;
 typedef struct {
@@ -81,8 +80,8 @@ typedef struct
 	   count, diffuse IBL scale, specular IBL scale, reserved. */
 	vec4s point_light_position_radius[MAX_POINT_LIGHTS];
 	vec4s point_light_color_intensity[MAX_POINT_LIGHTS];
-	vec4s point_light_options; /* light count, IBL scales, blocker count */
-	vec4s point_light_blocker_xz[MAX_POINT_LIGHT_BLOCKERS]; /* min xz, max xz */
+	vec4s point_light_options; /* light count, IBL scales, diagnostic light index */
+	vec4s point_shadow_origin; /* camera world XYZ, BVH node count */
 } FrameUniforms;
 
 typedef struct
@@ -199,6 +198,7 @@ typedef struct Renderer
 	VkDescriptorSetLayout atmosphere_set_layout; /* graphics set 2 / compute set 1 */
 	VkDescriptorPool descriptor_pool;
 	GpuBuffer frame_ubo[MAX_FRAMES_IN_FLIGHT];
+	GpuBuffer point_shadow_buffer;
 	GpuBuffer exposure_buffer;
 	GpuBuffer environment_ubo; /* diffuse sky IBL SH-9, set 0 binding 4; see environment.c */
 	Texture environment_cube; /* B2 specular IBL cube, set 0 binding 5 */
@@ -326,6 +326,8 @@ void renderer_free_material_set(Renderer *r, VkDescriptorSet set);
 /* Manual shader reload: rebuild the graphics pipeline from the current .spv on
    disk at a frame boundary. Safe to call from the main loop (e.g. on a keypress). */
 void renderer_reload_pipeline(Renderer *r);
+/* Called only when dungeon geometry changes; waits for in-flight readers. */
+void renderer_upload_point_shadows(Renderer *r, const void *nodes, size_t bytes);
 
 #ifdef DEBUG_SHADER_DUMP
 /* Wait for the GPU, read back the per-fragment records every instrumented

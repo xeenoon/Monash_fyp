@@ -652,7 +652,9 @@ int main(int argc, char *argv[])
 					else if (input.puzzle_down)
 						dungeon_session_turn(session, DUNGEON_DIAL_DOWN);
 				}
-				if (input.puzzle_cancel)
+				/* E steps back out as well as in: the key that got you into the
+				 * lock is the one a player reaches for to leave it. */
+				if (input.puzzle_cancel || input.interact)
 					dungeon_session_cancel(session);
 			}
 			else if (input.interact)
@@ -974,9 +976,12 @@ int main(int argc, char *argv[])
 			frame.point_light_options.x = (float)dungeon_scene_write_lights(
 				&dungeon, camera.position, frame.point_light_position_radius,
 				frame.point_light_color_intensity, MAX_POINT_LIGHTS);
-			frame.point_light_options.w = (float)dungeon_scene_write_light_blockers(
-				&dungeon, camera.position, frame.point_light_blocker_xz,
-				MAX_POINT_LIGHT_BLOCKERS);
+			if (!dungeon_scene_prepare_shadows(&dungeon, &renderer)) {
+				fprintf(stderr, "Could not build dungeon shadow geometry\n");
+				break;
+			}
+			frame.point_shadow_origin = (vec4s){{(float)camera.position.x,
+				(float)camera.position.y, (float)camera.position.z, (float)dungeon.shadow.count}};
 		}
 		for (uint32_t i = 0; i < SHADOW_CASCADE_COUNT; ++i)
 			frame.shadow_view_projection[i] = shadow_cascades.view_projection[i];

@@ -49,6 +49,15 @@ int main(void)
 				   1e-6f);
 			assert(fabsf(bottom->position[2] - loop->points[i].z) <
 				   1e-6f);
+			/* A wall faces open floor, never the rock behind it. This also
+			 * prevents camera-facing shader flips from masking reversed normals. */
+			DungeonPoint p = loop->points[i];
+			float epsilon = level.field.cell_size * 0.25f;
+			float toward = dungeon_field_sample(&level.field, (DungeonPoint){
+				p.x + bottom->normal[0] * epsilon, p.z + bottom->normal[2] * epsilon});
+			float away = dungeon_field_sample(&level.field, (DungeonPoint){
+				p.x - bottom->normal[0] * epsilon, p.z - bottom->normal[2] * epsilon});
+			assert(toward > away);
 			assert(fabsf(top->position[0] - loop->points[i].x) <
 				   1e-6f);
 			assert(fabsf(top->position[1] -

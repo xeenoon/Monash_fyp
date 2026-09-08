@@ -20,6 +20,7 @@ expect phase pin
 expect focus 0.98
 expect facing 3.0
 expect aimed 2.0
+expect pins_left_to_right
 report
 capture lockpick_02_facing_pin_tumbler.png
 
@@ -36,8 +37,24 @@ press up
 wait 0.1
 expect pin_height 1 2
 expect pin_height 0 0
+expect pick_clear
 report
 capture lockpick_03_pins_moved.png
+
+# Drive the selection across every pin and back, checking on every frame that
+# the pick is not cutting through the mechanism it is supposed to be working.
+sweep_pins
+expect pick_clear
+capture lockpick_03b_pick_swept.png
+
+# E backs out of a lock as well as into it.
+press interact
+wait 0.6
+expect phase exploring
+expect door_shut 0
+press interact
+wait 1.2
+expect phase pin
 
 solve
 wait 2.0

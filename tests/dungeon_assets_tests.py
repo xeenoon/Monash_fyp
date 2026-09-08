@@ -26,7 +26,7 @@ def main() -> int:
     assert manifest["license"] == "CC0-1.0"
     assert manifest["resolution"] == "2k"
     roles = {material["role"] for material in manifest["materials"]}
-    assert roles == {"floor", "wall", "exit"}
+    assert roles == {"floor", "wall", "exit", "lock"}
     for material in manifest["materials"]:
         assert material["width_m"] > 0
         assert material["page"].startswith("https://polyhaven.com/a/")

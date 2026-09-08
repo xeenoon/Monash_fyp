@@ -231,7 +231,7 @@ void dungeon_session_status_text(const DungeonSession *session, char *out, size_
 				 state ? state->pins.selected + 1u : 0u, heights,
 				 session->status == DUNGEON_STATUS_PINS_DO_NOT_ALIGN
 					 ? "THE PINS DO NOT ALIGN"
-					 : "MATCH EACH PIN TO ITS MARK");
+					 : "RAISE EACH PIN UNTIL IT SETS");
 		return;
 	}
 	case DUNGEON_PHASE_VAULT_DIAL:

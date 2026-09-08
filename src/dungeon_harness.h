@@ -31,6 +31,8 @@
  *   walk <forward> <right> <sec>  drive movement for a duration
  *   walk_to <x> <z> <seconds>     steer toward a world point
  *   walk_through <n> <seconds>    steer through door n to its far side
+ *   sweep_pins                    drive the selection across every pin, checking
+ *                                 the pick's clearance on every animation frame
  *   solve                         fill the focused lock with its solution --
  *                                 proves the gate, not the input path
  *   capture <path.png>            settle two frames, then write the frame
@@ -39,6 +41,9 @@
  *   expect facing <tolerance_deg> camera yaw faces the focused lock
  *   expect focus <minimum>        eased focus weight at least this
  *   expect aimed <tolerance_deg>  the camera is actually pointing at the lock
+ *   expect pins_left_to_right     pin 0 is left of the last pin on screen
+ *   expect pick_clear             the pick is not intersecting the mechanism
+ *   expect pins_left_to_right     pin 0 is left of the last pin on screen
  *   expect pin_selected <n>       which pin the keys are currently driving
  *   expect pin_height <n> <value> a pin's slot, so key input is proved not eyeballed
  *   expect dial_progress <n>      banked steps of the combination

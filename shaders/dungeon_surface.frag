@@ -61,28 +61,7 @@ mat3 tangent_frame(vec3 interpolated_normal, vec4 interpolated_tangent) {
     return mat3(T, B, N);
 }
 
-/* `blocker` is a wall-footprint segment (ax,az,bx,bz) -- see the matching
-   comment in mesh.frag. */
-bool segment_crosses_blocker(vec2 start, vec2 end, vec4 blocker) {
-    vec2 d1 = end - start;
-    vec2 d2 = blocker.zw - blocker.xy;
-    float denom = d1.x * d2.y - d1.y * d2.x;
-    if (abs(denom) < 1e-9)
-        return false;
-    vec2 e = blocker.xy - start;
-    float t = (e.x * d2.y - e.y * d2.x) / denom;
-    float u = (e.x * d1.y - e.y * d1.x) / denom;
-    return t > 0.002 && t < 0.998 && u >= 0.0 && u <= 1.0;
-}
-
-bool point_light_occluded(vec3 surface_position, vec3 light_position) {
-    int blocker_count = clamp(int(frame.point_light_options.w + 0.5), 0, 64);
-    for (int blocker_index = 0; blocker_index < blocker_count; ++blocker_index)
-        if (segment_crosses_blocker(surface_position.xz, light_position.xz,
-                                    frame.point_light_blocker_xz[blocker_index]))
-            return true;
-    return false;
-}
+#include "dungeon_shadow.glsl"
 
 float crack_segment_distance(vec2 p, vec2 a, vec2 b) {
     vec2 edge = b - a;
@@ -179,8 +158,11 @@ void main() {
     }
     vec3 L = normalize(-frame.sun_direction.xyz);
     vec3 V = normalize(-camera_relative_position);
-    if (default_lit && dot(mapped_normal, V) < 0.0)
-        mapped_normal = -mapped_normal;
+    /* Keep the normal in the surface hemisphere. Flipping toward the view
+       reverses the wall's light response abruptly at grazing camera angles. */
+    if (default_lit)
+        mapped_normal = normalize(mapped_normal + geometric_normal *
+            max(0.0, 0.001 - dot(mapped_normal, geometric_normal)));
     vec3 N = mapped_normal;
     float NoL = max(dot(N, L), 0.0);
     float authored_roughness = material_authored_roughness(orm.g, draw.elevation_uv.x,
@@ -221,8 +203,6 @@ void main() {
         float normalized_distance = distance_to_light / max(position_radius.w, 1e-4);
         float attenuation_window = max(1.0 - pow(normalized_distance, 4.0), 0.0);
         float attenuation = attenuation_window * attenuation_window / max(distance2, 0.01);
-        if (point_light_occluded(camera_relative_position, position_radius.xyz))
-            attenuation = 0.0;
         vec3 local_L = to_light / distance_to_light;
         float local_NoL = max(dot(N, local_L), 0.0);
         UeDefaultLit local_bxdf;
@@ -231,8 +211,11 @@ void main() {
         else
             local_bxdf = legacy_quarry_bxdf(base_color, metallic, roughness, N, V, local_L);
         vec4 color_intensity = frame.point_light_color_intensity[light_index];
-        direct += (local_bxdf.diffuse + local_bxdf.specular) * color_intensity.rgb *
-                  color_intensity.w * local_NoL * attenuation;
+        vec3 contribution = (local_bxdf.diffuse + local_bxdf.specular) * color_intensity.rgb *
+                            color_intensity.w * local_NoL * attenuation;
+        if (attenuation > 0.0 && local_NoL > 0.0)
+            direct += contribution * point_light_visibility(camera_relative_position,
+                normal, position_radius.xyz, light_index, contribution);
     }
     bool diffuse_ibl_enabled = draw.material_factors.z > 0.5;
     bool specular_ibl_enabled = draw.material_factors.w > 0.5;

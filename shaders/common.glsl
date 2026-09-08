@@ -42,8 +42,8 @@ layout(set = 0, binding = 0) uniform FrameUniforms {
     vec4  stretch_overlay;          /* diagnostic overlay settings; ABI retained when omitted */
     vec4  point_light_position_radius[16];
     vec4  point_light_color_intensity[16];
-    vec4  point_light_options;      /* count, diffuse IBL scale, specular IBL scale, blocker count */
-    vec4  point_light_blocker_xz[64]; /* camera-relative min xz, max xz */
+    vec4  point_light_options;      /* count, diffuse IBL scale, specular IBL scale, diagnostic light index */
+    vec4  point_shadow_origin; /* camera world XYZ, BVH node count */
 } frame;
 
 layout(set = 0, binding = 1) uniform sampler2DArrayShadow shadow_map;

@@ -3,6 +3,7 @@
 #include "dungeon_level.h"
 #include "dungeon_lighting.h"
 #include "dungeon_mesh.h"
+#include "dungeon_shadow.h"
 #include "dungeon_player.h"
 #include "dungeon_session.h"
 #include "gltf_scene.h"
@@ -13,7 +14,11 @@
 /* Static batches, one torch's primitives per light, and per doorway either a
  * row of pin bars with their target marks or a dial with its progress pips.
  * Doors and lock hardware are per-instance draws because they move. */
-#define DUNGEON_MAX_LOCK_PIECES (3u * DUNGEON_LOCK_MAX_PINS + 2u + DUNGEON_LOCK_MAX_STEPS)
+/* Per door: casing, housing, and per pin a bore, a shear mark, a pin and --
+ * for the one lock being picked -- its spring coils. */
+#define DUNGEON_LOCK_SPRING_COILS 7u
+#define DUNGEON_MAX_LOCK_PIECES                                                                    \
+	(2u + DUNGEON_LOCK_MAX_PINS * (3u + DUNGEON_LOCK_SPRING_COILS) + DUNGEON_LOCK_MAX_STEPS)
 #define DUNGEON_MAX_DRAWS                                                                          \
 	(DUNGEON_MESH_BATCH_COUNT + 4u * DUNGEON_MAX_LIGHTS + 1u +                                      \
 	 DUNGEON_MAX_DOORS * (1u + DUNGEON_MAX_LOCK_PIECES))
@@ -34,6 +39,15 @@ typedef struct
 	/* The dungeon as a game: door state, the lock being picked, and the
 	 * collider/occluder arrays that follow from which doors are still shut. */
 	DungeonSession session;
+	/* Eased position of the pick's tip in the focused lock's face plane
+	 * (lateral along the door, height above the floor). Presentation only --
+	 * the session owns which pin is selected; this is just where the pick has
+	 * got to on its way there. */
+	float pick_lateral, pick_height;
+	bool pick_active;
+	DungeonShadow wall_shadow, shadow;
+	uint32_t shadow_door_mask;
+	bool shadow_uploaded;
 } DungeonScene;
 
 /* Picks a frontend from the environment: DUNGEON_MAP=<path> compiles an
@@ -53,9 +67,12 @@ uint32_t dungeon_scene_draws(DungeonScene *scene, WorldPosition camera_position,
  * them) and eases door swings. Returns true on the frame the exit is reached. */
 bool dungeon_scene_update(DungeonScene *scene, float move_forward, float move_right,
 						  float camera_yaw_degrees, float dt);
+/* World position of a pin's head, for tests that need to check where a piece
+ * of the lock actually ends up on screen rather than trusting the layout. */
+bool dungeon_scene_pin_world(const DungeonScene *scene, uint32_t door_index, uint32_t pin,
+							 WorldPosition *out);
+
 uint32_t dungeon_scene_write_lights(const DungeonScene *scene, WorldPosition camera_position,
 								   vec4s *positions, vec4s *colors, uint32_t capacity);
-uint32_t dungeon_scene_write_light_blockers(const DungeonScene *scene,
-										WorldPosition camera_position, vec4s *blockers,
-										uint32_t capacity);
 void dungeon_scene_destroy(Renderer *renderer, DungeonScene *scene);
+bool dungeon_scene_prepare_shadows(DungeonScene *scene, Renderer *renderer);

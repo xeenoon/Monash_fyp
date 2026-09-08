@@ -46,6 +46,7 @@ _Static_assert(sizeof(DumpRecord) == SHADER_DUMP_RECORD_FLOATS * 4u,
 #define DUMP_SHADER_MATERIAL_DETAIL 7u
 #define DUMP_SHADER_DUNGEON_SURFACE 8u
 #define DUMP_SHADER_DUNGEON_PUDDLE 9u
+#define DUMP_SHADER_POINT_SHADOW 10u
 
 static const char *shader_dump_name(uint32_t shader_id)
 {
@@ -71,6 +72,8 @@ static const char *shader_dump_name(uint32_t shader_id)
 		return "dungeon_surface";
 	case DUMP_SHADER_DUNGEON_PUDDLE:
 		return "dungeon_puddle";
+	case DUMP_SHADER_POINT_SHADOW:
+		return "point_shadow";
 	default:
 		return "unknown";
 	}
@@ -141,9 +144,9 @@ _Static_assert(offsetof(FrameUniforms, point_light_color_intensity) == 1424,
 			   "FrameUniforms point-light color offset");
 _Static_assert(offsetof(FrameUniforms, point_light_options) == 1680,
 			   "FrameUniforms point-light options offset");
-_Static_assert(offsetof(FrameUniforms, point_light_blocker_xz) == 1696,
+_Static_assert(offsetof(FrameUniforms, point_shadow_origin) == 1696,
 			   "FrameUniforms point-light blocker offset");
-_Static_assert(sizeof(FrameUniforms) == 2720, "FrameUniforms std140 size");
+_Static_assert(sizeof(FrameUniforms) == 1712, "FrameUniforms std140 size");
 _Static_assert(sizeof(DrawPushConstants) == 128, "terrain push constant size");
 _Static_assert(offsetof(TemporalExposure, histogram) == 16,
 			   "TemporalExposure std430 histogram offset");
@@ -365,13 +368,30 @@ static void create_environment(Renderer *r)
 /* Descriptor roles: set 0 = per-frame UBO; set 1 = pass-local material/HDR;
    set 2 = atmosphere LUTs for graphics. Compute sees that same atmosphere set
    as set 1, avoiding duplicate descriptors. */
+void renderer_upload_point_shadows(Renderer *r, const void *nodes, size_t bytes)
+{
+    VK_CHECK(vkDeviceWaitIdle(r->device));
+    gpu_buffer_destroy(r->device, r->allocator, &r->point_shadow_buffer);
+    size_t allocation_size = bytes ? bytes : 80;
+    r->point_shadow_buffer = gpu_buffer_create(r->device, r->allocator, allocation_size,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    if (bytes) memcpy(r->point_shadow_buffer.allocation.mapped, nodes, bytes);
+    else memset(r->point_shadow_buffer.allocation.mapped, 0, allocation_size);
+    VkDescriptorBufferInfo info = {.buffer=r->point_shadow_buffer.buffer, .range=allocation_size};
+    for (uint32_t i=0;i<MAX_FRAMES_IN_FLIGHT;i++) {
+        VkWriteDescriptorSet write = {.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstSet=r->frame_set[i], .dstBinding=6, .descriptorCount=1,
+            .descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .pBufferInfo=&info};
+        vkUpdateDescriptorSets(r->device,1,&write,0,NULL);
+    }
+}
+
 static void create_descriptors(Renderer *r)
 {
-	/* Bindings 4 (environment UBO) and 5 (specular IBL cube, B2) are
-	   unconditional; binding 3 (debug dump SSBO) stays conditional and must
-	   stay last in this array so the non-debug build's frame_binding_count ==
-	   5 slice excludes it. Non-contiguous binding numbers are legal in Vulkan. */
-	VkDescriptorSetLayoutBinding frame_bindings[6] = {
+	/* Environment bindings 4/5 and shadow BVH binding 6 are unconditional.
+	   Optional dump binding 3 stays last, excluded by the non-debug count. */
+	VkDescriptorSetLayoutBinding frame_bindings[7] = {
 		{.binding = 0,
 		 .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
 		 .descriptorCount = 1,
@@ -393,14 +413,18 @@ static void create_descriptors(Renderer *r)
 		 .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		 .descriptorCount = 1,
 		 .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+		{.binding = 6,
+		 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+		 .descriptorCount = 1,
+		 .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
 		{.binding = 3,
 		 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 		 .descriptorCount = 1,
 		 .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
 	};
-	uint32_t frame_binding_count = 5;
+	uint32_t frame_binding_count = 6;
 #ifdef DEBUG_SHADER_DUMP
-	frame_binding_count = 6;
+	frame_binding_count = 7;
 #endif
 	VkDescriptorSetLayoutCreateInfo frame_layout = {
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
@@ -497,7 +521,7 @@ static void create_descriptors(Renderer *r)
 		 .descriptorCount =
 			 MAX_TEXTURE_SETS * 6u + MAX_FRAMES_IN_FLIGHT * 2u + 20u + ENV_CUBE_MIPS},
 		{.type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = 5u + ENV_CUBE_MIPS},
-		{.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = MAX_FRAMES_IN_FLIGHT + 2u}};
+		{.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = MAX_FRAMES_IN_FLIGHT * 2u + 2u}};
 	uint32_t pool_size_count = 4;
 	VkDescriptorPoolCreateInfo pool = {
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
@@ -570,6 +594,7 @@ static void create_descriptors(Renderer *r)
 		vkUpdateDescriptorSets(r->device, 5, writes, 0, NULL);
 	}
 
+	renderer_upload_point_shadows(r, NULL, 0);
 	texture_create_white(r->device, r->allocator, r->upload, &r->fallback_texture);
 	const uint8_t linear_white[4] = {255, 255, 255, 255};
 	const uint8_t flat_normal[4] = {128, 128, 255, 255};
@@ -2096,6 +2121,9 @@ static const char *const SHADER_DUMP_LEGEND[] = {
 	"# legend: dungeon_puddle f0=rim_fade f1=fresnel f2=reflection_hit_distance f3=roughness "
 	"f4-6=base_color f7=alpha f8-10=normal f11=NoV f12-14=reflection_color f15=specular_strength "
 	"f16-18=final_HDR f19=ripple_height\n",
+	"# legend: point_shadow f0=light_index f1=blocking_node f2=hit_distance f3=visibility "
+	"f4-6=unshadowed_contribution f7=light_distance f8-10=surface_world f12-14=geometric_normal "
+	"f16-18=light_world\n",
 };
 
 /* Optional CPU-side output filters, applied only at write time (the GPU always
@@ -2116,7 +2144,7 @@ static ShaderDumpFilter shader_dump_read_filters(void)
 	const char *shader_env = getenv("DUMP_SHADER");
 	if (shader_env)
 	{
-		for (uint32_t id = 0; id <= DUMP_SHADER_DUNGEON_PUDDLE; ++id)
+		for (uint32_t id = 0; id <= DUMP_SHADER_POINT_SHADOW; ++id)
 		{
 			if (strcasecmp(shader_env, shader_dump_name(id)) == 0)
 			{
@@ -2875,6 +2903,7 @@ void renderer_shutdown(Renderer *r)
 		gpu_buffer_destroy(r->device, r->allocator, &r->frame_ubo[i]);
 	}
 	gpu_buffer_destroy(r->device, r->allocator, &r->exposure_buffer);
+	gpu_buffer_destroy(r->device, r->allocator, &r->point_shadow_buffer);
 	gpu_buffer_destroy(r->device, r->allocator, &r->environment_ubo);
 	vkDestroyCommandPool(r->device, r->command_pool, NULL);
 	vkDestroyDescriptorPool(r->device, r->descriptor_pool, NULL);

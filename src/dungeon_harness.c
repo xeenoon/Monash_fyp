@@ -1,5 +1,7 @@
 #include "dungeon_harness.h"
 
+#include "dungeon_lock_layout.h"
+
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -27,6 +29,11 @@ struct DungeonHarness
 	uint32_t capture_delay; /* frames to settle before the capture is taken */
 
 	uint32_t checks_run, checks_failed;
+	/* sweep_pins state: driving the selection back and forth while watching the
+	 * pick's clearance frame by frame. */
+	bool sweeping;
+	uint32_t sweep_frames, sweep_violations;
+	int sweep_direction;
 	bool finished;
 };
 
@@ -220,6 +227,39 @@ static void run_expect(DungeonHarness *harness, DungeonScene *scene, const Dunge
 		check(harness, degrees <= tolerance, "expect aimed +/-%.1f deg (off by %.2f, range %.2f m)",
 			  (double)tolerance, (double)degrees, (double)length);
 	}
+	else if (!strcmp(what, "pick_clear"))
+	{
+		bool picking = session->phase == DUNGEON_PHASE_PIN_TUMBLER;
+		const DungeonPinTumbler *pins =
+			picking ? &session->doors[session->focused_door].pins : NULL;
+		bool clear = picking && dungeon_lock_layout_pick_clear(pins, scene->pick_lateral,
+															   scene->pick_height);
+		check(harness, clear, "expect pick_clear (tip at lateral %.3f, height %.3f)",
+			  (double)scene->pick_lateral, (double)scene->pick_height);
+	}
+	else if (!strcmp(what, "pins_left_to_right"))
+	{
+		/* Pin 0 must land left of the last pin on screen, or the arrow keys
+		 * walk the selection the wrong way. Projects the pin positions onto the
+		 * camera's right vector rather than trusting the layout constants --
+		 * this is exactly the axis that was inverted. */
+		float yaw = camera->camera.yaw * (3.14159265358979f / 180.0f);
+		DungeonPoint forward = {cosf(yaw), sinf(yaw)};
+		DungeonPoint right = {-forward.z, forward.x};
+		uint32_t door = session->focused_door;
+		bool picking = session->phase == DUNGEON_PHASE_PIN_TUMBLER;
+		uint32_t last = picking ? session->doors[door].pins.pin_count - 1u : 0u;
+		WorldPosition first_pin = {0}, last_pin = {0};
+		bool ok = picking && dungeon_scene_pin_world(scene, door, 0u, &first_pin) &&
+				  dungeon_scene_pin_world(scene, door, last, &last_pin);
+		float first_on_right =
+			ok ? (float)first_pin.x * right.x + (float)first_pin.z * right.z : 0.0f;
+		float last_on_right =
+			ok ? (float)last_pin.x * right.x + (float)last_pin.z * right.z : 0.0f;
+		check(harness, ok && first_on_right < last_on_right,
+			  "expect pins_left_to_right (pin 0 at %.3f, pin %u at %.3f along camera right)",
+			  (double)first_on_right, last, (double)last_on_right);
+	}
 	else if (!strcmp(what, "focus"))
 	{
 		float minimum = (float)atof(rest);
@@ -391,6 +431,23 @@ static uint32_t run_command(DungeonHarness *harness, DungeonScene *scene,
 		}
 		return 1u; /* exactly one frame, matching an edge-triggered key */
 	}
+	if (!strcmp(verb, "sweep_pins"))
+	{
+		/* Walk the selection across every pin and back, checking the pick's
+		 * clearance on EVERY frame in between rather than only where it comes
+		 * to rest. The eased travel is the part that a per-state check misses,
+		 * and it is where a badly posed pick cut through the housing. */
+		if (scene->session.phase != DUNGEON_PHASE_PIN_TUMBLER)
+		{
+			check(harness, false, "sweep_pins: no pin tumbler is being picked");
+			return 0;
+		}
+		harness->sweeping = true;
+		harness->sweep_violations = 0;
+		harness->sweep_frames = 0;
+		harness->sweep_direction = 1;
+		return 1u;
+	}
 	if (!strcmp(verb, "press_combination"))
 	{
 		/* Enters the next N steps of the focused dial's combination through the
@@ -459,8 +516,11 @@ static uint32_t run_command(DungeonHarness *harness, DungeonScene *scene,
 		}
 		else if (session->phase == DUNGEON_PHASE_VAULT_DIAL)
 		{
-			const DungeonVaultDial *dial = &session->doors[session->focused_door].dial;
-			fprintf(stdout, " progress=%u/%u", dial->progress, dial->step_count);
+			const DungeonDoorState *dial_state = &session->doors[session->focused_door];
+			const DungeonVaultDial *dial = &dial_state->dial;
+			static const char *const names[4] = {"LEFT", "RIGHT", "UP", "DOWN"};
+			fprintf(stdout, " progress=%u/%u last=%s", dial->progress, dial->step_count,
+					dial_state->has_last_input ? names[dial_state->last_input] : "none");
 		}
 		fprintf(stdout, "\n");
 		return 0;
@@ -519,6 +579,43 @@ bool dungeon_harness_pre_frame(DungeonHarness *harness, DungeonScene *scene,
 	input->orbit_pitch = 0.0f;
 	if (harness->pending_capture[0])
 		return true; /* hold the world still until the capture is actually taken */
+	if (harness->sweeping)
+	{
+		DungeonSession *session = &scene->session;
+		if (session->phase != DUNGEON_PHASE_PIN_TUMBLER)
+		{
+			harness->sweeping = false;
+		}
+		else
+		{
+			const DungeonPinTumbler *pins = &session->doors[session->focused_door].pins;
+			if (!dungeon_lock_layout_pick_clear(pins, scene->pick_lateral, scene->pick_height))
+				++harness->sweep_violations;
+			++harness->sweep_frames;
+			/* One key press every few frames, so the pick is caught mid-travel
+			 * and not only once it has settled. */
+			if (harness->sweep_frames % 5u == 0u)
+			{
+				if (session->doors[session->focused_door].pins.selected == 0u)
+					harness->sweep_direction = 1;
+				else if (session->doors[session->focused_door].pins.selected ==
+						 pins->pin_count - 1u)
+					harness->sweep_direction = -1;
+				dungeon_session_move_selection(session, harness->sweep_direction);
+				/* Move the pin too, so the tip's height travels as well as its
+				 * lateral position. */
+				dungeon_session_adjust(session, harness->sweep_direction);
+			}
+			if (harness->sweep_frames >= 240u)
+			{
+				harness->sweeping = false;
+				check(harness, harness->sweep_violations == 0u,
+					  "sweep_pins: pick cleared the lock on all %u animation frames (%u hits)",
+					  harness->sweep_frames, harness->sweep_violations);
+			}
+		}
+		return true;
+	}
 	if (harness->frames_remaining)
 	{
 		--harness->frames_remaining;

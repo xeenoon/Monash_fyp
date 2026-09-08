@@ -1,5 +1,7 @@
 #include "dungeon_mesh.h"
 
+#include "dungeon_lock_layout.h"
+
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -91,6 +93,97 @@ static bool append_horizontal(Builder *builder, DungeonRect rectangle,
 		{rectangle.max.x * scale, rectangle.max.z * scale},
 		{rectangle.min.x * scale, rectangle.max.z * scale}};
 	return append_quad(builder, p, n, t, uv);
+}
+
+/* A capped cylinder standing on Y, centred on the local origin in XZ. Sides
+ * are quads with per-vertex outward normals so the silhouette reads as round
+ * under the lock's grazing light instead of as a faceted prism; caps are
+ * triangle fans. Used for the pin stacks and their springs, which are the
+ * pieces a player looks straight at. */
+static bool append_cylinder(Builder *builder, float radius, float low, float high,
+							uint32_t segments)
+{
+	DungeonMeshBatch *batch = builder->batch;
+	if (segments < 3u)
+		return false;
+	uint32_t side_vertices = (segments + 1u) * 2u;
+	uint32_t cap_vertices = (segments + 1u) * 2u;
+	if (batch->vertex_count + side_vertices + cap_vertices > builder->vertex_capacity ||
+		batch->index_count + segments * 6u + segments * 6u > builder->index_capacity)
+		return false;
+	float scale = 1.0f / batch->material_width_m;
+	float circumference = 6.28318530718f * radius;
+
+	uint32_t side_base = batch->vertex_count;
+	for (uint32_t i = 0; i <= segments; ++i)
+	{
+		float t = (float)i / (float)segments;
+		float angle = t * 6.28318530718f;
+		float nx = cosf(angle), nz = sinf(angle);
+		for (uint32_t end = 0; end < 2u; ++end)
+		{
+			Vertex *vertex = &batch->vertices[batch->vertex_count++];
+			vertex->position[0] = nx * radius;
+			vertex->position[1] = end ? high : low;
+			vertex->position[2] = nz * radius;
+			vertex->normal[0] = nx;
+			vertex->normal[1] = 0.0f;
+			vertex->normal[2] = nz;
+			vertex->tangent[0] = -nz;
+			vertex->tangent[1] = 0.0f;
+			vertex->tangent[2] = nx;
+			vertex->tangent[3] = -1.0f;
+			vertex->texcoord[0] = t * circumference * scale;
+			vertex->texcoord[1] = (end ? high : low) * scale;
+		}
+	}
+	for (uint32_t i = 0; i < segments; ++i)
+	{
+		uint32_t a = side_base + i * 2u;
+		const uint32_t quad[6] = {a, a + 1u, a + 3u, a, a + 3u, a + 2u};
+		for (uint32_t k = 0; k < 6; ++k)
+			batch->indices[batch->index_count++] = quad[k];
+	}
+
+	for (uint32_t end = 0; end < 2u; ++end)
+	{
+		float y = end ? high : low;
+		float sign = end ? 1.0f : -1.0f;
+		uint32_t centre = batch->vertex_count;
+		Vertex *hub = &batch->vertices[batch->vertex_count++];
+		hub->position[0] = hub->position[2] = 0.0f;
+		hub->position[1] = y;
+		hub->normal[0] = hub->normal[2] = 0.0f;
+		hub->normal[1] = sign;
+		hub->tangent[0] = 1.0f;
+		hub->tangent[1] = hub->tangent[2] = 0.0f;
+		hub->tangent[3] = -sign;
+		hub->texcoord[0] = hub->texcoord[1] = 0.0f;
+		for (uint32_t i = 0; i < segments; ++i)
+		{
+			float angle = (float)i / (float)segments * 6.28318530718f;
+			Vertex *vertex = &batch->vertices[batch->vertex_count++];
+			vertex->position[0] = cosf(angle) * radius;
+			vertex->position[1] = y;
+			vertex->position[2] = sinf(angle) * radius;
+			vertex->normal[0] = vertex->normal[2] = 0.0f;
+			vertex->normal[1] = sign;
+			vertex->tangent[0] = 1.0f;
+			vertex->tangent[1] = vertex->tangent[2] = 0.0f;
+			vertex->tangent[3] = -sign;
+			vertex->texcoord[0] = cosf(angle) * radius * scale;
+			vertex->texcoord[1] = sinf(angle) * radius * scale;
+		}
+		for (uint32_t i = 0; i < segments; ++i)
+		{
+			uint32_t a = centre + 1u + i;
+			uint32_t b = centre + 1u + (i + 1u) % segments;
+			batch->indices[batch->index_count++] = centre;
+			batch->indices[batch->index_count++] = end ? a : b;
+			batch->indices[batch->index_count++] = end ? b : a;
+		}
+	}
+	return true;
 }
 
 static bool append_box(Builder *builder, DungeonRect rectangle,
@@ -311,13 +404,15 @@ static bool append_wall_loops(Builder *builder,
 				vertex->position[0] = px;
 				vertex->position[1] = y;
 				vertex->position[2] = pz;
-				vertex->normal[0] = normal[i].x;
+				/* Displacement points into rock (right of the contour), but
+				 * the lit face points into open floor (left), matching winding. */
+				vertex->normal[0] = -normal[i].x;
 				vertex->normal[1] = 0.0f;
-				vertex->normal[2] = normal[i].z;
+				vertex->normal[2] = -normal[i].z;
 				vertex->tangent[0] = tangent_dir[i].x;
 				vertex->tangent[1] = 0.0f;
 				vertex->tangent[2] = tangent_dir[i].z;
-				vertex->tangent[3] = handedness[i];
+				vertex->tangent[3] = -handedness[i];
 				vertex->texcoord[0] = s * scale;
 				vertex->texcoord[1] = (y - floor_y) * scale;
 			}
@@ -652,22 +747,45 @@ static bool build_moss(const DungeonLevel *level,
 /* Heights above the floor, in metres. The casing sits at hand height and the
  * cutaway hangs directly below it, so the whole assembly is one vertical strip
  * the focus camera can frame. */
-#define LOCK_BODY_BASE_M 1.00f
-#define LOCK_HOUSING_BASE_M 0.52f
-#define LOCK_HOUSING_HEIGHT_M 0.42f
+#define LOCK_HOUSING_HEIGHT_M (DUNGEON_LOCK_HOUSING_TOP_Y - DUNGEON_LOCK_HOUSING_Y)
+/* The metal set is sampled at 0.35 m so its grain and rust are visible on parts
+ * a few centimetres across; at the 1 m default a pin covers 5% of the texture
+ * and comes out a flat swatch. */
+#define LOCK_MATERIAL_WIDTH_M 0.35f
+/* Derived from append_cylinder's own layout -- sides are a (segments+1) ring of
+ * paired vertices and each cap is a hub plus `segments` -- so a builder's
+ * capacity cannot drift out of step with the geometry it is asked to hold. */
+#define CYLINDER_VERTEX_COUNT(segments) (((segments) + 1u) * 2u + ((segments) + 1u) * 2u)
+#define CYLINDER_INDEX_COUNT(segments) ((segments) * 12u)
+#define BOX_VERTEX_COUNT 24u
+#define BOX_INDEX_COUNT 36u
+#define LOCK_SPRING_SEGMENTS 12u
+#define LOCK_PIN_SEGMENTS 14u
+#define LOCK_PICK_SEGMENTS 10u
 
 static bool build_door_hardware(const DungeonLevel *level, DungeonMeshData *out,
 								DungeonLevelError *error)
 {
-	Builder door = {0}, body = {0}, housing = {0}, channel = {0}, pin = {0}, notch = {0},
-			dial = {0};
+	Builder door = {0}, body = {0}, housing = {0}, channel = {0}, spring = {0}, pin = {0},
+			notch = {0}, dial = {0}, pick = {0};
 	if (!builder_create(&door, &out->batches[DUNGEON_MESH_DOOR], 24u, 36u, 1.4f) ||
-		!builder_create(&body, &out->batches[DUNGEON_MESH_LOCK_BODY], 144u, 216u, 1.0f) ||
-		!builder_create(&housing, &out->batches[DUNGEON_MESH_LOCK_HOUSING], 24u, 36u, 1.0f) ||
-		!builder_create(&channel, &out->batches[DUNGEON_MESH_LOCK_CHANNEL], 24u, 36u, 1.0f) ||
-		!builder_create(&pin, &out->batches[DUNGEON_MESH_LOCK_PIN], 24u, 36u, 1.0f) ||
-		!builder_create(&notch, &out->batches[DUNGEON_MESH_LOCK_NOTCH], 24u, 36u, 1.0f) ||
-		!builder_create(&dial, &out->batches[DUNGEON_MESH_LOCK_DIAL], 48u, 72u, 1.0f))
+		!builder_create(&body, &out->batches[DUNGEON_MESH_LOCK_BODY], 144u, 216u, LOCK_MATERIAL_WIDTH_M) ||
+		!builder_create(&housing, &out->batches[DUNGEON_MESH_LOCK_HOUSING], 24u, 36u, LOCK_MATERIAL_WIDTH_M) ||
+		!builder_create(&channel, &out->batches[DUNGEON_MESH_LOCK_CHANNEL], 24u, 36u,
+						LOCK_MATERIAL_WIDTH_M) ||
+		!builder_create(&spring, &out->batches[DUNGEON_MESH_LOCK_SPRING],
+						CYLINDER_VERTEX_COUNT(LOCK_SPRING_SEGMENTS),
+						CYLINDER_INDEX_COUNT(LOCK_SPRING_SEGMENTS), LOCK_MATERIAL_WIDTH_M) ||
+		!builder_create(&pin, &out->batches[DUNGEON_MESH_LOCK_PIN],
+						CYLINDER_VERTEX_COUNT(LOCK_PIN_SEGMENTS),
+						CYLINDER_INDEX_COUNT(LOCK_PIN_SEGMENTS), LOCK_MATERIAL_WIDTH_M) ||
+		!builder_create(&notch, &out->batches[DUNGEON_MESH_LOCK_NOTCH], 24u, 36u, LOCK_MATERIAL_WIDTH_M) ||
+		!builder_create(&dial, &out->batches[DUNGEON_MESH_LOCK_DIAL], 48u, 72u,
+						LOCK_MATERIAL_WIDTH_M) ||
+		!builder_create(&pick, &out->batches[DUNGEON_MESH_LOCK_PICK],
+						CYLINDER_VERTEX_COUNT(LOCK_PICK_SEGMENTS) + 2u * BOX_VERTEX_COUNT,
+						CYLINDER_INDEX_COUNT(LOCK_PICK_SEGMENTS) + 2u * BOX_INDEX_COUNT,
+						LOCK_MATERIAL_WIDTH_M))
 		return mesh_fail(error, "out of memory building door hardware");
 
 	/* Every doorway spans the same hallway width by construction, so one leaf
@@ -694,12 +812,36 @@ static bool build_door_hardware(const DungeonLevel *level, DungeonMeshData *out,
 	 * z-fighting the panel behind it. */
 	if (!append_box(&channel, (DungeonRect){{-0.034f, -0.020f}, {0.034f, 0.020f}}, 0.0f, 0.34f))
 		return mesh_fail(error, "internal lock channel mesh capacity error");
-	if (!append_box(&pin, (DungeonRect){{-0.026f, -0.026f}, {0.026f, 0.026f}}, 0.0f, 0.11f))
+	/* One coil of the spring above a pin. The coil is drawn as a stack of these,
+	 * spaced by however much room is left above the pin, so raising a pin
+	 * visibly compresses its spring -- LocalToWorldTransform carries no scale,
+	 * so a single stretched mesh could not do that. */
+	if (!append_cylinder(&spring, 0.026f, 0.0f, 0.009f, LOCK_SPRING_SEGMENTS))
+		return mesh_fail(error, "internal lock spring mesh capacity error");
+	/* Round pin stacks, not blocks: the pins are the piece the player looks
+	 * straight at, and a faceted prism at this range reads as a toy. */
+	if (!append_cylinder(&pin, 0.024f, 0.0f, 0.11f, LOCK_PIN_SEGMENTS))
 		return mesh_fail(error, "internal lock pin mesh capacity error");
 	if (!append_box(&notch, (DungeonRect){{-0.060f, -0.017f}, {0.060f, 0.017f}}, 0.0f, 0.016f))
 		return mesh_fail(error, "internal lock notch mesh capacity error");
 	if (!append_box(&dial, (DungeonRect){{-0.175f, -0.036f}, {0.175f, 0.036f}}, 0.0f, 0.35f))
 		return mesh_fail(error, "internal lock dial mesh capacity error");
+
+	/* The pick. Its local origin is the foot of the tip stub, and the stub
+	 * rises from there so the tip meets the UNDERSIDE of the pin it is working
+	 * -- built the other way up, it hung off the pin instead of lifting it.
+	 * The shaft runs along -X, long enough to always leave the frame, so one
+	 * mesh serves every pin without a scale term and the pick enters from
+	 * off-screen as it does in the reference.
+	 *
+	 * These extents mirror dungeon_lock_layout_pick exactly; that function is
+	 * what the clearance tests reason about, so the two must not drift. */
+	if (!append_cylinder(&pick, 0.0085f, 0.0f, DUNGEON_LOCK_PICK_STUB_M, LOCK_PICK_SEGMENTS) ||
+		!append_box(&pick, (DungeonRect){{-0.100f, -0.0075f}, {-0.005f, 0.0075f}}, -0.012f,
+					0.006f) ||
+		!append_box(&pick, (DungeonRect){{-0.950f, -0.0080f}, {-0.095f, 0.0080f}}, -0.030f,
+					-0.014f))
+		return mesh_fail(error, "internal lockpick mesh capacity error");
 	return true;
 }
 
