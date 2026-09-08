@@ -161,15 +161,17 @@ static void solve_focused(DungeonHarness *harness, DungeonScene *scene)
 	}
 	else if (session->phase == DUNGEON_PHASE_VAULT_DIAL)
 	{
-		const DungeonVaultDial *dial = &session->doors[session->focused_door].dial;
-		/* Continue from wherever the player left off rather than replaying from
-		 * step zero: entering step 0 while progress is at 2 is a miss, which
-		 * resets the dial and makes solve fail on a half-entered combination. */
-		for (uint32_t guard = 0;
-			 guard < DUNGEON_LOCK_MAX_STEPS * 2u && session->phase == DUNGEON_PHASE_VAULT_DIAL;
-			 ++guard)
-			dungeon_session_turn(session, dial->combination[dial->progress]);
-		check(harness, session->phase == DUNGEON_PHASE_EXPLORING, "solve: vault dial accepted");
+		/* Turn until the index pin lights, confirm, repeat -- through the same
+		 * session calls the keys drive. Writing the progress counter would skip
+		 * the very path this is meant to prove. A whole revolution per number
+		 * is the worst case, so the guard is generous. */
+		uint32_t guard = DUNGEON_DIAL_POSITIONS * DUNGEON_LOCK_MAX_STEPS * 4u;
+		while (session->phase == DUNGEON_PHASE_VAULT_DIAL && guard--)
+		{
+			if (dungeon_session_spin_dial(session, 1.0f, DUNGEON_DIAL_TICK_SECONDS))
+				dungeon_session_commit_dial(session);
+		}
+		check(harness, session->phase == DUNGEON_PHASE_EXPLORING, "solve: safe dial accepted");
 	}
 	else
 		check(harness, false, "solve: no lock is being picked");
@@ -226,6 +228,18 @@ static void run_expect(DungeonHarness *harness, DungeonScene *scene, const Dunge
 		}
 		check(harness, degrees <= tolerance, "expect aimed +/-%.1f deg (off by %.2f, range %.2f m)",
 			  (double)tolerance, (double)degrees, (double)length);
+	}
+	else if (!strcmp(what, "pin_locked") || !strcmp(what, "pin_free"))
+	{
+		uint32_t index = (uint32_t)atoi(rest);
+		bool want_locked = !strcmp(what, "pin_locked");
+		bool picking = session->phase == DUNGEON_PHASE_PIN_TUMBLER;
+		const DungeonPinTumbler *pins =
+			picking ? &session->doors[session->focused_door].pins : NULL;
+		bool valid = pins && index < pins->pin_count;
+		bool locked = valid && dungeon_pin_tumbler_pin_set(pins, index);
+		check(harness, valid && locked == want_locked, "expect %s %u (actual %s)", what, index,
+			  !valid ? "no such pin" : (locked ? "locked" : "free"));
 	}
 	else if (!strcmp(what, "pick_clear"))
 	{
@@ -302,6 +316,15 @@ static void run_expect(DungeonHarness *harness, DungeonScene *scene, const Dunge
 		bool valid = parsed_pair && pins && index < pins->pin_count;
 		check(harness, valid && pins->heights[index] == wanted, "expect pin_height %u = %u (actual %d)",
 			  index, wanted, valid ? (int)pins->heights[index] : -1);
+	}
+	else if (!strcmp(what, "dial_pin_lit") || !strcmp(what, "dial_pin_dark"))
+	{
+		bool want_lit = !strcmp(what, "dial_pin_lit");
+		bool picking = session->phase == DUNGEON_PHASE_VAULT_DIAL;
+		bool lit = picking &&
+				   dungeon_vault_dial_on_number(&session->doors[session->focused_door].dial);
+		check(harness, picking && lit == want_lit, "expect %s (actual %s)", what,
+			  !picking ? "no dial" : (lit ? "lit" : "dark"));
 	}
 	else if (!strcmp(what, "dial_progress"))
 	{
@@ -448,34 +471,54 @@ static uint32_t run_command(DungeonHarness *harness, DungeonScene *scene,
 		harness->sweep_direction = 1;
 		return 1u;
 	}
-	if (!strcmp(verb, "press_combination"))
+	if (!strcmp(verb, "spin_to_numbers"))
 	{
-		/* Enters the next N steps of the focused dial's combination through the
-		 * real input path, one key per frame -- unlike `solve`, which reaches
-		 * past the input entirely. Used to show banked progress mid-puzzle. */
+		/* Turns the dial until the index pin lights, confirms, and repeats
+		 * until N more numbers are banked -- real held-turn frames and real
+		 * confirms, so the tick rate, the flash and the commit are all
+		 * exercised rather than bypassed. */
 		DungeonSession *session = &scene->session;
 		if (session->phase != DUNGEON_PHASE_VAULT_DIAL)
 		{
-			check(harness, false, "press_combination: no dial is being picked");
+			check(harness, false, "spin_to_numbers: no dial is being picked");
 			return 0;
 		}
-		const DungeonVaultDial *dial = &session->doors[session->focused_door].dial;
-		uint32_t steps = (uint32_t)atoi(rest);
-		for (uint32_t i = 0; i < steps && dial->progress < dial->step_count; ++i)
+		uint32_t wanted = (uint32_t)atoi(rest);
+		uint32_t start = session->doors[session->focused_door].dial.progress;
+		uint32_t guard = 4000u;
+		while (session->phase == DUNGEON_PHASE_VAULT_DIAL &&
+			   session->doors[session->focused_door].dial.progress < start + wanted && guard--)
 		{
-			switch (dial->combination[dial->progress])
-			{
-			case DUNGEON_DIAL_LEFT: input->puzzle_left = true; break;
-			case DUNGEON_DIAL_RIGHT: input->puzzle_right = true; break;
-			case DUNGEON_DIAL_UP: input->puzzle_up = true; break;
-			case DUNGEON_DIAL_DOWN: input->puzzle_down = true; break;
-			}
-			/* The main loop consumes one direction per frame, so each step has
-			 * to be handed over on its own frame. */
-			dungeon_session_turn(session, dial->combination[dial->progress]);
-			input->puzzle_left = input->puzzle_right = false;
-			input->puzzle_up = input->puzzle_down = false;
+			if (dungeon_session_spin_dial(session, 1.0f, DUNGEON_DIAL_TICK_SECONDS))
+				dungeon_session_commit_dial(session);
 		}
+		return 1u;
+	}
+	if (!strcmp(verb, "commit_dial"))
+	{
+		/* Presses confirm wherever the dial happens to be -- used to show that
+		 * doing so on a dark pin throws the combination away. */
+		DungeonSession *session = &scene->session;
+		if (session->phase != DUNGEON_PHASE_VAULT_DIAL)
+		{
+			check(harness, false, "commit_dial: no dial is being picked");
+			return 0;
+		}
+		dungeon_session_commit_dial(session);
+		return 1u;
+	}
+	if (!strcmp(verb, "spin_off_number"))
+	{
+		/* Turns until the index pin is definitely NOT lit. */
+		DungeonSession *session = &scene->session;
+		if (session->phase != DUNGEON_PHASE_VAULT_DIAL)
+		{
+			check(harness, false, "spin_off_number: no dial is being picked");
+			return 0;
+		}
+		uint32_t guard = DUNGEON_DIAL_POSITIONS + 1u;
+		while (dungeon_session_spin_dial(session, 1.0f, DUNGEON_DIAL_TICK_SECONDS) && guard--)
+			;
 		return 1u;
 	}
 	if (!strcmp(verb, "solve"))
@@ -518,9 +561,10 @@ static uint32_t run_command(DungeonHarness *harness, DungeonScene *scene,
 		{
 			const DungeonDoorState *dial_state = &session->doors[session->focused_door];
 			const DungeonVaultDial *dial = &dial_state->dial;
-			static const char *const names[4] = {"LEFT", "RIGHT", "UP", "DOWN"};
-			fprintf(stdout, " progress=%u/%u last=%s", dial->progress, dial->step_count,
-					dial_state->has_last_input ? names[dial_state->last_input] : "none");
+			fprintf(stdout, " numbers=%u/%u tick=%u pin=%s shake=%.2f", dial->progress,
+					dial->step_count, dial->position,
+					dungeon_vault_dial_on_number(dial) ? "LIT" : "dark",
+					(double)dial_state->dial_shake);
 		}
 		fprintf(stdout, "\n");
 		return 0;
@@ -584,7 +628,14 @@ bool dungeon_harness_pre_frame(DungeonHarness *harness, DungeonScene *scene,
 		DungeonSession *session = &scene->session;
 		if (session->phase != DUNGEON_PHASE_PIN_TUMBLER)
 		{
+			/* The sweep sets pins as it goes, so it can open the lock before
+			 * running its course. Report what was checked rather than dropping
+			 * the assertion on the floor. */
 			harness->sweeping = false;
+			check(harness, harness->sweep_violations == 0u,
+				  "sweep_pins: pick cleared the lock on all %u animation frames (%u hits, lock "
+				  "opened mid-sweep)",
+				  harness->sweep_frames, harness->sweep_violations);
 		}
 		else
 		{

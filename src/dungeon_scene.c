@@ -281,6 +281,29 @@ static WorldPosition lock_point(DungeonPoint origin, DungeonPoint across, Dungeo
 						   origin.z + across.z * lateral + normal.z * proud};
 }
 
+/* A transform for a piece whose axis is the door NORMAL rather than world up:
+ * local +Y maps to the normal, and local +X/+Z spin in the plane of the door
+ * face by `spin` radians. coordinate_rotation_y cannot express either half of
+ * that. Only the safe dial needs it -- it is a disc lying against the door that
+ * has to turn about its own centre. */
+static LocalToWorldTransform lock_face_spin(WorldPosition translation, DungeonPoint across,
+											DungeonPoint normal, float spin)
+{
+	LocalToWorldTransform transform = {.translation = translation};
+	double c = cos((double)spin), s = sin((double)spin);
+	/* [column][row]: local X, then Y, then Z = X cross Y. */
+	transform.rotation[0][0] = c * (double)across.x;
+	transform.rotation[0][1] = s;
+	transform.rotation[0][2] = c * (double)across.z;
+	transform.rotation[1][0] = (double)normal.x;
+	transform.rotation[1][1] = 0.0;
+	transform.rotation[1][2] = (double)normal.z;
+	transform.rotation[2][0] = s * (double)normal.z;
+	transform.rotation[2][1] = -c;
+	transform.rotation[2][2] = -s * (double)normal.x;
+	return transform;
+}
+
 /* The casing, shared by both lock kinds -- it is what makes a door read as
  * locked from across the room, before any of the mechanism is legible. */
 static void append_lock_body(DungeonScene *scene, DungeonPoint origin, DungeonPoint across,
@@ -393,38 +416,50 @@ static void append_vault_dial_draws(DungeonScene *scene, uint32_t index, bool fo
 	float tint = focused ? 1.0f : 0.5f;
 
 	append_lock_body(scene, origin, across, normal, tint, camera, out, count, capacity);
+
+	/* One tick of the dial is one step of rotation. Negated so that holding
+	 * "right" turns the face clockwise on screen, which is the direction the
+	 * key is named for. */
+	float spin = -(float)state->dial.position *
+				 (6.28318530718f / (float)DUNGEON_DIAL_POSITIONS);
+	/* The shake: the only feedback that a number has been picked up. It decays
+	 * in the session, and sin() of the decaying value gives a wobble that rings
+	 * down on its own without a second piece of state to carry a phase. */
+	spin += sinf(state->dial_shake * 46.0f) * state->dial_shake * 0.075f;
+	float dial_centre_y = LOCK_HOUSING_Y + 0.20f;
 	push_instance(scene, DUNGEON_MESH_LOCK_DIAL,
-				  aim_x(across, lock_point(origin, across, normal, 0.0f, 0.0f, LOCK_HOUSING_Y)),
-				  camera, 0.13f * tint, 0.125f * tint, 0.12f * tint, 0.66f, LOCK_METAL, out, count,
+				  lock_face_spin(lock_point(origin, across, normal, 0.0f, 0.0f, dial_centre_y),
+								 across, normal, spin),
+				  camera, 0.46f * tint, 0.44f * tint, 0.42f * tint, 0.52f, LOCK_METAL, out, count,
 				  capacity);
 
-	/* Four marks around the dial, the last one entered lit. The dial has no
-	 * absolute position of its own, so this is what makes a turn visible. */
-	float centre_y = LOCK_HOUSING_Y + 0.175f;
-	const float mark_lateral[4] = {-0.115f, 0.115f, 0.0f, 0.0f};
-	const float mark_height[4] = {centre_y, centre_y, centre_y + 0.115f, centre_y - 0.115f};
-	for (uint32_t direction = 0; direction < 4u; ++direction)
-	{
-		bool lit = state->has_last_input && (uint32_t)state->last_input == direction;
-		push_instance(scene, DUNGEON_MESH_LOCK_NOTCH,
-					  aim_x(across, lock_point(origin, across, normal, mark_lateral[direction],
-											   0.042f, mark_height[direction])),
-					  camera, (lit ? 1.00f : 0.30f) * tint, (lit ? 0.72f : 0.31f) * tint,
-					  (lit ? 0.10f : 0.34f) * tint, 0.42f, 0.0f, out, count, capacity);
-	}
+	/* The index pin, which does NOT turn: without a fixed reference the dial has
+	 * no readable position at all. It is red, and it flashes while the tick
+	 * under it is the number the combination wants next -- that flash is the
+	 * entire signal in this puzzle, since turning the dial is free and only
+	 * confirm can lose progress. */
+	bool flashing = dungeon_vault_dial_on_number(&state->dial);
+	float pulse = flashing ? 0.55f + 0.45f * sinf(state->dial_flash_time * 11.0f) : 0.0f;
+	/* Wide gap between the two states on purpose: the rust texture underneath
+	 * is bright, so a dim red and a bright red land closer together on screen
+	 * than the numbers suggest. */
+	float pin_red = 0.13f + 0.87f * pulse;
+	float pin_dark = 0.05f + 0.07f * pulse;
+	push_instance(scene, DUNGEON_MESH_LOCK_PIN,
+				  aim_x(across, lock_point(origin, across, normal, 0.0f, 0.058f,
+										   dial_centre_y + DUNGEON_LOCK_DIAL_RADIUS_M - 0.030f)),
+				  camera, pin_red * tint, pin_dark * tint, pin_dark * tint, 0.36f, 0.0f, out,
+				  count, capacity);
 
-	/* Progress pips below the dial: how many steps are banked, never which.
-	 * Spaced wider than a pip is, or they merge into one bar and stop counting
-	 * anything. `across` is the camera's right, so a plain ascending offset
-	 * fills them left-to-right on screen. */
+	/* Numbers banked so far. */
 	float pip_span = (float)(state->dial.step_count - 1u) * 0.145f * 0.5f;
 	for (uint32_t step = 0; step < state->dial.step_count; ++step)
 	{
 		bool banked = step < state->dial.progress;
 		push_instance(scene, DUNGEON_MESH_LOCK_NOTCH,
 					  aim_x(across, lock_point(origin, across, normal,
-											   (float)step * 0.145f - pip_span, LOCK_PROUD_BACK_M,
-											   0.45f)),
+											   (float)step * 0.145f - pip_span,
+											   LOCK_PROUD_BACK_M, 0.45f)),
 					  camera, (banked ? 1.00f : 0.15f) * tint, (banked ? 0.74f : 0.15f) * tint,
 					  (banked ? 0.12f : 0.17f) * tint, 0.42f, 0.0f, out, count, capacity);
 	}

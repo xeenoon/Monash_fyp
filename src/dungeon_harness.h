@@ -33,6 +33,9 @@
  *   walk_through <n> <seconds>    steer through door n to its far side
  *   sweep_pins                    drive the selection across every pin, checking
  *                                 the pick's clearance on every animation frame
+ *   spin_to_numbers <n>           turn and confirm until n more numbers land
+ *   spin_off_number               turn until the index pin is definitely dark
+ *   commit_dial                   press confirm wherever the dial happens to be
  *   solve                         fill the focused lock with its solution --
  *                                 proves the gate, not the input path
  *   capture <path.png>            settle two frames, then write the frame
@@ -46,7 +49,11 @@
  *   expect pins_left_to_right     pin 0 is left of the last pin on screen
  *   expect pin_selected <n>       which pin the keys are currently driving
  *   expect pin_height <n> <value> a pin's slot, so key input is proved not eyeballed
- *   expect dial_progress <n>      banked steps of the combination
+ *   expect pin_locked <n> | pin_free <n>
+ *                                 whether a pin has set and stopped responding
+ *   expect dial_progress <n>      numbers of the combination banked so far
+ *   expect dial_pin_lit | dial_pin_dark
+ *                                 whether the red index pin is flashing
  *   expect door_open <n> | door_shut <n>
  *   expect past_door <n>          player is on the far side of door n
  *   quit

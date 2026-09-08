@@ -45,6 +45,7 @@ typedef enum
 	DUNGEON_STATUS_ENTER_THE_SEQUENCE,
 	DUNGEON_STATUS_PINS_DO_NOT_ALIGN,
 	DUNGEON_STATUS_SEQUENCE_PROGRESS,
+	DUNGEON_STATUS_DIAL_RESET,
 	DUNGEON_STATUS_LOCK_OPEN
 } DungeonStatus;
 
@@ -54,8 +55,14 @@ typedef struct
 	float swing; /* 0 shut .. 1 fully swung; eased, so opening reads as motion */
 	DungeonPinTumbler pins;
 	DungeonVaultDial dial;
-	DungeonDialDirection last_input;
-	bool has_last_input;
+	/* Dial state. `dial_spin_accumulator` banks held-key time toward the next
+	 * tick; `dial_flash_time` free-runs so the renderer can pulse the red index
+	 * pin without carrying a phase of its own; `dial_shake` is a decaying kick
+	 * given both to a banked number and to a reset, so confirm always lands
+	 * with a jolt whichever way it went. */
+	float dial_spin_accumulator;
+	float dial_flash_time;
+	float dial_shake;
 	/* Which side of the door plane the lock hardware stands on: the side the
 	 * player starts from, so the first door met is never locked from behind. */
 	float hardware_side;
@@ -95,8 +102,18 @@ void dungeon_session_cancel(DungeonSession *session);
 /* Pin tumbler only: pick a pin, then raise or lower it. */
 void dungeon_session_move_selection(DungeonSession *session, int direction);
 void dungeon_session_adjust(DungeonSession *session, int direction);
-/* Vault dial only: enter one direction of the combination. */
-void dungeon_session_turn(DungeonSession *session, DungeonDialDirection direction);
+/* Safe dial only: turn the dial while a direction key is held. `direction` is
+ * -1, 0 or +1 and `dt` the frame time; ticks come out at a fixed rate however
+ * fast the game is running. Turning banks nothing and loses nothing. Returns
+ * true while the index pin is flashing. */
+bool dungeon_session_spin_dial(DungeonSession *session, float direction, float dt);
+
+/* Safe dial only: the confirm key. Banks the number if the pin is flashing,
+ * otherwise resets the combination. Returns whether a number was banked. */
+bool dungeon_session_commit_dial(DungeonSession *session);
+
+/* Seconds of held input per tick of the dial. */
+#define DUNGEON_DIAL_TICK_SECONDS 0.085f
 /* Pin tumbler only: try the lock. Returns whether it opened. */
 bool dungeon_session_confirm(DungeonSession *session);
 

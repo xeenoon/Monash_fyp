@@ -100,8 +100,8 @@ static bool append_horizontal(Builder *builder, DungeonRect rectangle,
  * under the lock's grazing light instead of as a faceted prism; caps are
  * triangle fans. Used for the pin stacks and their springs, which are the
  * pieces a player looks straight at. */
-static bool append_cylinder(Builder *builder, float radius, float low, float high,
-							uint32_t segments)
+static bool append_cylinder_at(Builder *builder, float centre_x, float centre_z, float radius,
+							   float low, float high, uint32_t segments)
 {
 	DungeonMeshBatch *batch = builder->batch;
 	if (segments < 3u)
@@ -123,9 +123,9 @@ static bool append_cylinder(Builder *builder, float radius, float low, float hig
 		for (uint32_t end = 0; end < 2u; ++end)
 		{
 			Vertex *vertex = &batch->vertices[batch->vertex_count++];
-			vertex->position[0] = nx * radius;
+			vertex->position[0] = centre_x + nx * radius;
 			vertex->position[1] = end ? high : low;
-			vertex->position[2] = nz * radius;
+			vertex->position[2] = centre_z + nz * radius;
 			vertex->normal[0] = nx;
 			vertex->normal[1] = 0.0f;
 			vertex->normal[2] = nz;
@@ -151,7 +151,8 @@ static bool append_cylinder(Builder *builder, float radius, float low, float hig
 		float sign = end ? 1.0f : -1.0f;
 		uint32_t centre = batch->vertex_count;
 		Vertex *hub = &batch->vertices[batch->vertex_count++];
-		hub->position[0] = hub->position[2] = 0.0f;
+		hub->position[0] = centre_x;
+		hub->position[2] = centre_z;
 		hub->position[1] = y;
 		hub->normal[0] = hub->normal[2] = 0.0f;
 		hub->normal[1] = sign;
@@ -163,16 +164,16 @@ static bool append_cylinder(Builder *builder, float radius, float low, float hig
 		{
 			float angle = (float)i / (float)segments * 6.28318530718f;
 			Vertex *vertex = &batch->vertices[batch->vertex_count++];
-			vertex->position[0] = cosf(angle) * radius;
+			vertex->position[0] = centre_x + cosf(angle) * radius;
 			vertex->position[1] = y;
-			vertex->position[2] = sinf(angle) * radius;
+			vertex->position[2] = centre_z + sinf(angle) * radius;
 			vertex->normal[0] = vertex->normal[2] = 0.0f;
 			vertex->normal[1] = sign;
 			vertex->tangent[0] = 1.0f;
 			vertex->tangent[1] = vertex->tangent[2] = 0.0f;
 			vertex->tangent[3] = -sign;
-			vertex->texcoord[0] = cosf(angle) * radius * scale;
-			vertex->texcoord[1] = sinf(angle) * radius * scale;
+			vertex->texcoord[0] = (centre_x + cosf(angle) * radius) * scale;
+			vertex->texcoord[1] = (centre_z + sinf(angle) * radius) * scale;
 		}
 		for (uint32_t i = 0; i < segments; ++i)
 		{
@@ -184,6 +185,12 @@ static bool append_cylinder(Builder *builder, float radius, float low, float hig
 		}
 	}
 	return true;
+}
+
+static bool append_cylinder(Builder *builder, float radius, float low, float high,
+							uint32_t segments)
+{
+	return append_cylinder_at(builder, 0.0f, 0.0f, radius, low, high, segments);
 }
 
 static bool append_box(Builder *builder, DungeonRect rectangle,
@@ -762,6 +769,8 @@ static bool build_moss(const DungeonLevel *level,
 #define LOCK_SPRING_SEGMENTS 12u
 #define LOCK_PIN_SEGMENTS 14u
 #define LOCK_PICK_SEGMENTS 10u
+#define LOCK_DIAL_SEGMENTS 28u
+#define LOCK_DIAL_TICK_SEGMENTS 6u
 
 static bool build_door_hardware(const DungeonLevel *level, DungeonMeshData *out,
 								DungeonLevelError *error)
@@ -780,7 +789,13 @@ static bool build_door_hardware(const DungeonLevel *level, DungeonMeshData *out,
 						CYLINDER_VERTEX_COUNT(LOCK_PIN_SEGMENTS),
 						CYLINDER_INDEX_COUNT(LOCK_PIN_SEGMENTS), LOCK_MATERIAL_WIDTH_M) ||
 		!builder_create(&notch, &out->batches[DUNGEON_MESH_LOCK_NOTCH], 24u, 36u, LOCK_MATERIAL_WIDTH_M) ||
-		!builder_create(&dial, &out->batches[DUNGEON_MESH_LOCK_DIAL], 48u, 72u,
+		!builder_create(&dial, &out->batches[DUNGEON_MESH_LOCK_DIAL],
+						CYLINDER_VERTEX_COUNT(LOCK_DIAL_SEGMENTS) +
+							DUNGEON_DIAL_POSITIONS * CYLINDER_VERTEX_COUNT(LOCK_DIAL_TICK_SEGMENTS) +
+							BOX_VERTEX_COUNT,
+						CYLINDER_INDEX_COUNT(LOCK_DIAL_SEGMENTS) +
+							DUNGEON_DIAL_POSITIONS * CYLINDER_INDEX_COUNT(LOCK_DIAL_TICK_SEGMENTS) +
+							BOX_INDEX_COUNT,
 						LOCK_MATERIAL_WIDTH_M) ||
 		!builder_create(&pick, &out->batches[DUNGEON_MESH_LOCK_PICK],
 						CYLINDER_VERTEX_COUNT(LOCK_PICK_SEGMENTS) + 2u * BOX_VERTEX_COUNT,
@@ -824,8 +839,26 @@ static bool build_door_hardware(const DungeonLevel *level, DungeonMeshData *out,
 		return mesh_fail(error, "internal lock pin mesh capacity error");
 	if (!append_box(&notch, (DungeonRect){{-0.060f, -0.017f}, {0.060f, 0.017f}}, 0.0f, 0.016f))
 		return mesh_fail(error, "internal lock notch mesh capacity error");
-	if (!append_box(&dial, (DungeonRect){{-0.175f, -0.036f}, {0.175f, 0.036f}}, 0.0f, 0.35f))
+	/* The safe dial: a disc whose axis is the door normal (the instance
+	 * transform stands it up), with the tick dots engraved into the same mesh
+	 * so they turn WITH the face -- they are what makes the rotation readable,
+	 * and an unrotating ring of dots would say nothing. Every sixth dot is
+	 * bigger, the way a real dial marks its quarters, plus a grip bar across
+	 * the face so the angle is legible even between dots. */
+	if (!append_cylinder(&dial, DUNGEON_LOCK_DIAL_RADIUS_M, 0.0f, 0.052f, LOCK_DIAL_SEGMENTS))
 		return mesh_fail(error, "internal lock dial mesh capacity error");
+	for (uint32_t tick = 0; tick < DUNGEON_DIAL_POSITIONS; ++tick)
+	{
+		float angle = (float)tick / (float)DUNGEON_DIAL_POSITIONS * 6.28318530718f;
+		bool quarter = (tick % 6u) == 0u;
+		float ring = DUNGEON_LOCK_DIAL_RADIUS_M - (quarter ? 0.030f : 0.022f);
+		if (!append_cylinder_at(&dial, cosf(angle) * ring, sinf(angle) * ring,
+								quarter ? 0.016f : 0.010f, 0.052f, quarter ? 0.068f : 0.062f,
+								LOCK_DIAL_TICK_SEGMENTS))
+			return mesh_fail(error, "internal lock dial tick capacity error");
+	}
+	if (!append_box(&dial, (DungeonRect){{-0.020f, -0.108f}, {0.020f, 0.108f}}, 0.052f, 0.074f))
+		return mesh_fail(error, "internal lock dial grip capacity error");
 
 	/* The pick. Its local origin is the foot of the tip stub, and the stub
 	 * rises from there so the tip meets the UNDERSIDE of the pin it is working

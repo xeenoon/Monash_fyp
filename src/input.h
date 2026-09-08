@@ -35,6 +35,9 @@ typedef struct
 	 * toggle, which the dungeon scene does not use. */
 	bool interact;
 	bool puzzle_left, puzzle_right, puzzle_up, puzzle_down;
+	/* Held, not edge-triggered: the safe dial spins for as long as a direction
+	 * is down, so it needs the key STATE, not the key press. */
+	float dial_spin; /* -1 left, +1 right, 0 released */
 	bool puzzle_confirm; /* Enter or Space: try the lock */
 	bool puzzle_cancel;	 /* Q: step back from a lock without solving it */
 } Input;

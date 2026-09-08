@@ -641,16 +641,13 @@ int main(int argc, char *argv[])
 				}
 				else
 				{
-					/* The dial takes a direction outright: there is nothing to
-					 * confirm, the fourth correct turn is what opens it. */
-					if (input.puzzle_left)
-						dungeon_session_turn(session, DUNGEON_DIAL_LEFT);
-					else if (input.puzzle_right)
-						dungeon_session_turn(session, DUNGEON_DIAL_RIGHT);
-					else if (input.puzzle_up)
-						dungeon_session_turn(session, DUNGEON_DIAL_UP);
-					else if (input.puzzle_down)
-						dungeon_session_turn(session, DUNGEON_DIAL_DOWN);
+					/* The safe dial spins while a direction is HELD, ticking
+					 * round at a fixed rate. Turning is free; confirm is what
+					 * banks a number, and what throws the combination away if
+					 * the index pin is not lit. */
+					dungeon_session_spin_dial(session, input.dial_spin, dt);
+					if (input.puzzle_confirm)
+						dungeon_session_commit_dial(session);
 				}
 				/* E steps back out as well as in: the key that got you into the
 				 * lock is the one a player reaches for to leave it. */

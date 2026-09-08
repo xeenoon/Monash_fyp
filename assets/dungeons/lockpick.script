@@ -31,12 +31,25 @@ expect pin_height 0 0
 press right
 wait 0.1
 expect pin_selected 1
+# Pin 1 of this seed's first door starts free with a target two steps up. If a
+# generator change ever makes it start set, this fails loudly rather than
+# quietly asserting nothing about the keys below.
+expect pin_free 1
 press up
 wait 0.1
+expect pin_free 1
 press up
 wait 0.1
 expect pin_height 1 2
 expect pin_height 0 0
+# Two presses put it on its target, so it has dropped into place. From here it
+# ignores the keys entirely -- that is the whole shape of the puzzle.
+expect pin_locked 1
+press up
+press up
+wait 0.1
+expect pin_height 1 2
+expect pin_locked 1
 expect pick_clear
 report
 capture lockpick_03_pins_moved.png
@@ -81,14 +94,26 @@ expect aimed 2.0
 report
 capture lockpick_06_facing_vault_dial.png
 
-# Drive two real steps of the combination through the keys, so the lit
-# direction mark and the banked pips are showing actual state.
+# Turn until the red index pin lights, confirm to bank the number, repeat --
+# real held-turn frames and real confirms, not a written progress counter.
 expect dial_progress 0
-press_combination 2
-wait 0.2
+expect dial_pin_dark
+spin_to_numbers 2
+wait 0.05
 expect dial_progress 2
 report
 capture lockpick_06b_dial_two_banked.png
+
+# Confirming on a dark pin throws the whole combination away. That is the only
+# way to lose progress here, since turning the dial costs nothing.
+spin_off_number
+expect dial_pin_dark
+commit_dial
+wait 0.05
+expect dial_progress 0
+expect door_shut 1
+report
+capture lockpick_06c_dial_reset.png
 
 solve
 wait 2.0

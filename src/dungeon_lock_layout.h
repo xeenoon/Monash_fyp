@@ -39,6 +39,7 @@
 #define DUNGEON_LOCK_CHANNEL_HALF_X 0.034f
 #define DUNGEON_LOCK_PIN_RADIUS_M 0.024f
 #define DUNGEON_LOCK_SPRING_RADIUS_M 0.026f
+#define DUNGEON_LOCK_DIAL_RADIUS_M 0.175f
 
 /* Proud offsets: how far out of the door face each layer sits. */
 #define DUNGEON_LOCK_PROUD_BODY_M 0.070f

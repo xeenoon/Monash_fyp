@@ -38,6 +38,7 @@ void input_poll(Input *in, SDL_Window *window)
 	in->interact = false;
 	in->puzzle_left = in->puzzle_right = in->puzzle_up = in->puzzle_down = false;
 	in->puzzle_confirm = false;
+	in->dial_spin = 0.0f;
 	in->puzzle_cancel = false;
 
 	SDL_Event event;
@@ -121,6 +122,10 @@ void input_poll(Input *in, SDL_Window *window)
 		(keys[SDL_SCANCODE_W] ? 1.0f : 0.0f) - (keys[SDL_SCANCODE_S] ? 1.0f : 0.0f);
 	in->move_right =
 		(keys[SDL_SCANCODE_D] ? 1.0f : 0.0f) - (keys[SDL_SCANCODE_A] ? 1.0f : 0.0f);
+	/* Same keys as the edge-triggered puzzle directions; which of the two a
+	   scene reads depends on the lock it is showing. */
+	in->dial_spin = ((keys[SDL_SCANCODE_RIGHT] || keys[SDL_SCANCODE_D]) ? 1.0f : 0.0f) -
+					((keys[SDL_SCANCODE_LEFT] || keys[SDL_SCANCODE_A]) ? 1.0f : 0.0f);
 	in->orbit_yaw = (keys[SDL_SCANCODE_RIGHT] ? 1.0f : 0.0f) - (keys[SDL_SCANCODE_LEFT] ? 1.0f : 0.0f);
 	in->orbit_pitch = (keys[SDL_SCANCODE_DOWN] ? 1.0f : 0.0f) - (keys[SDL_SCANCODE_UP] ? 1.0f : 0.0f);
 	in->sprint = keys[SDL_SCANCODE_LSHIFT];

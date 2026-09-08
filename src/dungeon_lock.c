@@ -77,9 +77,20 @@ void dungeon_pin_tumbler_move(DungeonPinTumbler *lock, int direction)
 	lock->selected = (uint32_t)selected;
 }
 
+bool dungeon_pin_tumbler_pin_set(const DungeonPinTumbler *lock, uint32_t pin)
+{
+	if (!lock || pin >= lock->pin_count)
+		return false;
+	return lock->heights[pin] == lock->target[pin];
+}
+
 void dungeon_pin_tumbler_adjust(DungeonPinTumbler *lock, int direction)
 {
 	if (!lock || lock->selected >= lock->pin_count)
+		return;
+	/* Set pins are locked in place. Checked before the wrap below, so a pin can
+	 * never be walked off its target and back round. */
+	if (dungeon_pin_tumbler_pin_set(lock, lock->selected))
 		return;
 	int height = (int)lock->heights[lock->selected] + direction;
 	int states = (int)DUNGEON_LOCK_PIN_STATES;
@@ -106,20 +117,71 @@ void dungeon_vault_dial_init(DungeonVaultDial *lock, uint32_t seed, uint32_t ste
 	*lock = (DungeonVaultDial){0};
 	lock->step_count = clamp_count(step_count, 2u, DUNGEON_LOCK_MAX_STEPS);
 	LockRng rng = lock_rng_create(seed, DUNGEON_LOCK_DOMAIN_DIAL);
+
+	/* Numbers are spread around the rim by CONSTRUCTION: one per slot, with a
+	 * little jitter inside it. The obvious alternative -- draw a random tick
+	 * and re-draw until it clears the others -- cannot terminate once the rim
+	 * runs out of room, and at six numbers with a three-tick separation on a
+	 * twenty-four tick rim it does exactly that. It hung the test suite.
+	 *
+	 * Tick 0 is excluded throughout: that is where the dial starts, and a
+	 * number sitting there would be banked before the player turned anything.
+	 * The slot size is taken over the ticks ABOVE zero for the same reason. */
+	const uint32_t minimum_gap = 3u;
+	uint32_t usable = DUNGEON_DIAL_POSITIONS - 1u;
+	uint32_t slot = usable / lock->step_count;
+	if (slot < minimum_gap)
+		slot = minimum_gap;
+	uint32_t jitter = slot > minimum_gap ? slot - minimum_gap + 1u : 1u;
+	uint32_t base = 1u + lock_rng_index(&rng, minimum_gap);
 	for (uint32_t step = 0; step < lock->step_count; ++step)
-		lock->combination[step] = (DungeonDialDirection)lock_rng_index(&rng, 4u);
+	{
+		uint32_t position = base + step * slot + lock_rng_index(&rng, jitter);
+		if (position >= DUNGEON_DIAL_POSITIONS)
+			position = DUNGEON_DIAL_POSITIONS - 1u;
+		lock->combination[step] = (uint8_t)position;
+	}
+	/* Shuffle the order, or every combination would run one way round the rim
+	 * and the alternating-direction rule would be the only thing to solve. */
+	for (uint32_t i = lock->step_count; i > 1u; --i)
+	{
+		uint32_t j = lock_rng_index(&rng, i);
+		uint8_t swap = lock->combination[i - 1u];
+		lock->combination[i - 1u] = lock->combination[j];
+		lock->combination[j] = swap;
+	}
 }
 
-bool dungeon_vault_dial_turn(DungeonVaultDial *lock, DungeonDialDirection direction)
+bool dungeon_vault_dial_on_number(const DungeonVaultDial *lock)
 {
-	if (!lock || !lock->step_count)
+	if (!lock || lock->solved || lock->progress >= lock->step_count)
 		return false;
-	if (lock->solved)
-		return true;
-	/* A miss resets to zero outright rather than re-testing the input against
-	 * step 0, which is exactly what the source does. Do not "fix" this into a
-	 * partial-match restart: it changes the difficulty of every combination. */
-	lock->progress = direction == lock->combination[lock->progress] ? lock->progress + 1u : 0u;
+	return lock->position == lock->combination[lock->progress];
+}
+
+bool dungeon_vault_dial_step(DungeonVaultDial *lock, int direction)
+{
+	if (!lock || !lock->step_count || lock->solved || !direction)
+		return false;
+	int step = direction > 0 ? 1 : -1;
+	lock->position = (uint32_t)(((int)lock->position + step + (int)DUNGEON_DIAL_POSITIONS) %
+								(int)DUNGEON_DIAL_POSITIONS);
+	return dungeon_vault_dial_on_number(lock);
+}
+
+bool dungeon_vault_dial_commit(DungeonVaultDial *lock)
+{
+	if (!lock || !lock->step_count || lock->solved)
+		return false;
+	if (!dungeon_vault_dial_on_number(lock))
+	{
+		/* Committing on a dark pin throws the whole combination away. Turning
+		 * costs nothing, so this is the only way to lose progress -- and the
+		 * only reason to look before pressing. */
+		lock->progress = 0;
+		return false;
+	}
+	++lock->progress;
 	lock->solved = lock->progress == lock->step_count;
-	return lock->solved;
+	return true;
 }
