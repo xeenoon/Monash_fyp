@@ -1,0 +1,84 @@
+# Prove, in the real renderer: we can reach a lock, the camera turns to face
+# it, the puzzle can be solved, and the player then walks through the gate.
+report
+
+# --- Door 0: pin tumbler -------------------------------------------------
+facing_of 0
+facing_of 1
+teleport_door 0
+# Aim 130 degrees away from the lock first: if the camera did not turn, the
+# facing check below could only pass by luck.
+set_yaw 220
+wait 0.5
+expect phase exploring
+expect door_shut 0
+capture lockpick_01_approach.png
+
+press interact
+wait 2.0
+expect phase pin
+expect focus 0.98
+expect facing 3.0
+expect aimed 2.0
+report
+capture lockpick_02_facing_pin_tumbler.png
+
+# Drive the real input path, and prove by value that the keys moved the pin
+# the selection was on -- not by looking at the picture.
+expect pin_selected 0
+expect pin_height 0 0
+press right
+wait 0.1
+expect pin_selected 1
+press up
+wait 0.1
+press up
+wait 0.1
+expect pin_height 1 2
+expect pin_height 0 0
+report
+capture lockpick_03_pins_moved.png
+
+solve
+wait 2.0
+expect phase exploring
+expect door_open 0
+report
+capture lockpick_04_gate_open.png
+
+walk_through 0 3.0
+report
+expect past_door 0
+capture lockpick_05_through_the_gate.png
+
+# --- Door 1: vault dial --------------------------------------------------
+teleport_door 1
+wait 0.5
+expect door_shut 1
+press interact
+wait 2.0
+expect phase dial
+expect focus 0.98
+expect facing 3.0
+expect aimed 2.0
+report
+capture lockpick_06_facing_vault_dial.png
+
+# Drive two real steps of the combination through the keys, so the lit
+# direction mark and the banked pips are showing actual state.
+expect dial_progress 0
+press_combination 2
+wait 0.2
+expect dial_progress 2
+report
+capture lockpick_06b_dial_two_banked.png
+
+solve
+wait 2.0
+expect phase exploring
+expect door_open 1
+walk_through 1 3.0
+expect past_door 1
+report
+capture lockpick_07_through_second_gate.png
+quit

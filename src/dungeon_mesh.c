@@ -625,6 +625,84 @@ static bool build_moss(const DungeonLevel *level,
 	return true;
 }
 
+
+/* The unit meshes for doors and lock hardware. All of them are built in local
+ * coordinates and drawn once per instance with their own transform, because
+ * they are the only dungeon geometry that moves: a door sinks, a pin rises.
+ * Baking them into level space would freeze them shut.
+ *
+ * The door leaf is anchored at its local origin (x = 0, one end of the blocker
+ * segment) and runs along local +X. It opens by sinking into the floor rather
+ * than swinging: the leaf is as wide as the hallway, so a swung leaf would pass
+ * straight through the corridor wall, and a slab dropping away reads cleanly.
+ *
+ * The lock is mounted ON the door face -- a casing, with a cutaway below it
+ * showing the pin stack in section, the way a lock is actually drawn. Every
+ * piece is therefore a box that is thin along the door normal and extended
+ * across and upward, and a pin's state is its HEIGHT in its bore. That only
+ * reads because the focus camera drops off the top-down angle and looks at the
+ * door face nearly head-on; from directly above, none of this is visible.
+ *
+ * append_box takes an XZ rectangle extruded along Y, which is exactly a panel
+ * standing on the door face: X runs across the door, Z is the thin axis along
+ * the normal, Y is up. Every piece stays centred on Z so the instance
+ * transform can push it clear of the leaf without caring which way local +Z
+ * ended up pointing. */
+
+/* Heights above the floor, in metres. The casing sits at hand height and the
+ * cutaway hangs directly below it, so the whole assembly is one vertical strip
+ * the focus camera can frame. */
+#define LOCK_BODY_BASE_M 1.00f
+#define LOCK_HOUSING_BASE_M 0.52f
+#define LOCK_HOUSING_HEIGHT_M 0.42f
+
+static bool build_door_hardware(const DungeonLevel *level, DungeonMeshData *out,
+								DungeonLevelError *error)
+{
+	Builder door = {0}, body = {0}, housing = {0}, channel = {0}, pin = {0}, notch = {0},
+			dial = {0};
+	if (!builder_create(&door, &out->batches[DUNGEON_MESH_DOOR], 24u, 36u, 1.4f) ||
+		!builder_create(&body, &out->batches[DUNGEON_MESH_LOCK_BODY], 144u, 216u, 1.0f) ||
+		!builder_create(&housing, &out->batches[DUNGEON_MESH_LOCK_HOUSING], 24u, 36u, 1.0f) ||
+		!builder_create(&channel, &out->batches[DUNGEON_MESH_LOCK_CHANNEL], 24u, 36u, 1.0f) ||
+		!builder_create(&pin, &out->batches[DUNGEON_MESH_LOCK_PIN], 24u, 36u, 1.0f) ||
+		!builder_create(&notch, &out->batches[DUNGEON_MESH_LOCK_NOTCH], 24u, 36u, 1.0f) ||
+		!builder_create(&dial, &out->batches[DUNGEON_MESH_LOCK_DIAL], 48u, 72u, 1.0f))
+		return mesh_fail(error, "out of memory building door hardware");
+
+	/* Every doorway spans the same hallway width by construction, so one leaf
+	 * mesh serves them all -- LocalToWorldTransform carries no scale. */
+	float width = level->doors[0].half_width * 2.0f;
+	if (!append_box(&door, (DungeonRect){{0.0f, -0.09f}, {width, 0.09f}}, 0.02f,
+					level->wall_height - 0.04f))
+		return mesh_fail(error, "internal door mesh capacity error");
+
+	/* Casing, a raised bezel around its face, a keyhole boss, and a shackle
+	 * above -- enough silhouette and self-shadowing that it reads as a lock
+	 * rather than as another panel bolted to the door. */
+	if (!append_box(&body, (DungeonRect){{-0.115f, -0.048f}, {0.115f, 0.048f}}, 0.0f, 0.24f) ||
+		!append_box(&body, (DungeonRect){{-0.098f, -0.062f}, {0.098f, 0.062f}}, 0.028f, 0.212f) ||
+		!append_box(&body, (DungeonRect){{-0.030f, -0.070f}, {0.030f, 0.070f}}, 0.070f, 0.150f) ||
+		!append_box(&body, (DungeonRect){{-0.062f, -0.030f}, {0.062f, 0.030f}}, 0.24f, 0.30f) ||
+		!append_box(&body, (DungeonRect){{-0.062f, -0.030f}, {-0.040f, 0.030f}}, 0.30f, 0.36f) ||
+		!append_box(&body, (DungeonRect){{0.040f, -0.030f}, {0.062f, 0.030f}}, 0.30f, 0.36f))
+		return mesh_fail(error, "internal lock body mesh capacity error");
+	if (!append_box(&housing, (DungeonRect){{-0.262f, -0.032f}, {0.262f, 0.032f}}, 0.0f,
+					LOCK_HOUSING_HEIGHT_M))
+		return mesh_fail(error, "internal lock housing mesh capacity error");
+	/* Bores are cut proud of the housing face so the pin inside them is never
+	 * z-fighting the panel behind it. */
+	if (!append_box(&channel, (DungeonRect){{-0.034f, -0.020f}, {0.034f, 0.020f}}, 0.0f, 0.34f))
+		return mesh_fail(error, "internal lock channel mesh capacity error");
+	if (!append_box(&pin, (DungeonRect){{-0.026f, -0.026f}, {0.026f, 0.026f}}, 0.0f, 0.11f))
+		return mesh_fail(error, "internal lock pin mesh capacity error");
+	if (!append_box(&notch, (DungeonRect){{-0.060f, -0.017f}, {0.060f, 0.017f}}, 0.0f, 0.016f))
+		return mesh_fail(error, "internal lock notch mesh capacity error");
+	if (!append_box(&dial, (DungeonRect){{-0.175f, -0.036f}, {0.175f, 0.036f}}, 0.0f, 0.35f))
+		return mesh_fail(error, "internal lock dial mesh capacity error");
+	return true;
+}
+
 bool dungeon_mesh_build(const DungeonLevel *level,
 						DungeonMeshData *out,
 						DungeonLevelError *error)
@@ -700,6 +778,8 @@ bool dungeon_mesh_build(const DungeonLevel *level,
 
 	if (!build_moss(level, out))
 		goto capacity_error;
+	if (level->door_count && !build_door_hardware(level, out, error))
+		return false;
 	return true;
 
 capacity_error:

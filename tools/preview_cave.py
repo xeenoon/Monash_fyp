@@ -7,11 +7,14 @@ The blob format (little-endian, written by tools/dungeon_cave_dump.c):
   uint32 width, uint32 height, float cell_size, float origin_x, float origin_z,
   float values[width*height],
   float spawn_x, float spawn_z, float exit_x, float exit_z,
-  uint32 puddle_count, then per puddle: float center_x, center_z, radius.
+  uint32 puddle_count, then per puddle: float center_x, center_z, radius,
+  uint32 door_count, then per door: float ax, az, bx, bz, uint32 lock_kind.
 
 Field values render as grayscale (white = open floor, black = rock); spawn is
-a green dot, exit a blue dot, puddles translucent cyan discs. This is how
-cave layouts get inspected -- never by screenshotting the running game.
+a green dot, exit a blue dot, puddles translucent cyan discs, and each locked
+doorway the blocker segment it seals (amber = pin tumbler, magenta = vault
+dial). This is how layouts get inspected -- never by screenshotting the
+running game.
 """
 import argparse
 import struct
@@ -28,10 +31,13 @@ def load(path):
         spawn_x, spawn_z, exit_x, exit_z = struct.unpack("<ffff", f.read(16))
         (puddle_count,) = struct.unpack("<I", f.read(4))
         puddles = [struct.unpack("<fff", f.read(12)) for _ in range(puddle_count)]
+        (door_count,) = struct.unpack("<I", f.read(4))
+        doors = [struct.unpack("<ffffI", f.read(20)) for _ in range(door_count)]
     return {
         "width": width, "height": height, "cell_size": cell_size,
         "origin": (origin_x, origin_z), "values": values,
         "spawn": (spawn_x, spawn_z), "exit": (exit_x, exit_z), "puddles": puddles,
+        "doors": doors,
     }
 
 
@@ -58,6 +64,12 @@ def render(cave, scale=4):
         px, pz = px * scale, pz * scale
         r = radius / cave["cell_size"] * scale
         draw.ellipse([px - r, pz - r, px + r, pz + r], fill=(60, 160, 220, 140))
+    lock_colors = {1: (240, 176, 60, 255), 2: (222, 96, 220, 255)}
+    for ax, az, bx, bz, lock in cave["doors"]:
+        pax, paz = world_to_pixel(cave, ax, az)
+        pbx, pbz = world_to_pixel(cave, bx, bz)
+        draw.line([pax * scale, paz * scale, pbx * scale, pbz * scale],
+                  fill=lock_colors.get(lock, (200, 200, 200, 255)), width=max(2, scale))
     dot(cave["spawn"], (60, 220, 90, 255), radius_px=6)
     dot(cave["exit"], (70, 120, 255, 255), radius_px=6)
     return image
@@ -72,7 +84,7 @@ def main():
     cave = load(args.dump)
     render(cave, scale=args.scale).save(args.out)
     print(f"wrote {args.out} ({cave['width']}x{cave['height']} corners, "
-          f"{len(cave['puddles'])} puddles)")
+          f"{len(cave['puddles'])} puddles, {len(cave['doors'])} doors)")
 
 
 if __name__ == "__main__":

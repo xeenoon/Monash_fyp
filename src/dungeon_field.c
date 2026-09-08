@@ -2,6 +2,7 @@
 
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 
 bool dungeon_field_create(uint32_t width, uint32_t height, float cell_size, DungeonPoint origin,
 						  DungeonField *out)
@@ -363,4 +364,151 @@ void dungeon_field_distance_to_solid(const DungeonField *field, float iso, float
 								 out_distance[(size_t)(z + 1) * width + (size_t)x - 1u] + diagonal);
 			}
 		}
+}
+
+void dungeon_field_stamp_rect(DungeonField *field, DungeonRect rect, float feather)
+{
+	if (!field || rect.max.x < rect.min.x || rect.max.z < rect.min.z)
+		return;
+	float gx0, gz0, gx1, gz1;
+	world_to_grid(field, rect.min, &gx0, &gz0);
+	world_to_grid(field, rect.max, &gx1, &gz1);
+	float cell_feather = feather / field->cell_size + 1.0f;
+	long x0 = (long)floorf(gx0 - cell_feather), x1 = (long)ceilf(gx1 + cell_feather);
+	long z0 = (long)floorf(gz0 - cell_feather), z1 = (long)ceilf(gz1 + cell_feather);
+	if (x0 < 0)
+		x0 = 0;
+	if (z0 < 0)
+		z0 = 0;
+	if (x1 >= (long)field->width)
+		x1 = (long)field->width - 1;
+	if (z1 >= (long)field->height)
+		z1 = (long)field->height - 1;
+	for (long z = z0; z <= z1; ++z)
+		for (long x = x0; x <= x1; ++x)
+		{
+			DungeonPoint world = dungeon_field_corner_world(field, (uint32_t)x, (uint32_t)z);
+			/* Signed distance to the rectangle: negative inside, positive out.
+			 * Zero feather therefore writes a hard 1/0 step, which is what
+			 * keeps room and hallway corners square through marching squares. */
+			float ox = fmaxf(rect.min.x - world.x, world.x - rect.max.x);
+			float oz = fmaxf(rect.min.z - world.z, world.z - rect.max.z);
+			float outside_x = fmaxf(ox, 0.0f), outside_z = fmaxf(oz, 0.0f);
+			float distance = sqrtf(outside_x * outside_x + outside_z * outside_z) +
+							 fminf(fmaxf(ox, oz), 0.0f);
+			float value;
+			if (distance <= -feather)
+				value = 1.0f;
+			else if (distance >= feather)
+				value = 0.0f;
+			else
+			{
+				float t = (feather - distance) / fmaxf(2.0f * feather, 1e-6f);
+				value = t * t * (3.0f - 2.0f * t); /* smoothstep, matching the disc */
+			}
+			size_t index = (size_t)z * field->width + (size_t)x;
+			if (value > field->values[index])
+				field->values[index] = value;
+		}
+}
+
+void dungeon_field_blur_masked(DungeonField *field, uint32_t iterations, const uint8_t *mask)
+{
+	if (!field || !iterations)
+		return;
+	if (!mask)
+	{
+		dungeon_field_blur(field, iterations);
+		return;
+	}
+	size_t count = (size_t)field->width * field->height;
+	float *blurred = malloc(count * sizeof(*blurred));
+	float *temp = malloc(count * sizeof(*temp));
+	if (!blurred || !temp)
+	{
+		free(blurred);
+		free(temp);
+		return;
+	}
+	/* Blur a full copy, then take the result only where the mask allows. The
+	 * blur is separable and reads neighbours, so it cannot be restricted in
+	 * place without the masked-out corners still leaking a partial pass. */
+	memcpy(blurred, field->values, count * sizeof(*blurred));
+	for (uint32_t i = 0; i < iterations; ++i)
+	{
+		blur_pass(blurred, temp, field->width, field->height, true);
+		blur_pass(temp, blurred, field->width, field->height, false);
+	}
+	for (size_t i = 0; i < count; ++i)
+		if (mask[i])
+			field->values[i] = blurred[i];
+	free(blurred);
+	free(temp);
+}
+
+/* A corner is traversable when it is open in the field AND not covered by the
+ * caller's `blocked` overlay -- the overlay is how a door footprint is tested
+ * without mutating (or copying) the field it belongs to. */
+static bool corner_traversable(const DungeonField *field, float iso, const uint8_t *blocked,
+							   size_t index)
+{
+	if (blocked && blocked[index])
+		return false;
+	return field->values[index] >= iso;
+}
+
+bool dungeon_field_reachable(const DungeonField *field, float iso, DungeonPoint from,
+							 DungeonPoint to, const uint8_t *blocked)
+{
+	if (!field)
+		return false;
+	uint32_t from_x, from_z, to_x, to_z;
+	nearest_corner(field, from, &from_x, &from_z);
+	nearest_corner(field, to, &to_x, &to_z);
+	size_t start_index = (size_t)from_z * field->width + from_x;
+	size_t goal_index = (size_t)to_z * field->width + to_x;
+	if (!corner_traversable(field, iso, blocked, start_index) ||
+		!corner_traversable(field, iso, blocked, goal_index))
+		return false;
+	if (start_index == goal_index)
+		return true;
+	size_t count = (size_t)field->width * field->height;
+	bool *visited = calloc(count, sizeof(*visited));
+	uint32_t *queue = malloc(count * sizeof(*queue));
+	if (!visited || !queue)
+	{
+		free(visited);
+		free(queue);
+		return false;
+	}
+	uint32_t read = 0, write = 0;
+	visited[start_index] = true;
+	queue[write++] = (uint32_t)start_index;
+	bool found = false;
+	while (read < write && !found)
+	{
+		uint32_t index = queue[read++];
+		uint32_t x = index % field->width, z = index / field->width;
+		const int dx[4] = {1, -1, 0, 0};
+		const int dz[4] = {0, 0, 1, -1};
+		for (int d = 0; d < 4; ++d)
+		{
+			long nx = (long)x + dx[d], nz = (long)z + dz[d];
+			if (nx < 0 || nz < 0 || nx >= (long)field->width || nz >= (long)field->height)
+				continue;
+			size_t neighbour = (size_t)nz * field->width + (size_t)nx;
+			if (visited[neighbour] || !corner_traversable(field, iso, blocked, neighbour))
+				continue;
+			if (neighbour == goal_index)
+			{
+				found = true;
+				break;
+			}
+			visited[neighbour] = true;
+			queue[write++] = (uint32_t)neighbour;
+		}
+	}
+	free(visited);
+	free(queue);
+	return found;
 }

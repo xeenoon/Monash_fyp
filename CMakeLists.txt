@@ -333,7 +333,9 @@ add_library(dungeon_level STATIC
     src/dungeon_mesh.c
     src/dungeon_collision.c
     src/dungeon_player.c
-    src/dungeon_lighting.c)
+    src/dungeon_lighting.c
+    src/dungeon_lock.c
+    src/dungeon_session.c)
 target_include_directories(dungeon_level PUBLIC src)
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(dungeon_level PRIVATE -Wall -Wextra -Wpedantic)
@@ -374,6 +376,14 @@ if(BUILD_TESTING)
     add_executable(dungeon_cave_tests tests/dungeon_cave_tests.c)
     target_link_libraries(dungeon_cave_tests PRIVATE dungeon_level m)
     add_test(NAME dungeon_cave_generation COMMAND dungeon_cave_tests)
+
+    add_executable(dungeon_lock_tests tests/dungeon_lock_tests.c)
+    target_link_libraries(dungeon_lock_tests PRIVATE dungeon_level m)
+    add_test(NAME dungeon_lock_puzzles COMMAND dungeon_lock_tests)
+
+    add_executable(dungeon_session_tests tests/dungeon_session_tests.c)
+    target_link_libraries(dungeon_session_tests PRIVATE dungeon_level m)
+    add_test(NAME dungeon_lock_session COMMAND dungeon_session_tests)
 endif()
 
 # Dev tool: dumps a generated cave's field for tools/preview_cave.py to render
@@ -385,6 +395,7 @@ add_executable(terrain_renderer
     src/main.c
     src/dungeon_scene.c
     src/dungeon_camera.c
+    src/dungeon_harness.c
     src/input.c
     src/coordinate.c
     src/camera.c

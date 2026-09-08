@@ -29,25 +29,24 @@ void main() {
         }
         barrier();
     }
-    if (index == 0u && histogram_count[0] > 0u) {
+    if (index == 0u) {
+        /* Disabling adaptation must work even when only sky is visible. */
+        if (frame.temporal_parameters.w <= 0.5) {
+            exposure_state.exposure = 1.0;
+            return;
+        }
+        if (histogram_count[0] == 0u) return;
         float average = exp2(weighted_log_luminance[0] /
                              float(histogram_count[0]));
         exposure_state.average_luminance = average;
-        /* E toggles this off at runtime: hold a fixed exposure instead of
-           adapting to scene luminance. */
-        if (frame.temporal_parameters.w > 0.5) {
-            /* Clamp to +-2 EV. The prior 0.03..32.0 range (~-5..+9 EV) let a
-               single dark/sky-heavy frame drive exposure to its ceiling and
-               blow the scene out white; sky pixels are now excluded from the
-               metered average too (luminance_histogram.comp), so this no
-               longer needs to cover that case. */
-            float target = clamp(0.18 / max(average, 1e-5), 0.25, 4.0);
-            float speed = target > exposure_state.exposure ? 1.25 : 3.5;
-            float weight = 1.0 - exp(-speed * max(frame.temporal_parameters.y, 0.0));
-            exposure_state.exposure = frame.temporal_parameters.x > 0.5
-                ? mix(exposure_state.exposure, target, weight) : target;
-        } else {
-            exposure_state.exposure = 1.0;
-        }
+        /* Apply only a quarter of the metered correction, capped at half a
+           stop either way so shadows stay dark and bright surfaces stay bright. */
+        float target_ev = clamp(0.25 * log2(0.18 / max(average, 1e-5)), -0.5, 0.5);
+        float target = exp2(target_ev);
+        float speed = target > exposure_state.exposure ? 0.6 : 1.2;
+        float weight = 1.0 - exp(-speed * max(frame.temporal_parameters.y, 0.0));
+        /* Exposure has its own persistent state, initialized to 1.0. TAA
+           invalidation (camera cuts, debug changes, etc.) must not snap it. */
+        exposure_state.exposure = mix(exposure_state.exposure, target, weight);
     }
 }

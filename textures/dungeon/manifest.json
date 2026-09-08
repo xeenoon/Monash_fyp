@@ -72,6 +72,29 @@
           "md5": "37b377b4a439d6f18acaa963fd830894"
         }
       }
+    },
+    {
+      "role": "lock",
+      "id": "rusty_metal_03",
+      "page": "https://polyhaven.com/a/rusty_metal_03",
+      "width_m": 0.35,
+      "files": {
+        "albedo": {
+          "channel": "Diffuse",
+          "extension": "jpg",
+          "md5": "e5ec75885884f9440a14eae579035c9f"
+        },
+        "normal": {
+          "channel": "nor_gl",
+          "extension": "png",
+          "md5": "d14d79a9a31e9248d5c7d41dbc23c0f8"
+        },
+        "orm": {
+          "channel": "arm",
+          "extension": "png",
+          "md5": "3bfd52479c62985ff0626bbf510109ef"
+        }
+      }
     }
   ],
   "local_materials": [

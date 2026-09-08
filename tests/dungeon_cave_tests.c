@@ -4,6 +4,7 @@
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* Re-runs keep_largest_component on a copy and requires it to be a no-op:
@@ -110,11 +111,105 @@ static void generated_caves_are_connected_and_puddles_are_clear(void)
 	}
 }
 
+/* The invariant the whole hybrid layout rests on. A door that does not
+ * actually gate the route is worse than no door: the player picks a lock for
+ * nothing, or walks around it and never sees the puzzle at all. The generator
+ * is supposed to have dropped every such candidate already, so re-asking the
+ * question here is a check on the generator, not on the player. */
+static void every_locked_door_is_a_real_chokepoint(void)
+{
+	for (uint32_t seed = 1; seed <= 30u; ++seed)
+	{
+		DungeonCaveParams params = dungeon_cave_default_params(seed);
+		DungeonCaveResult cave = {0};
+		assert(dungeon_cave_generate(&params, &cave));
+		size_t count = (size_t)cave.field.width * cave.field.height;
+		uint8_t *overlay = calloc(count, sizeof(*overlay));
+		assert(overlay);
+
+		/* With every door open, the exit is reachable -- otherwise the level
+		 * is unfinishable no matter how well the locks are picked. */
+		assert(dungeon_field_reachable(&cave.field, 0.5f, cave.spawn, cave.exit, NULL));
+		assert(cave.door_count <= params.door_max);
+
+		for (uint32_t i = 0; i < cave.door_count; ++i)
+		{
+			const DungeonDoorway *door = &cave.doors[i];
+			assert(door->lock != DUNGEON_LOCK_NONE);
+			/* The doorway stands in open floor: it is a dynamic object, never
+			 * carved into the field. */
+			assert(dungeon_field_sample(&cave.field, door->center) >= 0.5f);
+			assert(door->half_width > 0.0f);
+
+			memset(overlay, 0, count);
+			float normal_x = cosf(door->yaw), normal_z = sinf(door->yaw);
+			float across_x = -normal_z, across_z = normal_x;
+			float half_thickness = cave.field.cell_size * 2.0f;
+			float half_span = door->half_width + cave.field.cell_size * 2.0f;
+			for (uint32_t z = 0; z < cave.field.height; ++z)
+				for (uint32_t x = 0; x < cave.field.width; ++x)
+				{
+					DungeonPoint world = dungeon_field_corner_world(&cave.field, x, z);
+					float dx = world.x - door->center.x, dz = world.z - door->center.z;
+					float along = dx * normal_x + dz * normal_z;
+					float lateral = dx * across_x + dz * across_z;
+					if (fabsf(along) <= half_thickness && fabsf(lateral) <= half_span)
+						overlay[(size_t)z * cave.field.width + x] = 1u;
+				}
+			assert(!dungeon_field_reachable(&cave.field, 0.5f, cave.spawn, cave.exit, overlay));
+
+			/* The blocker segment must span the aperture and stay a segment:
+			 * dungeon_light_segment_blocked and segment_crosses_blocker in
+			 * mesh.frag both read it as one. */
+			float bx = door->blocker.b.x - door->blocker.a.x;
+			float bz = door->blocker.b.z - door->blocker.a.z;
+			assert(fabsf(sqrtf(bx * bx + bz * bz) - door->half_width * 2.0f) < 1e-3f);
+		}
+		free(overlay);
+		dungeon_cave_destroy(&cave);
+	}
+}
+
+/* A hard rect stamp has to survive as a square corner, otherwise hallways read
+ * as cave and the layout change is invisible. Checked on the field directly:
+ * along a room's straight wall the occupancy step is exact, with no partial
+ * blur values in between. */
+static void hard_rect_stamps_keep_square_corners(void)
+{
+	DungeonField field = {0};
+	assert(dungeon_field_create(81u, 81u, 0.25f, (DungeonPoint){-10.0f, -10.0f}, &field));
+	dungeon_field_stamp_rect(&field, (DungeonRect){{-4.0f, -3.0f}, {4.0f, 3.0f}}, 0.0f);
+	for (uint32_t z = 0; z < field.height; ++z)
+		for (uint32_t x = 0; x < field.width; ++x)
+		{
+			float value = dungeon_field_get(&field, x, z);
+			assert(value == 0.0f || value == 1.0f); /* no feathered band at all */
+		}
+	assert(dungeon_field_sample(&field, (DungeonPoint){0.0f, 0.0f}) >= 0.5f);
+	assert(dungeon_field_sample(&field, (DungeonPoint){-9.0f, -9.0f}) < 0.5f);
+
+	/* And a masked blur must leave unmasked corners bit-identical, which is
+	 * what lets rooms and pockets share one field. */
+	size_t count = (size_t)field.width * field.height;
+	float *before = malloc(count * sizeof(*before));
+	uint8_t *mask = calloc(count, sizeof(*mask));
+	assert(before && mask);
+	memcpy(before, field.values, count * sizeof(*before));
+	dungeon_field_blur_masked(&field, 3u, mask); /* mask all-zero: nothing may move */
+	for (size_t i = 0; i < count; ++i)
+		assert(field.values[i] == before[i]);
+	free(before);
+	free(mask);
+	dungeon_field_destroy(&field);
+}
+
 int main(void)
 {
 	identical_seed_reproduces_byte_identical_field();
 	different_seeds_produce_different_fields();
 	generated_caves_are_connected_and_puddles_are_clear();
+	every_locked_door_is_a_real_chokepoint();
+	hard_rect_stamps_keep_square_corners();
 	puts("dungeon cave tests passed");
 	return 0;
 }

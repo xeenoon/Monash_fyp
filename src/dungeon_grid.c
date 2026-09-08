@@ -213,7 +213,8 @@ bool dungeon_grid_compile_text(const char *text, float cell_size, DungeonLevel *
 		return fail(error, 0, 0, "out of memory rasterizing map");
 	}
 	grid_destroy(&grid);
-	return dungeon_level_compile_field(&field, spawn_point, exit_point, NULL, 0u, 0.0f, 2.4f, out,
+	return dungeon_level_compile_field(&field, spawn_point, exit_point, NULL, 0u, NULL, 0u, 0.0f,
+									   2.4f, out,
 									   error);
 }
 

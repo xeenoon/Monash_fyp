@@ -29,6 +29,13 @@ typedef struct
 	DungeonPuddle *puddles;
 	uint32_t puddle_count;
 
+	/* Doorways standing in hallway apertures. Not part of the field, the
+	 * contours, or the collider/occluder arrays above: a door is a dynamic
+	 * object whose collider and light occluder the scene adds and drops as it
+	 * opens, which is what lets it open without recompiling any geometry. */
+	DungeonDoorway *doors;
+	uint32_t door_count;
+
 	DungeonPoint spawn;
 	DungeonPoint exit;
 	float floor_y;
@@ -48,9 +55,10 @@ typedef struct
  * (procedural caves) rasterize into a DungeonField and call this -- nothing
  * past this point knows or cares which frontend produced the field. Takes
  * ownership of `field` (moved into the output on success; destroyed on
- * failure) and copies `puddles`. */
+ * failure) and copies `puddles` and `doors`. */
 bool dungeon_level_compile_field(DungeonField *field, DungeonPoint spawn, DungeonPoint exit,
-								 const DungeonPuddle *puddles, uint32_t puddle_count, float floor_y,
+								 const DungeonPuddle *puddles, uint32_t puddle_count,
+								 const DungeonDoorway *doors, uint32_t door_count, float floor_y,
 								 float wall_height, DungeonLevel *out, DungeonLevelError *error);
 
 void dungeon_level_destroy(DungeonLevel *level);

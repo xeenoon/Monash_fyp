@@ -1,6 +1,7 @@
 #include "dungeon_scene.h"
 
 #include "dungeon_cave.h"
+#include "dungeon_collision.h"
 #include "dungeon_grid.h"
 
 #include <float.h>
@@ -21,18 +22,23 @@ static const char *const ALBEDO_PATHS[DUNGEON_MESH_BATCH_COUNT] = {
 	DUNGEON_TEXTURE_DIR "/wall_albedo.jpg",
 	DUNGEON_TEXTURE_DIR "/exit_albedo.jpg",
 	[DUNGEON_MESH_MOSS] = DUNGEON_TEXTURE_DIR "/moss.jpeg",
+	/* The door leaf borrows the exit's medieval-wood set: it is the only wood
+	 * material checked in, and it is exactly what a dungeon door wants. */
+	[DUNGEON_MESH_DOOR] = DUNGEON_TEXTURE_DIR "/exit_albedo.jpg",
 };
 
 static const char *const ORM_PATHS[DUNGEON_MESH_BATCH_COUNT] = {
 	DUNGEON_TEXTURE_DIR "/floor_orm.png",
 	DUNGEON_TEXTURE_DIR "/wall_orm.png",
 	DUNGEON_TEXTURE_DIR "/exit_orm.png",
+	[DUNGEON_MESH_DOOR] = DUNGEON_TEXTURE_DIR "/exit_orm.png",
 };
 
 static const char *const NORMAL_PATHS[DUNGEON_MESH_BATCH_COUNT] = {
 	DUNGEON_TEXTURE_DIR "/floor_normal.png",
 	DUNGEON_TEXTURE_DIR "/wall_normal.png",
 	DUNGEON_TEXTURE_DIR "/exit_normal.png",
+	[DUNGEON_MESH_DOOR] = DUNGEON_TEXTURE_DIR "/exit_normal.png",
 };
 
 static DrawPushConstants dungeon_push(const Mesh *mesh, WorldPosition camera_position)
@@ -141,6 +147,244 @@ static bool mount_torch(const DungeonLevel *level, DungeonLight *light,
 	return true;
 }
 
+
+/* Local +X maps to world (cos t, 0, -sin t) under coordinate_rotation_y, so
+ * aiming local +X along a world XZ direction needs atan2(-dz, dx). Every door
+ * and lock piece is placed through one of these two helpers; getting the sign
+ * wrong here silently mirrors the whole assembly. */
+static LocalToWorldTransform aim_x(DungeonPoint direction, WorldPosition translation)
+{
+	return coordinate_rotation_y(atan2((double)-direction.z, (double)direction.x), translation);
+}
+
+/* Slot layout matches torch_push, and getting it wrong is not subtle: roughness
+ * is the ORM roughness FACTOR in elevation_uv.x, metallic is
+ * material_factors.x, and material_factors.y is the default-lit flag. An
+ * earlier version passed roughness as material_factors.y and left
+ * elevation_uv.x at 1.0, which pinned every lock piece to fully-rough
+ * metallic-zero -- flat plastic under any light. */
+static DrawPushConstants tinted_push(const LocalToWorldTransform *transform, WorldPosition camera,
+									 float r, float g, float b, float roughness, float metallic)
+{
+	return (DrawPushConstants){
+		.local_to_camera_relative = coordinate_local_to_camera_relative(transform, camera),
+		.geometry = {{r, g, b, 1.0f}},
+		.elevation_uv = {{roughness, 1.0f, 1.0f, 0.0f}},
+		.material = {{metallic, 1.0f, 1.0f, 1.0f}},
+		.debug = {{0.0f, 1.0f, 1.0f, 1.0f}}, /* .y: dynamic, so TAA keeps no stale trail */
+	};
+}
+
+/* Appends one instance draw of a unit mesh. The mesh's own local_to_world is
+ * overwritten per instance, which is safe because every draw is recorded into
+ * the command buffer before the next instance is written. */
+static void push_instance(DungeonScene *scene, DungeonMeshBatchKind kind,
+						  LocalToWorldTransform transform, WorldPosition camera, float r, float g,
+						  float b, float roughness, float metallic, RendererDraw *out,
+						  uint32_t *count, uint32_t capacity)
+{
+	if (!scene->uploaded[kind] || *count >= capacity)
+		return;
+	scene->meshes[kind].local_to_world = transform;
+	out[(*count)++] =
+		(RendererDraw){.mesh = &scene->meshes[kind],
+					   .material_set = scene->meshes[kind].material_set,
+					   .push = tinted_push(&transform, camera, r, g, b, roughness, metallic),
+					   .static_mesh = true};
+}
+
+/* Named so the call sites read as materials rather than as pairs of floats. */
+#define LOCK_BRASS_ROUGHNESS 0.30f
+#define LOCK_STEEL_ROUGHNESS 0.24f
+#define LOCK_IRON_ROUGHNESS 0.52f
+#define LOCK_METAL 1.0f
+
+/* Layout of the lock on the door face, in metres. Y values are heights above
+ * the floor; `proud` values push a piece out along the door normal so the
+ * stack -- housing, bore and shear mark, then the pin in front -- never
+ * z-fights itself. Mirrors the mesh constants in dungeon_mesh.c. */
+#define LOCK_BODY_Y 1.00f
+#define LOCK_HOUSING_Y 0.52f
+#define LOCK_CHANNEL_Y 0.56f
+#define LOCK_PIN_BASE_Y 0.575f
+#define LOCK_PIN_RISE_M 0.068f
+#define LOCK_PIN_LENGTH_M 0.11f
+#define LOCK_BORE_PITCH_M 0.135f
+#define LOCK_PROUD_BACK_M 0.030f
+#define LOCK_PROUD_PIN_M 0.062f
+
+/* The lock's frame on the door face: `across` runs along the door, `normal`
+ * points out of it toward the player. */
+static void lock_frame(const DungeonLevel *level, const DungeonSession *session, uint32_t index,
+					   DungeonPoint *out_origin, DungeonPoint *out_across, DungeonPoint *out_normal)
+{
+	const DungeonDoorway *door = &level->doors[index];
+	float side = session->doors[index].hardware_side;
+	DungeonPoint normal = {cosf(door->yaw) * side, sinf(door->yaw) * side};
+	*out_origin = dungeon_session_lock_origin(session, index);
+	*out_across = (DungeonPoint){-normal.z, normal.x};
+	*out_normal = normal;
+}
+
+/* A point on the lock face: `lateral` along the door, `proud` out of it. */
+static WorldPosition lock_point(DungeonPoint origin, DungeonPoint across, DungeonPoint normal,
+								float lateral, float proud, float height)
+{
+	return (WorldPosition){origin.x + across.x * lateral + normal.x * proud, height,
+						   origin.z + across.z * lateral + normal.z * proud};
+}
+
+/* The casing, shared by both lock kinds -- it is what makes a door read as
+ * locked from across the room, before any of the mechanism is legible. */
+static void append_lock_body(DungeonScene *scene, DungeonPoint origin, DungeonPoint across,
+							 DungeonPoint normal, float tint, WorldPosition camera,
+							 RendererDraw *out, uint32_t *count, uint32_t capacity)
+{
+	push_instance(scene, DUNGEON_MESH_LOCK_BODY,
+				  aim_x(across, lock_point(origin, across, normal, 0.0f, 0.0f, LOCK_BODY_Y)),
+				  camera, 0.72f * tint, 0.56f * tint, 0.24f * tint, LOCK_BRASS_ROUGHNESS, LOCK_METAL,
+				  out, count, capacity);
+}
+
+static void append_pin_tumbler_draws(DungeonScene *scene, uint32_t index, bool focused,
+									 WorldPosition camera, RendererDraw *out, uint32_t *count,
+									 uint32_t capacity)
+{
+	const DungeonSession *session = &scene->session;
+	const DungeonPinTumbler *pins = &session->doors[index].pins;
+	DungeonPoint origin, across, normal;
+	lock_frame(&scene->level, session, index, &origin, &across, &normal);
+	float tint = focused ? 1.0f : 0.5f;
+
+	append_lock_body(scene, origin, across, normal, tint, camera, out, count, capacity);
+	push_instance(scene, DUNGEON_MESH_LOCK_HOUSING,
+				  aim_x(across, lock_point(origin, across, normal, 0.0f, 0.0f, LOCK_HOUSING_Y)),
+				  camera, 0.13f * tint, 0.125f * tint, 0.13f * tint, 0.66f, LOCK_METAL, out, count,
+				  capacity);
+
+	float span = (float)(pins->pin_count - 1u) * LOCK_BORE_PITCH_M * 0.5f;
+	for (uint32_t pin = 0; pin < pins->pin_count; ++pin)
+	{
+		float lateral = (float)pin * LOCK_BORE_PITCH_M - span;
+		bool selected = focused && pin == pins->selected;
+		bool seated = pins->heights[pin] == pins->target[pin];
+
+		push_instance(scene, DUNGEON_MESH_LOCK_CHANNEL,
+					  aim_x(across, lock_point(origin, across, normal, lateral, LOCK_PROUD_BACK_M,
+											   LOCK_CHANNEL_Y)),
+					  camera, 0.045f * tint, 0.045f * tint, 0.05f * tint, 0.85f, LOCK_METAL, out,
+					  count, capacity);
+
+		/* The shear mark sits behind the pin and is wider than it, so the
+		 * target shows as two ears either side of the pin head -- lined up
+		 * when the pin is right, offset when it is not. */
+		float mark_y = LOCK_PIN_BASE_Y + (float)pins->target[pin] * LOCK_PIN_RISE_M +
+					   LOCK_PIN_LENGTH_M;
+		push_instance(scene, DUNGEON_MESH_LOCK_NOTCH,
+					  aim_x(across, lock_point(origin, across, normal, lateral, LOCK_PROUD_BACK_M,
+											   mark_y)),
+					  camera, 1.00f * tint, 0.74f * tint, 0.14f * tint, 0.40f, 0.0f, out, count,
+					  capacity);
+
+		/* The pins are the one thing here that is a readout rather than a
+		 * material, so they are shaded as dielectrics: a metal has no diffuse
+		 * term, and metallic pins went near-black in this lamplight exactly
+		 * when their colour needed to be legible. Amber stays reserved for the
+		 * shear marks -- a gold pin beside a gold mark is one shape, not two. */
+		float pin_y = LOCK_PIN_BASE_Y + (float)pins->heights[pin] * LOCK_PIN_RISE_M;
+		float r = selected ? 0.06f : (seated ? 0.07f : 0.46f);
+		float g = selected ? 0.62f : (seated ? 0.72f : 0.49f);
+		float b = selected ? 0.95f : (seated ? 0.20f : 0.56f);
+		push_instance(scene, DUNGEON_MESH_LOCK_PIN,
+					  aim_x(across, lock_point(origin, across, normal, lateral, LOCK_PROUD_PIN_M,
+											   pin_y)),
+					  camera, r * tint, g * tint, b * tint, 0.34f, 0.0f, out, count, capacity);
+	}
+}
+
+static void append_vault_dial_draws(DungeonScene *scene, uint32_t index, bool focused,
+									WorldPosition camera, RendererDraw *out, uint32_t *count,
+									uint32_t capacity)
+{
+	const DungeonSession *session = &scene->session;
+	const DungeonDoorState *state = &session->doors[index];
+	DungeonPoint origin, across, normal;
+	lock_frame(&scene->level, session, index, &origin, &across, &normal);
+	float tint = focused ? 1.0f : 0.5f;
+
+	append_lock_body(scene, origin, across, normal, tint, camera, out, count, capacity);
+	push_instance(scene, DUNGEON_MESH_LOCK_DIAL,
+				  aim_x(across, lock_point(origin, across, normal, 0.0f, 0.0f, LOCK_HOUSING_Y)),
+				  camera, 0.13f * tint, 0.125f * tint, 0.12f * tint, 0.66f, LOCK_METAL, out, count,
+				  capacity);
+
+	/* Four marks around the dial, the last one entered lit. The dial has no
+	 * absolute position of its own, so this is what makes a turn visible. */
+	float centre_y = LOCK_HOUSING_Y + 0.175f;
+	const float mark_lateral[4] = {-0.115f, 0.115f, 0.0f, 0.0f};
+	const float mark_height[4] = {centre_y, centre_y, centre_y + 0.115f, centre_y - 0.115f};
+	for (uint32_t direction = 0; direction < 4u; ++direction)
+	{
+		bool lit = state->has_last_input && (uint32_t)state->last_input == direction;
+		push_instance(scene, DUNGEON_MESH_LOCK_NOTCH,
+					  aim_x(across, lock_point(origin, across, normal, mark_lateral[direction],
+											   0.042f, mark_height[direction])),
+					  camera, (lit ? 1.00f : 0.30f) * tint, (lit ? 0.72f : 0.31f) * tint,
+					  (lit ? 0.10f : 0.34f) * tint, 0.42f, 0.0f, out, count, capacity);
+	}
+
+	/* Progress pips below the dial: how many steps are banked, never which.
+	 * Spaced wider than a pip is, or they merge into one bar and stop counting
+	 * anything, and laid out against `across` so they fill left-to-right on
+	 * screen for a player standing where the lock faces. */
+	float pip_span = (float)(state->dial.step_count - 1u) * 0.145f * 0.5f;
+	for (uint32_t step = 0; step < state->dial.step_count; ++step)
+	{
+		bool banked = step < state->dial.progress;
+		push_instance(scene, DUNGEON_MESH_LOCK_NOTCH,
+					  aim_x(across, lock_point(origin, across, normal,
+											   pip_span - (float)step * 0.145f, LOCK_PROUD_BACK_M,
+											   0.45f)),
+					  camera, (banked ? 1.00f : 0.15f) * tint, (banked ? 0.74f : 0.15f) * tint,
+					  (banked ? 0.12f : 0.17f) * tint, 0.42f, 0.0f, out, count, capacity);
+	}
+}
+
+/* Doors and their lock hardware. A door leaf sinks into the floor as it opens
+ * rather than swinging: it is exactly as wide as the hallway, so a swung leaf
+ * would pass through the corridor wall. Its collider is already gone by then
+ * -- the session drops it the instant the lock turns -- so the player never
+ * waits on the animation. */
+static void append_door_draws(DungeonScene *scene, WorldPosition camera, RendererDraw *out,
+							  uint32_t *count, uint32_t capacity)
+{
+	const DungeonSession *session = &scene->session;
+	for (uint32_t i = 0; i < session->door_count; ++i)
+	{
+		const DungeonDoorway *door = &scene->level.doors[i];
+		const DungeonDoorState *state = &session->doors[i];
+		if (state->swing > 0.999f)
+			continue; /* fully sunk; nothing left above the floor to draw */
+		DungeonPoint along = {door->blocker.b.x - door->blocker.a.x,
+							  door->blocker.b.z - door->blocker.a.z};
+		float drop = state->swing * (scene->level.wall_height + 0.12f);
+		LocalToWorldTransform transform =
+			aim_x(along, (WorldPosition){door->blocker.a.x, scene->level.floor_y - drop,
+										 door->blocker.a.z});
+		/* Textured with the checked-in medieval-wood set, so a locked door reads
+		 * as a door rather than as a flat coloured slab. */
+		push_instance(scene, DUNGEON_MESH_DOOR, transform, camera, 0.90f, 0.86f, 0.82f, 1.0f, 1.0f,
+					  out, count, capacity);
+		if (state->open)
+			continue;
+		bool focused = session->phase != DUNGEON_PHASE_EXPLORING && session->focused_door == i;
+		if (door->lock == DUNGEON_LOCK_VAULT_DIAL)
+			append_vault_dial_draws(scene, i, focused, camera, out, count, capacity);
+		else
+			append_pin_tumbler_draws(scene, i, focused, camera, out, count, capacity);
+	}
+}
+
 bool dungeon_scene_create(Renderer *renderer, DungeonScene *out, DungeonLevelError *error)
 {
 	if (!renderer || !out)
@@ -200,7 +444,19 @@ bool dungeon_scene_create(Renderer *renderer, DungeonScene *out, DungeonLevelErr
 		out->geometry.batches[DUNGEON_MESH_MOSS].vertex_count / 180u,
 		out->geometry.batches[DUNGEON_MESH_MOSS].index_count / 3u);
 	dungeon_player_init(&out->player, out->level.spawn);
-	out->light_count = dungeon_lighting_build(&out->level, out->lights, DUNGEON_MAX_LIGHTS);
+	if (!dungeon_session_create(&out->session, &out->level))
+	{
+		if (error)
+			snprintf(error->message, sizeof(error->message), "out of memory building lock session");
+		dungeon_scene_destroy(renderer, out);
+		return false;
+	}
+	/* Two slots are held back from the torches: slot zero is the light the
+	 * player carries, and one more is the light over the lock being picked.
+	 * With the camera zoomed onto a door the wall torches behind the player
+	 * contribute almost nothing, and there is no HUD to read pin heights off
+	 * if they fall dark. */
+	out->light_count = dungeon_lighting_build(&out->level, out->lights, DUNGEON_MAX_LIGHTS - 2u);
 	GltfLoadError torch_error = {0};
 	if (gltf_scene_create(renderer, DUNGEON_TORCH_PATH,
 					  &(GltfLoadOptions){.placement =
@@ -221,9 +477,10 @@ bool dungeon_scene_create(Renderer *renderer, DungeonScene *out, DungeonLevelErr
 	for (uint32_t i = 0; i < DUNGEON_MESH_BATCH_COUNT; ++i)
 		uploaded_batches += out->uploaded[i] ? 1u : 0u;
 	fprintf(stdout,
-		   "Dungeon: %s: %u collider segments, %u puddles, %u draw batches\n",
-		   map_override ? map_override : "procedural cave", out->level.collider_count,
-		   out->level.puddle_count, uploaded_batches + out->torch_count * out->torch.primitive_count);
+		   "Dungeon: %s: %u collider segments, %u puddles, %u locked doors, %u draw batches\n",
+		   map_override ? map_override : "procedural rooms and hallways",
+		   out->level.collider_count, out->level.puddle_count, out->level.door_count,
+		   uploaded_batches + out->torch_count * out->torch.primitive_count);
 	return true;
 }
 
@@ -240,6 +497,8 @@ uint32_t dungeon_scene_draws(DungeonScene *scene, WorldPosition camera_position,
 	{
 		if (i == DUNGEON_MESH_PUDDLE || !scene->uploaded[i])
 			continue; /* puddles are appended last, below, and excluded from shadows */
+		if (i >= DUNGEON_MESH_DOOR)
+			continue; /* unit meshes: drawn per instance by append_door_draws */
 		out[draw_count++] = (RendererDraw){.mesh = &scene->meshes[i],
 											.material_set = scene->meshes[i].material_set,
 											.push = i == DUNGEON_MESH_PLAYER
@@ -279,6 +538,7 @@ uint32_t dungeon_scene_draws(DungeonScene *scene, WorldPosition camera_position,
 				.static_mesh = true,
 			};
 		}
+	append_door_draws(scene, camera_position, out, &draw_count, capacity);
 	if (out_shadow_draw_count)
 		*out_shadow_draw_count = draw_count; /* a flat coplanar disc casts nothing worth shadowing */
 	if (scene->uploaded[DUNGEON_MESH_PUDDLE] && draw_count < capacity)
@@ -294,7 +554,28 @@ uint32_t dungeon_scene_draws(DungeonScene *scene, WorldPosition camera_position,
 bool dungeon_scene_update(DungeonScene *scene, float move_forward, float move_right,
 						  float camera_yaw_degrees, float dt)
 {
-	return dungeon_player_update(&scene->player, &scene->level, move_forward, move_right,
+	if (!scene)
+		return false;
+	dungeon_session_update(&scene->session, dt);
+	if (scene->session.phase != DUNGEON_PHASE_EXPLORING)
+	{
+		/* Picking: ease into the stance beside the lock instead of taking
+		 * movement input. Routed through the same swept-circle solver as
+		 * walking, so the stance can never push the player into rock even if a
+		 * doorway sits tight against a corner. */
+		DungeonPoint stance = dungeon_session_pick_stance(&scene->session);
+		DungeonPoint position = scene->player.position;
+		float blend = 1.0f - expf(-8.0f * dt);
+		DungeonPoint step = {(stance.x - position.x) * blend, (stance.z - position.z) * blend};
+		scene->player.position =
+			dungeon_collision_move(scene->session.colliders, scene->session.collider_count,
+								   position, step, scene->player.radius);
+		return false;
+	}
+	/* Collide against the session's array, not the level's: it carries a
+	 * segment for every door still shut, and loses it the moment one opens. */
+	return dungeon_player_update(&scene->player, &scene->level, scene->session.colliders,
+								 scene->session.collider_count, move_forward, move_right,
 								 camera_yaw_degrees, dt);
 }
 
@@ -319,7 +600,23 @@ uint32_t dungeon_scene_write_lights(const DungeonScene *scene, WorldPosition cam
 		colors[i + 1u] = (vec4s){{scene->lights[i].color[0], scene->lights[i].color[1],
 							 scene->lights[i].color[2], scene->lights[i].intensity}};
 	}
-	return count + 1u;
+	uint32_t written = count + 1u;
+	/* The other reserved slot: a small warm light over the lock being picked,
+	 * so the pin bars are lit by something the player is not standing behind. */
+	if (scene->session.phase != DUNGEON_PHASE_EXPLORING && written < capacity &&
+		scene->session.focused_door < scene->session.door_count)
+	{
+		DungeonPoint focus = dungeon_session_focus_point(&scene->session);
+		WorldPosition world = {focus.x, scene->level.floor_y + 1.15f, focus.z};
+		CameraRelativePosition to_lock = coordinate_camera_relative(world, camera_position);
+		/* Kept deliberately weak: the focus camera sits about a metre from the
+		 * door, so anything brighter blows the leaf out to flat white and takes
+		 * the lock's own shading with it. */
+		positions[written] = (vec4s){{to_lock.x, to_lock.y, to_lock.z, 2.4f}};
+		colors[written] = (vec4s){{1.0f, 0.89f, 0.72f, 2.0f}};
+		++written;
+	}
+	return written;
 }
 
 static int compare_blocker_distance2(const void *lhs, const void *rhs)
@@ -334,7 +631,9 @@ uint32_t dungeon_scene_write_light_blockers(const DungeonScene *scene,
 {
 	if (!scene || !blockers)
 		return 0;
-	const DungeonLevel *level = &scene->level;
+	/* The session's occluders, so a shut door blocks torch light and shows up
+	 * in the puddle reflections -- and stops doing both the moment it opens. */
+	const DungeonSession *level = &scene->session;
 	DungeonPoint camera_xz = {(float)camera_position.x, (float)camera_position.z};
 	if (level->occluder_count <= capacity)
 	{
@@ -385,6 +684,7 @@ void dungeon_scene_destroy(Renderer *renderer, DungeonScene *scene)
 	}
 	else
 		gltf_scene_destroy(NULL, &scene->torch);
+	dungeon_session_destroy(&scene->session);
 	dungeon_mesh_destroy(&scene->geometry);
 	dungeon_level_destroy(&scene->level);
 	*scene = (DungeonScene){0};

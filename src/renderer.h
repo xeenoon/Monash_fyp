@@ -263,6 +263,11 @@ typedef struct Renderer
 	VkImageView shadow_layer_views[SHADOW_CASCADE_COUNT];
 	VkFramebuffer shadow_framebuffers[SHADOW_CASCADE_COUNT];
 	VkCommandPool command_pool;
+	/* Which swapchain image the last renderer_draw_frame presented, so a
+	   capture reads the frame the user actually saw rather than whichever
+	   image vkAcquireNextImageKHR hands out next. UINT32_MAX until the first
+	   presented frame. */
+	uint32_t last_presented_image;
 	VkCommandBuffer command_buffers[MAX_FRAMES_IN_FLIGHT];
 	VkSemaphore image_available[MAX_FRAMES_IN_FLIGHT];
 	VkSemaphore render_finished[MAX_FRAMES_IN_FLIGHT];
@@ -291,6 +296,13 @@ float renderer_aspect(const Renderer *r);
    Recreates the swapchain on OUT_OF_DATE/SUBOPTIMAL or when `resized`. The shadow
    pass draws `shadow_draws` (camera-orientation-independent casters); the scene
    pass draws `draws` (the camera-visible set). */
+/* Writes the last presented swapchain image to `path` as an 8-bit RGBA PNG.
+   Used by the dungeon test harness so a scene can be checked from an image
+   file rather than by screenshotting the desktop, and by any other offline
+   diagnosis that wants the tone-mapped result rather than a shader dump.
+   Blocks on the device; returns false and leaves no file on failure. */
+bool renderer_capture_swapchain(Renderer *r, const char *path);
+
 void renderer_draw_frame(Renderer *r, const FrameUniforms *frame, const RendererDraw *draws,
 						 uint32_t draw_count, const RendererDraw *shadow_draws,
 						 uint32_t shadow_draw_count, bool resized);

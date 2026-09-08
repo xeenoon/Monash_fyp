@@ -1,4 +1,5 @@
 #include "renderer.h"
+
 #include "environment.h"
 #include "file_utils.h"
 #include "vk_common.h"
@@ -8,6 +9,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <zlib.h>
 #include <vulkan/vulkan_core.h>
 
 #ifdef DEBUG_SHADER_DUMP
@@ -1717,7 +1719,8 @@ static void create_swapchain(Renderer *r)
 									 .imageColorSpace = chosen.colorSpace,
 									 .imageExtent = r->swapchain_extent,
 									 .imageArrayLayers = 1,
-									 .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+									 .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+												   VK_IMAGE_USAGE_TRANSFER_SRC_BIT, /* renderer_capture_swapchain */
 									 .preTransform = capabilities.currentTransform,
 									 .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
 									 .presentMode = present_mode,
@@ -2559,6 +2562,172 @@ static void record_commands(Renderer *r, uint32_t image_index, const FrameUnifor
 	VK_CHECK(vkEndCommandBuffer(command));
 }
 
+
+/* --- Swapchain capture -------------------------------------------------
+   Reads back the last presented image and writes a PNG. Deliberately simple
+   and slow -- it waits on the device and allocates a staging buffer per call
+   -- because it runs from the test harness a handful of times per session,
+   never per frame. */
+
+static void png_write_chunk(FILE *file, const char *tag, const unsigned char *data, size_t length,
+							uint32_t *crc_table)
+{
+	unsigned char header[4] = {(unsigned char)(length >> 24), (unsigned char)(length >> 16),
+							   (unsigned char)(length >> 8), (unsigned char)length};
+	fwrite(header, 1, 4, file);
+	fwrite(tag, 1, 4, file);
+	if (length)
+		fwrite(data, 1, length, file);
+	uint32_t crc = 0xFFFFFFFFu;
+	for (int i = 0; i < 4; ++i)
+		crc = crc_table[(crc ^ (unsigned char)tag[i]) & 0xFFu] ^ (crc >> 8);
+	for (size_t i = 0; i < length; ++i)
+		crc = crc_table[(crc ^ data[i]) & 0xFFu] ^ (crc >> 8);
+	crc ^= 0xFFFFFFFFu;
+	unsigned char tail[4] = {(unsigned char)(crc >> 24), (unsigned char)(crc >> 16),
+							 (unsigned char)(crc >> 8), (unsigned char)crc};
+	fwrite(tail, 1, 4, file);
+}
+
+/* zlib is already a dependency (core_utils links it), so a full image library
+   is not worth pulling in for one debug path: PNG's IDAT payload is just a
+   zlib stream of filtered scanlines. */
+static bool png_write_rgba(const char *path, const unsigned char *pixels, uint32_t width,
+						   uint32_t height)
+{
+	uint32_t crc_table[256];
+	for (uint32_t n = 0; n < 256u; ++n)
+	{
+		uint32_t c = n;
+		for (int k = 0; k < 8; ++k)
+			c = (c & 1u) ? 0xEDB88320u ^ (c >> 1) : (c >> 1);
+		crc_table[n] = c;
+	}
+	size_t raw_size = (size_t)height * ((size_t)width * 4u + 1u);
+	unsigned char *raw = malloc(raw_size);
+	if (!raw)
+		return false;
+	for (uint32_t y = 0; y < height; ++y)
+	{
+		unsigned char *row = raw + (size_t)y * ((size_t)width * 4u + 1u);
+		row[0] = 0; /* filter type 0: none */
+		memcpy(row + 1, pixels + (size_t)y * width * 4u, (size_t)width * 4u);
+	}
+	uLongf compressed_size = compressBound((uLong)raw_size);
+	unsigned char *compressed = malloc(compressed_size);
+	if (!compressed || compress2(compressed, &compressed_size, raw, (uLong)raw_size, 6) != Z_OK)
+	{
+		free(raw);
+		free(compressed);
+		return false;
+	}
+	free(raw);
+	FILE *file = fopen(path, "wb");
+	if (!file)
+	{
+		free(compressed);
+		return false;
+	}
+	static const unsigned char signature[8] = {137, 80, 78, 71, 13, 10, 26, 10};
+	fwrite(signature, 1, 8, file);
+	unsigned char ihdr[13] = {(unsigned char)(width >> 24),  (unsigned char)(width >> 16),
+							  (unsigned char)(width >> 8),   (unsigned char)width,
+							  (unsigned char)(height >> 24), (unsigned char)(height >> 16),
+							  (unsigned char)(height >> 8),  (unsigned char)height,
+							  8, 6, 0, 0, 0}; /* 8-bit, RGBA, deflate, no filter, no interlace */
+	png_write_chunk(file, "IHDR", ihdr, sizeof(ihdr), crc_table);
+	png_write_chunk(file, "IDAT", compressed, compressed_size, crc_table);
+	png_write_chunk(file, "IEND", NULL, 0, crc_table);
+	fclose(file);
+	free(compressed);
+	return true;
+}
+
+bool renderer_capture_swapchain(Renderer *r, const char *path)
+{
+	if (!r || !path || r->last_presented_image >= r->image_count)
+		return false;
+	vkDeviceWaitIdle(r->device);
+	uint32_t width = r->swapchain_extent.width, height = r->swapchain_extent.height;
+	VkDeviceSize size = (VkDeviceSize)width * height * 4u;
+	GpuBuffer staging = gpu_buffer_create(r->device, r->allocator, size,
+										  VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+										  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+											  VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+	if (!staging.buffer || !staging.allocation.mapped)
+	{
+		gpu_buffer_destroy(r->device, r->allocator, &staging);
+		return false;
+	}
+	VkCommandBufferAllocateInfo allocate = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+											.commandPool = r->command_pool,
+											.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+											.commandBufferCount = 1};
+	VkCommandBuffer command = VK_NULL_HANDLE;
+	VK_CHECK(vkAllocateCommandBuffers(r->device, &allocate, &command));
+	VkCommandBufferBeginInfo begin = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+									  .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
+	VK_CHECK(vkBeginCommandBuffer(command, &begin));
+	VkImage image = r->images[r->last_presented_image];
+	/* The image is still in PRESENT_SRC from the frame that displayed it, and
+	   must go back there afterwards or the next present is undefined. */
+	VkImageMemoryBarrier to_source = {.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+									  .srcAccessMask = VK_ACCESS_MEMORY_READ_BIT,
+									  .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+									  .oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+									  .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+									  .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+									  .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+									  .image = image,
+									  .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}};
+	vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+						 0, NULL, 0, NULL, 1, &to_source);
+	VkBufferImageCopy region = {.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+								.imageExtent = {width, height, 1}};
+	vkCmdCopyImageToBuffer(command, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, staging.buffer, 1,
+						   &region);
+	VkImageMemoryBarrier to_present = to_source;
+	to_present.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+	to_present.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+	to_present.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+	to_present.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+	vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+						 0, NULL, 0, NULL, 1, &to_present);
+	VK_CHECK(vkEndCommandBuffer(command));
+	VkSubmitInfo submit = {
+		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .commandBufferCount = 1, .pCommandBuffers = &command};
+	VK_CHECK(vkQueueSubmit(r->graphics_queue, 1, &submit, VK_NULL_HANDLE));
+	VK_CHECK(vkQueueWaitIdle(r->graphics_queue));
+	vkFreeCommandBuffers(r->device, r->command_pool, 1, &command);
+
+	unsigned char *pixels = malloc((size_t)size);
+	if (!pixels)
+	{
+		gpu_buffer_destroy(r->device, r->allocator, &staging);
+		return false;
+	}
+	const unsigned char *source = staging.allocation.mapped;
+	bool bgra = r->swapchain_format == VK_FORMAT_B8G8R8A8_SRGB ||
+				r->swapchain_format == VK_FORMAT_B8G8R8A8_UNORM;
+	for (size_t i = 0; i < (size_t)width * height; ++i)
+	{
+		/* The tone-map pass already wrote display-ready bytes, so the only
+		   fix-up needed is the channel order and a forced-opaque alpha. */
+		pixels[i * 4u + 0u] = source[i * 4u + (bgra ? 2u : 0u)];
+		pixels[i * 4u + 1u] = source[i * 4u + 1u];
+		pixels[i * 4u + 2u] = source[i * 4u + (bgra ? 0u : 2u)];
+		pixels[i * 4u + 3u] = 255u;
+	}
+	gpu_buffer_destroy(r->device, r->allocator, &staging);
+	bool ok = png_write_rgba(path, pixels, width, height);
+	free(pixels);
+	if (ok)
+		fprintf(stdout, "Captured %ux%u frame to %s\n", width, height, path);
+	else
+		fprintf(stderr, "Could not write capture to %s\n", path);
+	return ok;
+}
+
 void renderer_draw_frame(Renderer *r, const FrameUniforms *frame, const RendererDraw *draws,
 						 uint32_t draw_count, const RendererDraw *shadow_draws,
 						 uint32_t shadow_draw_count, bool resized)
@@ -2617,12 +2786,14 @@ void renderer_draw_frame(Renderer *r, const FrameUniforms *frame, const Renderer
 		VK_CHECK(presented);
 	else
 		r->temporal_history_valid = true;
+	r->last_presented_image = image_index;
 	r->frame = (r->frame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 
 void renderer_init(Renderer *r, SDL_Window *window, const RendererConfig *config)
 {
 	*r = (Renderer){0};
+	r->last_presented_image = UINT32_MAX; /* nothing presented yet: capture refuses */
 	r->window = window;
 	r->shadow_quality = config ? config->shadow_quality : (ShadowQualitySettings){0};
 	if (!r->shadow_quality.resolution)

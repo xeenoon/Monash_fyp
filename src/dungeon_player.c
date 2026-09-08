@@ -10,8 +10,10 @@ void dungeon_player_init(DungeonPlayer *player, DungeonPoint spawn)
 	*player = (DungeonPlayer){.position = spawn, .radius = 0.35f, .speed = 3.5f};
 }
 
-bool dungeon_player_update(DungeonPlayer *player, const DungeonLevel *level, float move_forward,
-						   float move_right, float camera_yaw_degrees, float dt)
+bool dungeon_player_update(DungeonPlayer *player, const DungeonLevel *level,
+						   const DungeonCollider *colliders, uint32_t collider_count,
+						   float move_forward, float move_right, float camera_yaw_degrees,
+						   float dt)
 {
 	if (!player || !level || dt <= 0.0f)
 		return false;
@@ -28,8 +30,8 @@ bool dungeon_player_update(DungeonPlayer *player, const DungeonLevel *level, flo
 	}
 	DungeonPoint displacement = {direction.x * player->speed * dt,
 								 direction.z * player->speed * dt};
-	player->position = dungeon_collision_move(level->colliders, level->collider_count,
-											player->position, displacement, player->radius);
+	player->position = dungeon_collision_move(colliders, collider_count, player->position,
+											displacement, player->radius);
 	float exit_dx = player->position.x - level->exit.x;
 	float exit_dz = player->position.z - level->exit.z;
 	bool was_reached = player->reached_exit;

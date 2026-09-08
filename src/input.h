@@ -27,6 +27,16 @@ typedef struct
 	bool dump_shader_data;	/* X pressed (dump-enabled builds) */
 	bool clear_shader_dump; /* C pressed (dump-enabled builds) */
 	bool toggle_auto_exposure; /* E pressed */
+	/* Dungeon lock picking. All edge-triggered: one press is one pin step, one
+	 * dial entry, or one attempt -- holding a key must not spin a tumbler.
+	 * The directions fire on the arrows AND on WASD, as the source game does;
+	 * outside a lock they are simply ignored, so they cost the free-fly and
+	 * exploring paths nothing. `interact` shares E with the auto-exposure
+	 * toggle, which the dungeon scene does not use. */
+	bool interact;
+	bool puzzle_left, puzzle_right, puzzle_up, puzzle_down;
+	bool puzzle_confirm; /* Enter or Space: try the lock */
+	bool puzzle_cancel;	 /* Q: step back from a lock without solving it */
 } Input;
 
 /* Pumps SDL events + keyboard/mouse state into `in`. */

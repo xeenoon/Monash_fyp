@@ -69,7 +69,8 @@ static bool build_segments(const DungeonContourSet *contours, float epsilon,
 }
 
 bool dungeon_level_compile_field(DungeonField *field, DungeonPoint spawn, DungeonPoint exit,
-								 const DungeonPuddle *puddles, uint32_t puddle_count, float floor_y,
+								 const DungeonPuddle *puddles, uint32_t puddle_count,
+								 const DungeonDoorway *doors, uint32_t door_count, float floor_y,
 								 float wall_height, DungeonLevel *out, DungeonLevelError *error)
 {
 	if (!field || !out)
@@ -138,6 +139,19 @@ bool dungeon_level_compile_field(DungeonField *field, DungeonPoint spawn, Dungeo
 		out->puddle_count = puddle_count;
 	}
 
+	if (door_count)
+	{
+		out->doors = malloc(door_count * sizeof(*out->doors));
+		if (!out->doors)
+		{
+			dungeon_field_destroy(field);
+			dungeon_level_destroy(out);
+			return fail(error, "out of memory copying doorways");
+		}
+		memcpy(out->doors, doors, door_count * sizeof(*out->doors));
+		out->door_count = door_count;
+	}
+
 	out->field = *field;
 	*field = (DungeonField){0}; /* ownership moved; caller's destroy becomes a no-op */
 	out->spawn = spawn;
@@ -158,5 +172,6 @@ void dungeon_level_destroy(DungeonLevel *level)
 	free(level->colliders);
 	free(level->occluders);
 	free(level->puddles);
+	free(level->doors);
 	*level = (DungeonLevel){0};
 }

@@ -62,3 +62,26 @@ bool dungeon_field_bfs_farthest(const DungeonField *field, float iso, DungeonPoi
  * the field read as a large sentinel distance. `out_distance` must have
  * field->width * field->height slots. Used to keep puddles clear of walls. */
 void dungeon_field_distance_to_solid(const DungeonField *field, float iso, float *out_distance);
+
+/* Unions a rectangle of occupancy into the field (max-blend, like the disc).
+ * `feather` is the half-width of the smoothstep band straddling the rect
+ * boundary; pass 0 for a hard step. A hard step is the point: the 0.5 isoline
+ * then lands midway between the last solid and first open corner, so marching
+ * squares reconstructs straight edges and exact right angles. Discs cannot
+ * produce a square corner, which is why rooms and hallways need this. */
+void dungeon_field_stamp_rect(DungeonField *field, DungeonRect rect, float feather);
+
+/* dungeon_field_blur, applied only where `mask` (row-major, width * height,
+ * non-zero to blur) allows; corners outside the mask keep their exact value.
+ * A NULL mask is identical to dungeon_field_blur. This is what lets one field
+ * carry both looks at once: organic pockets round off into rock while room
+ * and hallway corners stay square. */
+void dungeon_field_blur_masked(DungeonField *field, uint32_t iterations, const uint8_t *mask);
+
+/* 4-connected reachability between the corners nearest `from` and `to`.
+ * `blocked` (optional, row-major, non-zero meaning "treat as solid") overlays
+ * extra obstacles without mutating or copying the field -- this is how a door
+ * footprint is tested for being a real chokepoint. Returns false if either
+ * endpoint is itself solid or blocked. */
+bool dungeon_field_reachable(const DungeonField *field, float iso, DungeonPoint from,
+							 DungeonPoint to, const uint8_t *blocked);

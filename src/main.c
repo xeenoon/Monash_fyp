@@ -10,6 +10,7 @@
 #include "camera.h"
 #include "dungeon_scene.h"
 #include "dungeon_camera.h"
+#include "dungeon_harness.h"
 #include "gltf_scene.h"
 #include "input.h"
 #include "material_stability_demo.h"
@@ -358,6 +359,14 @@ int main(int argc, char *argv[])
 				   .yaw = 90.0f,
 				   .pitch = use_dungeon ? -50.0f : (use_quarry ? -3.0f : -2.0f)};
 	DungeonCamera dungeon_camera = {0};
+	char dungeon_title[256] = {0};
+	/* DUNGEON_SCRIPT drives the dungeon scene from a file instead of the
+	   keyboard, so lock picking can be proved end-to-end in the real renderer.
+	   Unset, none of this runs. */
+	bool harness_script_error = false;
+	DungeonHarness *harness = use_dungeon ? dungeon_harness_create(&harness_script_error) : NULL;
+	if (harness_script_error)
+		return 1;
 	if (use_dungeon)
 	{
 		dungeon_camera_init(&dungeon_camera, dungeon.level.spawn);
@@ -590,6 +599,14 @@ int main(int argc, char *argv[])
 		previous_ticks = ticks;
 		if (dt > 0.1f)
 			dt = 0.1f;
+		if (harness)
+		{
+			/* A fixed timestep, so scripted `wait` durations are exact and a
+			   run reproduces regardless of what frame rate the machine hits. */
+			dt = dungeon_harness_timestep(harness);
+			if (!dungeon_harness_pre_frame(harness, &dungeon, &dungeon_camera, &input))
+				running = false;
+		}
 		if (input.rotate_sun)
 		{
 			const float sun_rotation_speed = 0.35f;
@@ -602,13 +619,75 @@ int main(int argc, char *argv[])
 						  input.sprint, dt);
 		if (use_dungeon)
 		{
-			if (!freeze_camera)
+			DungeonSession *session = &dungeon.session;
+			bool picking = session->phase != DUNGEON_PHASE_EXPLORING;
+			/* While a lock is up, the movement and orbit keys drive the lock
+			 * instead -- the same keys, rebound by phase, exactly as the source
+			 * game's GameplayPhase switch does. */
+			if (picking)
+			{
+				if (session->phase == DUNGEON_PHASE_PIN_TUMBLER)
+				{
+					if (input.puzzle_left)
+						dungeon_session_move_selection(session, -1);
+					if (input.puzzle_right)
+						dungeon_session_move_selection(session, 1);
+					if (input.puzzle_up)
+						dungeon_session_adjust(session, 1);
+					if (input.puzzle_down)
+						dungeon_session_adjust(session, -1);
+					if (input.puzzle_confirm)
+						dungeon_session_confirm(session);
+				}
+				else
+				{
+					/* The dial takes a direction outright: there is nothing to
+					 * confirm, the fourth correct turn is what opens it. */
+					if (input.puzzle_left)
+						dungeon_session_turn(session, DUNGEON_DIAL_LEFT);
+					else if (input.puzzle_right)
+						dungeon_session_turn(session, DUNGEON_DIAL_RIGHT);
+					else if (input.puzzle_up)
+						dungeon_session_turn(session, DUNGEON_DIAL_UP);
+					else if (input.puzzle_down)
+						dungeon_session_turn(session, DUNGEON_DIAL_DOWN);
+				}
+				if (input.puzzle_cancel)
+					dungeon_session_cancel(session);
+			}
+			else if (input.interact)
+				dungeon_session_interact(session, dungeon.player.position);
+
+			if (!freeze_camera && !picking)
 				dungeon_camera_orbit(&dungeon_camera, input.orbit_yaw, input.orbit_pitch, dt);
-			if (!freeze_camera && dungeon_scene_update(&dungeon, input.move_forward, input.move_right,
+			float move_forward = picking ? 0.0f : input.move_forward;
+			float move_right = picking ? 0.0f : input.move_right;
+			if (!freeze_camera && dungeon_scene_update(&dungeon, move_forward, move_right,
 											 dungeon_camera.camera.yaw, dt))
 				printf("Dungeon exit reached\n");
-			dungeon_camera_update(&dungeon_camera, dungeon.player.position, dt);
+			/* Ease the framing toward the lock, and follow a target blended the
+			 * same amount, so the door -- not the player -- ends up centred. */
+			dungeon_camera_focus(&dungeon_camera, picking,
+								 dungeon_session_focus_facing_degrees(session),
+								 DUNGEON_LOCK_CENTRE_Y_M, dt);
+			float focus = dungeon_camera_focus_blend(&dungeon_camera);
+			DungeonPoint lock = dungeon_session_focus_point(session);
+			DungeonPoint follow = {
+				dungeon.player.position.x + (lock.x - dungeon.player.position.x) * focus,
+				dungeon.player.position.z + (lock.z - dungeon.player.position.z) * focus};
+			dungeon_camera_update(&dungeon_camera, focus > 0.0f ? follow : dungeon.player.position,
+								  dt);
 			camera = dungeon_camera.camera;
+
+			/* This renderer draws no text, so the window title is where status
+			 * goes -- the same place the source game puts it. */
+			char title[256];
+			dungeon_session_status_text(session, title, sizeof(title));
+			if (strcmp(title, dungeon_title) != 0)
+			{
+				snprintf(dungeon_title, sizeof(dungeon_title), "%s", title);
+				SDL_SetWindowTitle(window, dungeon_title);
+			}
 		}
 		if (demo_flyby)
 		{
@@ -909,6 +988,8 @@ int main(int argc, char *argv[])
 #endif
 		renderer_draw_frame(&renderer, &frame, active_draws, active_draw_count, active_shadow_draws,
 							active_shadow_draw_count, input.resized);
+		if (harness)
+			dungeon_harness_post_frame(harness, &renderer);
 		free(allocated_draws);
 		if (use_terrain)
 			terrain_runtime_collect_evictions(terrain);
@@ -961,6 +1042,8 @@ int main(int argc, char *argv[])
 	}
 
 	renderer_wait_idle(&renderer);
+	int harness_status = dungeon_harness_exit_code(harness);
+	dungeon_harness_destroy(harness);
 	if (use_terrain)
 		terrain_runtime_destroy(terrain);
 	else if (use_dungeon)
@@ -977,5 +1060,6 @@ int main(int argc, char *argv[])
 	renderer_shutdown(&renderer);
 	SDL_DestroyWindow(window);
 	SDL_Quit();
-	return EXIT_SUCCESS;
+	/* A scripted run's exit status is its verdict, so it can be used as a test. */
+	return harness_status ? EXIT_FAILURE : EXIT_SUCCESS;
 }

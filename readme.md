@@ -35,9 +35,10 @@ Run the dungeon explorer with:
 TERRAIN_SCENE=dungeon ./build/terrain_renderer
 ```
 
-By default this generates a procedural cave (winding corridors, chambers,
-puddles) from `DUNGEON_SEED` (a `uint32_t`, default 1) -- try a few different
-seeds:
+By default this generates a procedural level from `DUNGEON_SEED` (a `uint32_t`,
+default 1): rooms joined by hallways, rounded cave pockets grown off the room
+walls, puddles, and up to three locked doors standing in the hallways. Try a
+few different seeds:
 
 ```sh
 TERRAIN_SCENE=dungeon DUNGEON_SEED=7 ./build/terrain_renderer
@@ -56,6 +57,53 @@ sliding along swept-circle-vs-wall collision. Both frontends rasterize into
 the same occupancy field and marching-squares pipeline; nothing past that
 point knows or cares which one produced the level. See
 [`docs/dungeon_architecture.md`](docs/dungeon_architecture.md).
+
+Every locked door is a verified chokepoint: solidifying it makes the exit
+unreachable from spawn, so there is no way around one and no lock is busywork.
+Walk up to a door and press **E** to pick it. The camera eases in on the lock
+and the movement keys drive the puzzle instead of the player:
+
+| Lock | Controls |
+|------|----------|
+| Pin tumbler (bores below the lock casing) | **A**/**D** or left/right pick a pin, **W**/**S** or up/down raise or lower it, **Enter**/**Space** tries the lock. Line every pin up with the brass shear mark in its bore; a seated pin turns green, the one you are driving turns blue. |
+| Vault dial (plate below the lock casing) | **W**/**A**/**S**/**D** or the arrows enter one direction each. The pad you last pressed lights up. Repeat the combination; the pips below the dial show how many steps are banked, and a wrong turn resets them all. |
+
+Every lock's answer is seeded per door from `DUNGEON_SEED`, so no two doors in a
+level share a combination and no two levels repeat.
+
+**Q** steps back from a lock without solving it. The window title carries the
+current phase, pin values or dial progress, and how many doors are still
+locked -- this renderer draws no text, so the title bar is the status line.
+
+Inspect a generated layout without running the game:
+
+```sh
+./build/dungeon_cave_dump --seed 7 --out cave.bin
+python3 tools/preview_cave.py cave.bin cave.png
+```
+
+Doorways render as the segment each one seals (amber = pin tumbler,
+magenta = vault dial).
+
+### Driving the dungeon from a script
+
+`DUNGEON_SCRIPT=<path>` runs the dungeon scene from a command file instead of
+the keyboard, so lock picking can be exercised end-to-end in the real renderer.
+It can teleport the player, aim the camera, synthesise key presses, assert on
+state, and have the renderer write PNGs of its own frames. A failed `expect`
+makes the process exit non-zero, so a script doubles as a test:
+
+```sh
+TERRAIN_SCENE=dungeon DUNGEON_SEED=7 \
+  DUNGEON_SCRIPT=assets/dungeons/lockpick.script ./build/terrain_renderer
+```
+
+The checked-in script walks both lock types: it aims the camera 130 degrees
+away from a door, presses interact, and asserts the camera came round to face
+the lock; drives the pins with real key presses and asserts their values;
+solves each lock; and asserts the player then crosses to the far side of the
+gate. It leaves `lockpick_*.png` captures behind as evidence. The command set
+is documented at the top of [`src/dungeon_harness.h`](src/dungeon_harness.h).
 
 The three CC0 dungeon PBR materials are checked in for offline use. Their
 source pages, physical scales, and checksums are recorded in

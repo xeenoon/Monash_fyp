@@ -52,10 +52,18 @@ int main(int argc, char **argv)
 		fwrite(&cave.puddles[i].center, sizeof(DungeonPoint), 1, file);
 		fwrite(&cave.puddles[i].radius, sizeof(float), 1, file);
 	}
+	fwrite(&cave.door_count, sizeof(uint32_t), 1, file);
+	for (uint32_t i = 0; i < cave.door_count; ++i)
+	{
+		fwrite(&cave.doors[i].blocker.a, sizeof(DungeonPoint), 1, file);
+		fwrite(&cave.doors[i].blocker.b, sizeof(DungeonPoint), 1, file);
+		uint32_t lock = (uint32_t)cave.doors[i].lock;
+		fwrite(&lock, sizeof(uint32_t), 1, file);
+	}
 	fclose(file);
-	printf("wrote %s: %ux%u corners, spawn=(%.2f,%.2f) exit=(%.2f,%.2f) puddles=%u\n", out_path,
-		  cave.field.width, cave.field.height, (double)cave.spawn.x, (double)cave.spawn.z,
-		  (double)cave.exit.x, (double)cave.exit.z, cave.puddle_count);
+	printf("wrote %s: %ux%u corners, spawn=(%.2f,%.2f) exit=(%.2f,%.2f) puddles=%u doors=%u\n",
+		  out_path, cave.field.width, cave.field.height, (double)cave.spawn.x, (double)cave.spawn.z,
+		  (double)cave.exit.x, (double)cave.exit.z, cave.puddle_count, cave.door_count);
 	dungeon_cave_destroy(&cave);
 	return 0;
 }

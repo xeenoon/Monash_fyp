@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdint.h>
+
 /* The shared value types every dungeon module builds on: a 2D point in the
  * XZ ground plane, an axis-aligned rectangle, a wall-footprint segment, and a
  * puddle placement. Deliberately dependency-free so dungeon_field.h,
@@ -43,3 +45,31 @@ typedef struct
 	DungeonPoint center;
 	float radius;
 } DungeonPuddle;
+
+/* Which minigame a doorway's lock presents. NONE is a plain door: it still
+ * swings and still blocks light and movement until opened, it just needs no
+ * puzzle solved first. */
+typedef enum
+{
+	DUNGEON_LOCK_NONE,
+	DUNGEON_LOCK_PIN_TUMBLER,
+	DUNGEON_LOCK_VAULT_DIAL
+} DungeonLockKind;
+
+/* A door standing in a hallway aperture. Deliberately NOT carved into the
+ * occupancy field: the field stays open through the doorway, and the door is a
+ * dynamic object contributing its own collider, light occluder, and draw. That
+ * is what lets it open without recompiling any level geometry.
+ *
+ * `blocker` must stay a segment, never an axis-aligned rect, to match what
+ * dungeon_light_segment_blocked and segment_crosses_blocker in mesh.frag both
+ * expect of a light blocker. */
+typedef struct
+{
+	DungeonPoint center;
+	float yaw;				/* door plane normal, taken from the hallway axis */
+	float half_width;		/* half the hallway width the door spans */
+	DungeonSegment blocker; /* collider + light occluder while closed */
+	DungeonLockKind lock;
+	uint32_t seed; /* per-door, so a lock's combination follows DUNGEON_SEED */
+} DungeonDoorway;

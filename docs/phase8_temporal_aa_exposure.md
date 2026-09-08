@@ -21,7 +21,11 @@ position.
    colour/depth history pair.
 5. A 256-bin log-luminance histogram covers the resolved HDR image. A second
    compute pass derives geometric-average luminance and adapts exposure with
-   separate brighten and darken speeds.
+   separate brighten and darken speeds. Adaptation applies 25% of the metered
+   correction in stops, limited to +/-0.5 EV (roughly 0.71–1.41x exposure).
+   Brightening uses a 0.6/s response and darkening 1.2/s. Exposure starts at
+   1.0 and continues smoothing independently of temporal history resets;
+   views with no metered geometry hold the previous exposure.
 6. The display pass applies exposure, the ACES-fitted curve, and display-space
    centred dither. An sRGB swapchain performs the sole transfer in hardware;
    a UNORM fallback receives the shader-encoded value instead.
@@ -53,6 +57,8 @@ terrain whenever the camera moved.
 
 - F4 cycles history weight, rejection, motion-vector, and clamp debug views.
 - F5 reloads all graphics/compute pipelines and invalidates temporal history.
+- E toggles auto exposure; disabling it immediately restores fixed 1.0 exposure,
+  including in sky-only views. Terrain and dungeon modes start with it disabled.
 - All prior terrain, lighting, shadow, and atmosphere debug controls remain
   available; changing one resets history to avoid blending unlike views.
 
