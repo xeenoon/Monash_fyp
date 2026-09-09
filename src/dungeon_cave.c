@@ -698,7 +698,7 @@ bool dungeon_cave_generate(const DungeonCaveParams *params, DungeonCaveResult *o
 			continue; /* a pocket or a loop hallway already routes around it */
 		/* Mirrors the source's DungeonNumber % 2 split between the two locks. */
 		door.lock = (out->door_count % 2u) == 0u ? DUNGEON_LOCK_PIN_TUMBLER
-												 : DUNGEON_LOCK_VAULT_DIAL;
+												 : DUNGEON_LOCK_SAFE_PINS;
 		out->doors[out->door_count++] = door;
 	}
 

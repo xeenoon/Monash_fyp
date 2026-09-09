@@ -34,7 +34,7 @@ typedef enum
 {
 	DUNGEON_PHASE_EXPLORING,
 	DUNGEON_PHASE_PIN_TUMBLER,
-	DUNGEON_PHASE_VAULT_DIAL
+	DUNGEON_PHASE_SAFE_PINS
 } DungeonPhase;
 
 typedef enum
@@ -45,7 +45,7 @@ typedef enum
 	DUNGEON_STATUS_ENTER_THE_SEQUENCE,
 	DUNGEON_STATUS_PINS_DO_NOT_ALIGN,
 	DUNGEON_STATUS_SEQUENCE_PROGRESS,
-	DUNGEON_STATUS_DIAL_RESET,
+	DUNGEON_STATUS_SAFE_RESET,
 	DUNGEON_STATUS_LOCK_OPEN
 } DungeonStatus;
 
@@ -54,15 +54,18 @@ typedef struct
 	bool open;
 	float swing; /* 0 shut .. 1 fully swung; eased, so opening reads as motion */
 	DungeonPinTumbler pins;
-	DungeonVaultDial dial;
-	/* Dial state. `dial_spin_accumulator` banks held-key time toward the next
-	 * tick; `dial_flash_time` free-runs so the renderer can pulse the red index
-	 * pin without carrying a phase of its own; `dial_shake` is a decaying kick
-	 * given both to a banked number and to a reset, so confirm always lands
-	 * with a jolt whichever way it went. */
-	float dial_spin_accumulator;
-	float dial_flash_time;
-	float dial_shake;
+	DungeonSafePins safe;
+	/* The safe's face, as an animation rather than as state. `safe_push[i]` is
+	 * how far pin i has travelled toward the player -- 0 flush with the face,
+	 * 1 fully driven -- eased here so the renderer gets the motion without
+	 * owning any part of the puzzle. It is derived every frame from
+	 * dungeon_safe_pins_driven and the selection, so a reset springs every pin
+	 * back out with no extra bookkeeping.
+	 *
+	 * `safe_shake` is a decaying kick given both to a driven pin and to a
+	 * reset, so a press always lands with a jolt whichever way it went. */
+	float safe_push[DUNGEON_SAFE_PIN_COUNT];
+	float safe_shake;
 	/* Which side of the door plane the lock hardware stands on: the side the
 	 * player starts from, so the first door met is never locked from behind. */
 	float hardware_side;
@@ -102,18 +105,21 @@ void dungeon_session_cancel(DungeonSession *session);
 /* Pin tumbler only: pick a pin, then raise or lower it. */
 void dungeon_session_move_selection(DungeonSession *session, int direction);
 void dungeon_session_adjust(DungeonSession *session, int direction);
-/* Safe dial only: turn the dial while a direction key is held. `direction` is
- * -1, 0 or +1 and `dt` the frame time; ticks come out at a fixed rate however
- * fast the game is running. Turning banks nothing and loses nothing. Returns
- * true while the index pin is flashing. */
-bool dungeon_session_spin_dial(DungeonSession *session, float direction, float dt);
+/* Safe only: walk the selection along the row of face pins. Edge-triggered like
+ * the pin tumbler's keys -- four pins is far too short a row to hold a key
+ * down. Wraps; moving banks nothing and loses nothing. */
+void dungeon_session_move_safe_pin(DungeonSession *session, int direction);
 
-/* Safe dial only: the confirm key. Banks the number if the pin is flashing,
- * otherwise resets the combination. Returns whether a number was banked. */
-bool dungeon_session_commit_dial(DungeonSession *session);
+/* Safe only: the confirm key. Drives the selected pin if it is the one the
+ * order wants next, otherwise springs the whole face back out and starts the
+ * order again. Returns whether a pin was driven. */
+bool dungeon_session_press_safe_pin(DungeonSession *session);
 
-/* Seconds of held input per tick of the dial. */
-#define DUNGEON_DIAL_TICK_SECONDS 0.085f
+/* How far the pin under the selection creeps forward, as a fraction of a fully
+ * driven pin's travel. It is the only marker of which pin the keys are on, and
+ * it is kept well short of the whole travel so that a hovered pin can never be
+ * mistaken for a driven one. */
+#define DUNGEON_SAFE_PIN_HOVER 0.22f
 /* Pin tumbler only: try the lock. Returns whether it opened. */
 bool dungeon_session_confirm(DungeonSession *session);
 

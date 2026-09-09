@@ -63,10 +63,11 @@ bool dungeon_session_create(DungeonSession *session, const DungeonLevel *level)
 	{
 		const DungeonDoorway *door = &level->doors[i];
 		DungeonDoorState *state = &session->doors[i];
-		/* Pin counts and combination lengths vary a little per door so the
-		 * second lock is not simply the first one again. */
+		/* Pin counts vary a little per door so the second lock is not simply
+		 * the first one again; the safe always has four pins, and takes its
+		 * variety from the order they have to be pressed in. */
 		dungeon_pin_tumbler_init(&state->pins, door->seed, 3u + (door->seed & 1u));
-		dungeon_vault_dial_init(&state->dial, door->seed, 4u + ((door->seed >> 3) & 1u));
+		dungeon_safe_pins_init(&state->safe, door->seed);
 		/* Put the lock hardware on the side the player approaches from, so the
 		 * first door met is never locked from behind. */
 		float normal_x = cosf(door->yaw), normal_z = sinf(door->yaw);
@@ -124,9 +125,9 @@ bool dungeon_session_interact(DungeonSession *session, DungeonPoint player)
 		return false;
 	}
 	session->focused_door = door;
-	if (session->level->doors[door].lock == DUNGEON_LOCK_VAULT_DIAL)
+	if (session->level->doors[door].lock == DUNGEON_LOCK_SAFE_PINS)
 	{
-		session->phase = DUNGEON_PHASE_VAULT_DIAL;
+		session->phase = DUNGEON_PHASE_SAFE_PINS;
 		session->status = DUNGEON_STATUS_ENTER_THE_SEQUENCE;
 	}
 	else
@@ -169,42 +170,27 @@ void dungeon_session_adjust(DungeonSession *session, int direction)
 	dungeon_pin_tumbler_adjust(&session->doors[session->focused_door].pins, direction);
 }
 
-bool dungeon_session_spin_dial(DungeonSession *session, float direction, float dt)
+void dungeon_session_move_safe_pin(DungeonSession *session, int direction)
 {
-	if (!session || session->phase != DUNGEON_PHASE_VAULT_DIAL || dt <= 0.0f)
-		return false;
-	DungeonDoorState *state = &session->doors[session->focused_door];
-	if (direction == 0.0f)
-	{
-		/* Let go and the next tick starts fresh, so tapping the key does not
-		 * bank fractions of a tick between presses. */
-		state->dial_spin_accumulator = 0.0f;
-		return dungeon_vault_dial_on_number(&state->dial);
-	}
-	int step = direction > 0.0f ? 1 : -1;
-	state->dial_spin_accumulator += dt;
-	while (state->dial_spin_accumulator >= DUNGEON_DIAL_TICK_SECONDS)
-	{
-		state->dial_spin_accumulator -= DUNGEON_DIAL_TICK_SECONDS;
-		dungeon_vault_dial_step(&state->dial, step);
-	}
-	return dungeon_vault_dial_on_number(&state->dial);
+	if (!session || session->phase != DUNGEON_PHASE_SAFE_PINS)
+		return;
+	dungeon_safe_pins_move(&session->doors[session->focused_door].safe, direction);
 }
 
-bool dungeon_session_commit_dial(DungeonSession *session)
+bool dungeon_session_press_safe_pin(DungeonSession *session)
 {
-	if (!session || session->phase != DUNGEON_PHASE_VAULT_DIAL)
+	if (!session || session->phase != DUNGEON_PHASE_SAFE_PINS)
 		return false;
 	DungeonDoorState *state = &session->doors[session->focused_door];
-	bool banked = dungeon_vault_dial_commit(&state->dial);
-	state->dial_shake = 1.0f;
-	if (!banked)
+	bool driven = dungeon_safe_pins_press(&state->safe);
+	state->safe_shake = 1.0f;
+	if (!driven)
 	{
-		session->status = DUNGEON_STATUS_DIAL_RESET;
+		session->status = DUNGEON_STATUS_SAFE_RESET;
 		return false;
 	}
 	session->status = DUNGEON_STATUS_SEQUENCE_PROGRESS;
-	if (state->dial.solved)
+	if (state->safe.solved)
 		unlock_focused_door(session);
 	return true;
 }
@@ -230,16 +216,28 @@ void dungeon_session_update(DungeonSession *session, float dt)
 	 * camera damps its follow. */
 	float blend = 1.0f - expf(-6.0f * dt);
 	float shake_decay = 1.0f - expf(-7.0f * dt);
+	/* Much faster than the door swing: a safe pin driving forward is a
+	 * mechanism snapping into place, not a leaf sinking into the floor. */
+	float push_blend = 1.0f - expf(-18.0f * dt);
 	for (uint32_t i = 0; i < session->door_count; ++i)
 	{
-		float target = session->doors[i].open ? 1.0f : 0.0f;
-		session->doors[i].swing += (target - session->doors[i].swing) * blend;
-		session->doors[i].dial_shake -= session->doors[i].dial_shake * shake_decay;
-		if (session->doors[i].dial_shake < 1e-3f)
-			session->doors[i].dial_shake = 0.0f;
-		/* Free-running, so the index pin's flash has a phase without the
-		 * renderer having to keep one. */
-		session->doors[i].dial_flash_time += dt;
+		DungeonDoorState *state = &session->doors[i];
+		float target = state->open ? 1.0f : 0.0f;
+		state->swing += (target - state->swing) * blend;
+		state->safe_shake -= state->safe_shake * shake_decay;
+		if (state->safe_shake < 1e-3f)
+			state->safe_shake = 0.0f;
+		/* The whole animation, derived rather than remembered: a driven pin
+		 * travels all the way out, the one under the selection creeps out a
+		 * fraction of that, and everything else falls back flush. A reset
+		 * therefore springs the face back out with no extra state to clear. */
+		bool picking = session->phase == DUNGEON_PHASE_SAFE_PINS && session->focused_door == i;
+		for (uint32_t pin = 0; pin < state->safe.pin_count; ++pin)
+		{
+			float rest = picking && state->safe.selected == pin ? DUNGEON_SAFE_PIN_HOVER : 0.0f;
+			float want = dungeon_safe_pins_driven(&state->safe, pin) ? 1.0f : rest;
+			state->safe_push[pin] += (want - state->safe_push[pin]) * push_blend;
+		}
 	}
 }
 
@@ -268,15 +266,14 @@ void dungeon_session_status_text(const DungeonSession *session, char *out, size_
 					 : "RAISE EACH PIN UNTIL IT SETS AND LOCKS");
 		return;
 	}
-	case DUNGEON_PHASE_VAULT_DIAL:
+	case DUNGEON_PHASE_SAFE_PINS:
 	{
-		bool flashing = state && dungeon_vault_dial_on_number(&state->dial);
-		snprintf(out, capacity, "Dungeon | Lockpick | SAFE DIAL | Number:%u/%u | Tick:%u | %s",
-				 state ? state->dial.progress : 0u, state ? state->dial.step_count : 0u,
-				 state ? state->dial.position : 0u,
-				 session->status == DUNGEON_STATUS_DIAL_RESET
-					 ? "WRONG NUMBER  COMBINATION RESET"
-					 : (flashing ? "PIN LIT  PRESS ENTER" : "TURN AND WATCH THE PIN"));
+		snprintf(out, capacity, "Dungeon | Lockpick | SAFE | Driven:%u/%u | Pin:%u | %s",
+				 state ? state->safe.progress : 0u, state ? state->safe.pin_count : 0u,
+				 state ? state->safe.selected + 1u : 0u,
+				 session->status == DUNGEON_STATUS_SAFE_RESET
+					 ? "WRONG PIN  THE FACE RESET"
+					 : "PRESS THE PINS IN THE RIGHT ORDER");
 		return;
 	}
 	case DUNGEON_PHASE_EXPLORING:

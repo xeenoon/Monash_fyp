@@ -80,39 +80,54 @@ report
 expect past_door 0
 capture lockpick_05_through_the_gate.png
 
-# --- Door 1: vault dial --------------------------------------------------
+# --- Door 1: the safe ----------------------------------------------------
 teleport_door 1
 wait 0.5
 expect door_shut 1
 press interact
 wait 2.0
-expect phase dial
+expect phase safe
 expect focus 0.98
 expect facing 3.0
 expect aimed 2.0
 report
-capture lockpick_06_facing_vault_dial.png
+capture lockpick_06_facing_safe.png
 
-# Turn until the red index pin lights, confirm to bank the number, repeat --
-# real held-turn frames and real confirms, not a written progress counter.
-expect dial_progress 0
-expect dial_pin_dark
-spin_to_numbers 2
-wait 0.05
-expect dial_progress 2
+# Four pins on the face, none driven, the selection on the leftmost. Walk it
+# with the real keys: the row wraps rather than clamping at its ends.
+expect safe_progress 0
+expect safe_selected 0
+expect safe_pins_flush
+press left
+wait 0.1
+expect safe_selected 3
+press right
+wait 0.1
+expect safe_selected 0
+
+# Drive two pins, and prove by value that they TRAVELLED out toward the player
+# -- the pins standing proud are the only thing this lock tells the player, so
+# a driven pin that never moved would be a solved-but-silent puzzle.
+drive_safe_pins 2
+wait 0.5
+expect safe_progress 2
+expect safe_pins_out 2
 report
-capture lockpick_06b_dial_two_banked.png
+capture lockpick_06b_safe_two_driven.png
 
-# Confirming on a dark pin throws the whole combination away. That is the only
-# way to lose progress here, since turning the dial costs nothing.
-spin_off_number
-expect dial_pin_dark
-commit_dial
-wait 0.05
-expect dial_progress 0
+# Pressing a pin the order does not want next springs the whole face back out.
+# That is the only way to lose progress here, since moving the selection is
+# free. Driven through the real confirm key, not by writing the counter.
+select_wrong_pin
+expect safe_pin_wrong
+press confirm
+wait 0.5
+expect safe_progress 0
+expect safe_pins_out 0
+expect safe_pins_flush
 expect door_shut 1
 report
-capture lockpick_06c_dial_reset.png
+capture lockpick_06c_safe_reset.png
 
 solve
 wait 2.0

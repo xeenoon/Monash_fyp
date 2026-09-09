@@ -105,67 +105,97 @@ static void a_shut_door_blocks_and_a_picked_one_does_not(void)
 	dungeon_level_destroy(&level);
 }
 
-/* The safe dial through the session: held turning at a fixed tick rate however
- * fast the frame loop runs, a red index pin that lights on the number, and a
- * confirm that either banks it or throws the whole combination away. */
-static void the_dial_banks_on_confirm_and_resets_on_a_dark_pin(void)
+/* The safe through the session: the selection walks the row and wraps, confirm
+ * on the pin the order wants next drives it forward and confirm on any other
+ * throws the whole order away -- and the pins actually TRAVEL, which is the
+ * only thing the player is shown. */
+static void the_safe_drives_a_pin_on_confirm_and_resets_on_a_wrong_one(void)
 {
 	DungeonLevel level = {0};
 	uint32_t door_index = 0;
-	assert(compile_level_with_lock(DUNGEON_LOCK_VAULT_DIAL, &level, &door_index));
+	assert(compile_level_with_lock(DUNGEON_LOCK_SAFE_PINS, &level, &door_index));
 	DungeonSession session = {0};
 	assert(dungeon_session_create(&session, &level));
 
 	DungeonPoint at_door = level.doors[door_index].center;
 	assert(dungeon_session_interact(&session, at_door));
-	assert(session.phase == DUNGEON_PHASE_VAULT_DIAL);
+	assert(session.phase == DUNGEON_PHASE_SAFE_PINS);
 
 	DungeonDoorState *state = &session.doors[door_index];
-	assert(state->dial.position == 0u && state->dial_shake == 0.0f);
+	assert(state->safe.pin_count == DUNGEON_SAFE_PIN_COUNT);
+	assert(state->safe.selected == 0u && state->safe.progress == 0u);
+	assert(state->safe_shake == 0.0f);
+	for (uint32_t pin = 0; pin < DUNGEON_SAFE_PIN_COUNT; ++pin)
+		assert(state->safe_push[pin] == 0.0f);
 
-	/* A frame shorter than a tick moves nothing; the banked time carries over,
-	 * so the dial turns at the same rate at any frame rate. */
-	uint32_t before = state->dial.position;
-	dungeon_session_spin_dial(&session, 1.0f, DUNGEON_DIAL_TICK_SECONDS * 0.4f);
-	assert(state->dial.position == before);
-	dungeon_session_spin_dial(&session, 1.0f, DUNGEON_DIAL_TICK_SECONDS * 0.7f);
-	assert(state->dial.position == before + 1u);
+	/* The selection wraps both ways: four pins is too short a row to clamp. */
+	dungeon_session_move_safe_pin(&session, -1);
+	assert(state->safe.selected == DUNGEON_SAFE_PIN_COUNT - 1u);
+	dungeon_session_move_safe_pin(&session, 1);
+	assert(state->safe.selected == 0u);
 
-	/* Letting go drops the part-banked tick, so tapping cannot creep the dial
-	 * round between presses. */
-	dungeon_session_spin_dial(&session, 1.0f, DUNGEON_DIAL_TICK_SECONDS * 0.9f);
-	dungeon_session_spin_dial(&session, 0.0f, DUNGEON_DIAL_TICK_SECONDS);
-	uint32_t held = state->dial.position;
-	dungeon_session_spin_dial(&session, 1.0f, DUNGEON_DIAL_TICK_SECONDS * 0.5f);
-	assert(state->dial.position == held);
+	/* Moving alone banks nothing and loses nothing -- a whole lap of the row
+	 * leaves the puzzle exactly where it started. */
+	for (uint32_t i = 0; i < DUNGEON_SAFE_PIN_COUNT; ++i)
+		dungeon_session_move_safe_pin(&session, 1);
+	assert(state->safe.selected == 0u && state->safe.progress == 0u);
 
-	/* Bank two numbers, then confirm on a dark pin and lose both. */
+	/* Drive two pins, and watch them travel: the push is what the renderer
+	 * reads, and a driven pin that never moved would look identical to an
+	 * untouched one. */
 	uint32_t guard = 4000u;
-	while (state->dial.progress < 2u && guard--)
-		if (dungeon_session_spin_dial(&session, 1.0f, DUNGEON_DIAL_TICK_SECONDS))
-			assert(dungeon_session_commit_dial(&session));
-	assert(state->dial.progress == 2u);
-	assert(session.phase == DUNGEON_PHASE_VAULT_DIAL);
+	while (state->safe.progress < 2u && guard--)
+	{
+		if (dungeon_safe_pins_selected_is_next(&state->safe))
+			assert(dungeon_session_press_safe_pin(&session));
+		else
+			dungeon_session_move_safe_pin(&session, 1);
+	}
+	assert(state->safe.progress == 2u);
+	assert(session.phase == DUNGEON_PHASE_SAFE_PINS);
+	for (int frame = 0; frame < 60; ++frame)
+		dungeon_session_update(&session, 1.0f / 60.0f);
+	for (uint32_t step = 0; step < 2u; ++step)
+		assert(state->safe_push[state->safe.order[step]] > 0.9f);
+	/* And the pin under the selection creeps out -- far enough to mark where
+	 * the keys are, nowhere near far enough to be read as driven. */
+	guard = DUNGEON_SAFE_PIN_COUNT + 1u;
+	while (dungeon_safe_pins_driven(&state->safe, state->safe.selected) && guard--)
+		dungeon_session_move_safe_pin(&session, 1);
+	uint32_t hovered = state->safe.selected;
+	assert(!dungeon_safe_pins_driven(&state->safe, hovered));
+	for (int frame = 0; frame < 60; ++frame)
+		dungeon_session_update(&session, 1.0f / 60.0f);
+	assert(state->safe_push[hovered] > DUNGEON_SAFE_PIN_HOVER * 0.5f);
+	assert(state->safe_push[hovered] < 0.5f);
 
-	guard = DUNGEON_DIAL_POSITIONS + 1u;
-	while (dungeon_session_spin_dial(&session, 1.0f, DUNGEON_DIAL_TICK_SECONDS) && guard--)
-		;
-	assert(!dungeon_session_commit_dial(&session));
-	assert(state->dial.progress == 0u);
-	assert(session.status == DUNGEON_STATUS_DIAL_RESET);
+	/* Confirm on a pin the order does not want next throws both away. */
+	guard = DUNGEON_SAFE_PIN_COUNT + 1u;
+	while (dungeon_safe_pins_selected_is_next(&state->safe) && guard--)
+		dungeon_session_move_safe_pin(&session, 1);
+	assert(!dungeon_session_press_safe_pin(&session));
+	assert(state->safe.progress == 0u);
+	assert(session.status == DUNGEON_STATUS_SAFE_RESET);
 	assert(!session.doors[door_index].open);
 	/* A reset still jolts: confirm always lands with feedback, whichever way it
 	 * went, or a player cannot tell it registered at all. */
-	assert(state->dial_shake > 0.5f);
+	assert(state->safe_shake > 0.5f);
 	for (int frame = 0; frame < 120; ++frame)
 		dungeon_session_update(&session, 1.0f / 60.0f);
-	assert(state->dial_shake == 0.0f);
+	assert(state->safe_shake == 0.0f);
+	/* And every pin springs back out of its driven position. */
+	for (uint32_t pin = 0; pin < DUNGEON_SAFE_PIN_COUNT; ++pin)
+		assert(state->safe_push[pin] <= DUNGEON_SAFE_PIN_HOVER + 1e-3f);
 
-	/* Work it the whole way and it opens on the last number. */
+	/* Work it the whole way and it opens on the last pin. */
 	guard = 4000u;
-	while (session.phase == DUNGEON_PHASE_VAULT_DIAL && guard--)
-		if (dungeon_session_spin_dial(&session, 1.0f, DUNGEON_DIAL_TICK_SECONDS))
-			dungeon_session_commit_dial(&session);
+	while (session.phase == DUNGEON_PHASE_SAFE_PINS && guard--)
+	{
+		if (dungeon_safe_pins_selected_is_next(&session.doors[door_index].safe))
+			dungeon_session_press_safe_pin(&session);
+		else
+			dungeon_session_move_safe_pin(&session, 1);
+	}
 	assert(session.doors[door_index].open);
 	assert(session.phase == DUNGEON_PHASE_EXPLORING);
 
@@ -193,8 +223,9 @@ static void locks_are_encountered_one_at_a_time(void)
 			assert(level.doors[i].lock != DUNGEON_LOCK_NONE);
 			/* Both puzzle kinds are seeded and non-trivial at construction. */
 			assert(session.doors[i].pins.pin_count >= 3u);
-			assert(session.doors[i].dial.step_count >= 4u);
-			assert(session.doors[i].dial.position == 0u);
+			assert(session.doors[i].safe.pin_count == DUNGEON_SAFE_PIN_COUNT);
+			assert(session.doors[i].safe.selected == 0u);
+			assert(session.doors[i].safe.progress == 0u);
 			assert(!session.doors[i].open);
 			assert(fabsf(session.doors[i].hardware_side) == 1.0f);
 		}
@@ -214,7 +245,7 @@ static void locks_are_encountered_one_at_a_time(void)
  * the doors are placed, whole levels shared their combinations.
  *
  * The second: a door seeded both its lock kinds from the same value, so its
- * dial combination came out as the same digits as its pin target. */
+ * safe's press order came out as the same digits as its pin target. */
 static void every_lock_gets_its_own_answer(void)
 {
 	uint32_t seeds[64] = {0};
@@ -253,13 +284,13 @@ static void every_lock_gets_its_own_answer(void)
 	for (uint32_t seed = 1u; seed <= 400u; ++seed)
 	{
 		DungeonPinTumbler pins = {0};
-		DungeonVaultDial dial = {0};
+		DungeonSafePins safe = {0};
 		dungeon_pin_tumbler_init(&pins, seed, 4u);
-		dungeon_vault_dial_init(&dial, seed, 4u);
+		dungeon_safe_pins_init(&safe, seed);
 		bool identical = true;
 		for (uint32_t i = 0; i < 4u; ++i)
 			if ((uint32_t)pins.target[i] !=
-				(uint32_t)dial.combination[i] % DUNGEON_LOCK_PIN_STATES)
+				(uint32_t)safe.order[i] % DUNGEON_LOCK_PIN_STATES)
 				identical = false;
 		collisions += identical ? 1u : 0u;
 		++trials;
@@ -270,7 +301,7 @@ static void every_lock_gets_its_own_answer(void)
 int main(void)
 {
 	a_shut_door_blocks_and_a_picked_one_does_not();
-	the_dial_banks_on_confirm_and_resets_on_a_dark_pin();
+	the_safe_drives_a_pin_on_confirm_and_resets_on_a_wrong_one();
 	locks_are_encountered_one_at_a_time();
 	every_lock_gets_its_own_answer();
 	puts("dungeon session tests passed");

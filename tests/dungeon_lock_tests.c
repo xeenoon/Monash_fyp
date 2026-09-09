@@ -142,97 +142,118 @@ static void pin_targets_are_seeded_never_trivial_and_all_or_nothing(void)
 	assert(a.solved);
 }
 
-/* The safe dial. This departs from the source game deliberately: Silent
- * Labyrinth's VaultDialPuzzle was a four-key direction sequence, and this is a
- * combination dial you turn while watching a red index pin. What carried over
- * is the shape -- an ordered sequence of four things to find. */
-static void the_dial_banks_a_number_only_when_the_pin_is_lit(void)
+/* The safe. This departs from the source game deliberately: Silent Labyrinth's
+ * VaultDialPuzzle was a four-key direction sequence, and this is four pins on
+ * the safe's face pressed in a hidden order. What carried over is the shape --
+ * an ordered sequence of four things to find, with a wrong guess costing every
+ * one found so far. */
+static void the_safe_drives_a_pin_only_when_it_is_next_in_the_order(void)
 {
-	DungeonVaultDial lock = {0};
-	dungeon_vault_dial_init(&lock, 4321u, 4u);
-	assert(lock.step_count == 4u);
-	assert(!lock.solved && lock.progress == 0u && lock.position == 0u);
+	DungeonSafePins lock = {0};
+	dungeon_safe_pins_init(&lock, 4321u);
+	assert(lock.pin_count == DUNGEON_SAFE_PIN_COUNT);
+	assert(!lock.solved && lock.progress == 0u && lock.selected == 0u);
 
-	/* Numbers are spread around the rim and never sit on the starting tick, or
-	 * the pin would be lit before the player turned anything. */
-	assert(!dungeon_vault_dial_on_number(&lock));
-	for (uint32_t step = 0; step < lock.step_count; ++step)
+	/* The order is a permutation: every pin appears exactly once, so a solved
+	 * safe has all four standing proud and no press is ever wasted on a pin
+	 * that is already out. */
+	uint32_t seen[DUNGEON_SAFE_PIN_COUNT] = {0};
+	for (uint32_t step = 0; step < lock.pin_count; ++step)
 	{
-		assert(lock.combination[step] != 0u);
-		assert(lock.combination[step] < DUNGEON_DIAL_POSITIONS);
+		assert(lock.order[step] < DUNGEON_SAFE_PIN_COUNT);
+		++seen[lock.order[step]];
 	}
+	for (uint32_t pin = 0; pin < DUNGEON_SAFE_PIN_COUNT; ++pin)
+		assert(seen[pin] == 1u);
 
-	/* Turning is free: it banks nothing and, crucially, loses nothing. A whole
-	 * revolution leaves progress exactly where it started. */
-	for (uint32_t i = 0; i < DUNGEON_DIAL_POSITIONS; ++i)
-		dungeon_vault_dial_step(&lock, 1);
-	assert(lock.progress == 0u);
-	assert(lock.position == 0u);
+	/* Nothing is driven before anything is pressed. */
+	for (uint32_t pin = 0; pin < DUNGEON_SAFE_PIN_COUNT; ++pin)
+		assert(!dungeon_safe_pins_driven(&lock, pin));
 
-	/* Direction does not matter -- the pin lights on the number either way. */
-	uint32_t lit_going_right = 0, lit_going_left = 0;
-	for (uint32_t i = 0; i < DUNGEON_DIAL_POSITIONS; ++i)
-		lit_going_right += dungeon_vault_dial_step(&lock, 1) ? 1u : 0u;
-	for (uint32_t i = 0; i < DUNGEON_DIAL_POSITIONS; ++i)
-		lit_going_left += dungeon_vault_dial_step(&lock, -1) ? 1u : 0u;
-	assert(lit_going_right == 1u && lit_going_left == 1u);
+	/* Moving is free: it drives nothing and, crucially, loses nothing. A whole
+	 * lap of the row leaves progress exactly where it started, and the
+	 * selection wraps rather than clamping. */
+	for (uint32_t i = 0; i < DUNGEON_SAFE_PIN_COUNT; ++i)
+		dungeon_safe_pins_move(&lock, 1);
+	assert(lock.selected == 0u && lock.progress == 0u);
+	dungeon_safe_pins_move(&lock, -1);
+	assert(lock.selected == DUNGEON_SAFE_PIN_COUNT - 1u);
+	dungeon_safe_pins_move(&lock, 1);
+	assert(lock.selected == 0u);
 
-	/* Confirm on a dark pin throws the combination away. */
-	while (dungeon_vault_dial_on_number(&lock))
-		dungeon_vault_dial_step(&lock, 1);
-	assert(!dungeon_vault_dial_commit(&lock));
+	/* Exactly one pin in the row is the next one, whichever way you arrive at
+	 * it -- there is no direction to feel for, only the order. */
+	uint32_t next_count = 0;
+	for (uint32_t i = 0; i < DUNGEON_SAFE_PIN_COUNT; ++i)
+	{
+		next_count += dungeon_safe_pins_selected_is_next(&lock) ? 1u : 0u;
+		dungeon_safe_pins_move(&lock, 1);
+	}
+	assert(next_count == 1u);
+
+	/* Pressing the wrong pin drives nothing. */
+	uint32_t guard = DUNGEON_SAFE_PIN_COUNT + 1u;
+	while (dungeon_safe_pins_selected_is_next(&lock) && guard--)
+		dungeon_safe_pins_move(&lock, 1);
+	assert(!dungeon_safe_pins_press(&lock));
 	assert(lock.progress == 0u && !lock.solved);
 
-	/* Confirm on a lit pin banks it. */
-	uint32_t guard = DUNGEON_DIAL_POSITIONS + 1u;
-	while (!dungeon_vault_dial_on_number(&lock) && guard--)
-		dungeon_vault_dial_step(&lock, 1);
-	assert(dungeon_vault_dial_on_number(&lock));
-	assert(dungeon_vault_dial_commit(&lock));
+	/* Pressing the right one drives it, and it stays driven. */
+	guard = DUNGEON_SAFE_PIN_COUNT + 1u;
+	while (!dungeon_safe_pins_selected_is_next(&lock) && guard--)
+		dungeon_safe_pins_move(&lock, 1);
+	assert(dungeon_safe_pins_selected_is_next(&lock));
+	uint32_t first = lock.selected;
+	assert(dungeon_safe_pins_press(&lock));
 	assert(lock.progress == 1u);
-	/* And the pin goes dark again straight away: it is now pointing at a tick
-	 * that is no longer the number wanted. */
-	assert(!dungeon_vault_dial_on_number(&lock));
+	assert(dungeon_safe_pins_driven(&lock, first));
+	/* And that pin is no longer the one wanted: pressing it again is now a
+	 * wrong press like any other, which is exactly what makes a repeat in the
+	 * order impossible to express. */
+	assert(!dungeon_safe_pins_selected_is_next(&lock));
 
-	/* A wrong confirm partway through costs every number banked so far. */
-	guard = DUNGEON_DIAL_POSITIONS + 1u;
-	while (!dungeon_vault_dial_on_number(&lock) && guard--)
-		dungeon_vault_dial_step(&lock, 1);
-	assert(dungeon_vault_dial_commit(&lock));
+	/* A wrong press partway through costs every pin driven so far -- including
+	 * one thrown away by pressing a pin that is already out. */
+	guard = DUNGEON_SAFE_PIN_COUNT + 1u;
+	while (!dungeon_safe_pins_selected_is_next(&lock) && guard--)
+		dungeon_safe_pins_move(&lock, 1);
+	assert(dungeon_safe_pins_press(&lock));
 	assert(lock.progress == 2u);
-	while (dungeon_vault_dial_on_number(&lock))
-		dungeon_vault_dial_step(&lock, 1);
-	assert(!dungeon_vault_dial_commit(&lock));
+	lock.selected = first; /* already driven, and no longer the one wanted */
+	assert(!dungeon_safe_pins_press(&lock));
 	assert(lock.progress == 0u);
+	for (uint32_t pin = 0; pin < DUNGEON_SAFE_PIN_COUNT; ++pin)
+		assert(!dungeon_safe_pins_driven(&lock, pin));
 }
 
-/* Every dial has to be openable, and a solved one has to stay solved. */
-static void every_dial_can_actually_be_opened(void)
+/* Every safe has to be openable, and a solved one has to stay solved. */
+static void every_safe_can_actually_be_opened(void)
 {
 	for (uint32_t seed = 1u; seed <= 300u; ++seed)
-		for (uint32_t steps = 2u; steps <= DUNGEON_LOCK_MAX_STEPS; ++steps)
+	{
+		DungeonSafePins lock = {0};
+		dungeon_safe_pins_init(&lock, seed);
+		uint32_t guard = DUNGEON_SAFE_PIN_COUNT * DUNGEON_SAFE_PIN_COUNT * 4u;
+		while (!lock.solved && guard--)
 		{
-			DungeonVaultDial lock = {0};
-			dungeon_vault_dial_init(&lock, seed, steps);
-			uint32_t guard = DUNGEON_DIAL_POSITIONS * DUNGEON_LOCK_MAX_STEPS * 4u;
-			while (!lock.solved && guard--)
-			{
-				if (dungeon_vault_dial_on_number(&lock))
-					dungeon_vault_dial_commit(&lock);
-				else
-					dungeon_vault_dial_step(&lock, 1);
-			}
-			assert(lock.solved);
-			assert(lock.progress == lock.step_count);
-
-			/* Nothing moves a solved dial, and confirm on one cannot reset it
-			 * back to zero after the door has already opened. */
-			uint32_t settled = lock.position;
-			assert(!dungeon_vault_dial_step(&lock, 1));
-			assert(!dungeon_vault_dial_commit(&lock));
-			assert(lock.position == settled);
-			assert(lock.solved && lock.progress == lock.step_count);
+			if (dungeon_safe_pins_selected_is_next(&lock))
+				dungeon_safe_pins_press(&lock);
+			else
+				dungeon_safe_pins_move(&lock, 1);
 		}
+		assert(lock.solved);
+		assert(lock.progress == lock.pin_count);
+		for (uint32_t pin = 0; pin < DUNGEON_SAFE_PIN_COUNT; ++pin)
+			assert(dungeon_safe_pins_driven(&lock, pin));
+
+		/* Nothing moves a solved safe, and a press on one cannot spring the
+		 * face back out after the door has already opened. */
+		uint32_t settled = lock.selected;
+		dungeon_safe_pins_move(&lock, 1);
+		assert(!dungeon_safe_pins_press(&lock));
+		assert(lock.selected == settled);
+		assert(lock.solved && lock.progress == lock.pin_count);
+	}
 }
 
 int main(void)
@@ -240,8 +261,8 @@ int main(void)
 	selection_clamps_and_height_wraps();
 	pin_targets_are_seeded_never_trivial_and_all_or_nothing();
 	a_set_pin_is_locked_in_place();
-	the_dial_banks_a_number_only_when_the_pin_is_lit();
-	every_dial_can_actually_be_opened();
+	the_safe_drives_a_pin_only_when_it_is_next_in_the_order();
+	every_safe_can_actually_be_opened();
 	puts("dungeon lock tests passed");
 	return 0;
 }

@@ -12,8 +12,8 @@ The blob format (little-endian, written by tools/dungeon_cave_dump.c):
 
 Field values render as grayscale (white = open floor, black = rock); spawn is
 a green dot, exit a blue dot, puddles translucent cyan discs, and each locked
-doorway the blocker segment it seals (amber = pin tumbler, magenta = vault
-dial). This is how layouts get inspected -- never by screenshotting the
+doorway the blocker segment it seals (amber = pin tumbler, magenta = safe).
+This is how layouts get inspected -- never by screenshotting the
 running game.
 """
 import argparse

@@ -15,11 +15,11 @@
 
 #define DUNGEON_LOCK_MAX_PINS 5u
 #define DUNGEON_LOCK_PIN_STATES 4u
-#define DUNGEON_LOCK_MAX_STEPS 6u
 
-/* Ticks around the safe dial's rim. One full turn is this many steps, which is
- * also how many dots are engraved on the face. */
-#define DUNGEON_DIAL_POSITIONS 24u
+/* Pins standing on the face of the safe. Four, always -- the order is a
+ * permutation of them, so the count is both how many pins there are and how
+ * many presses a solved safe took. */
+#define DUNGEON_SAFE_PIN_COUNT 4u
 
 typedef struct
 {
@@ -30,21 +30,31 @@ typedef struct
 	bool solved;
 } DungeonPinTumbler;
 
-/* A safe dial. Turn it a tick at a time and watch the red index pin: it flashes
- * whenever the tick under it is the next number of the combination. Press
- * confirm while it is flashing to bank that number and move on to the next.
- * Press confirm while it is not, and the whole lock resets to the first number.
+/* The safe. Four pins stand in a row on the front of its face, and there is a
+ * hidden order to press them in. Move the selection along the row -- that is
+ * free, it banks nothing and loses nothing -- and press confirm on a pin. If it
+ * is the one the order wants next it is DRIVEN: it slides forward out of the
+ * face toward the player and stays there. Press any other pin, including one
+ * already driven, and the whole face resets: every pin springs back flush and
+ * the order starts again from the first.
  *
- * Direction does not matter -- the flash is the signal, so there is nothing to
- * feel for and no reason to constrain which way the dial turns. */
+ * `order` is a permutation, so every pin is driven exactly once and a solved
+ * safe is one with all four standing proud. A free sequence with repeats could
+ * not be read off the face at all -- pressing an already-driven pin would have
+ * nothing left to show.
+ *
+ * There is no tell for which pin is next. A pin driving forward is the ONLY
+ * feedback the lock gives, which is what makes the search a search; the earlier
+ * version of this puzzle lit and flashed an index pin to say "press now", which
+ * made it a reaction test rather than something to work out. */
 typedef struct
 {
-	uint8_t combination[DUNGEON_LOCK_MAX_STEPS];
-	uint32_t step_count;
+	uint8_t order[DUNGEON_SAFE_PIN_COUNT];
+	uint32_t pin_count;
 	uint32_t progress;
-	uint32_t position;
+	uint32_t selected;
 	bool solved;
-} DungeonVaultDial;
+} DungeonSafePins;
 
 /* Every pin starts at height 0 and every target is at least 1, so every pin has
  * to be moved. A pin already on its target would be locked in place from the
@@ -73,19 +83,26 @@ void dungeon_pin_tumbler_adjust(DungeonPinTumbler *lock, int direction);
 /* All-or-nothing against the target. Sets and returns `solved`. */
 bool dungeon_pin_tumbler_submit(DungeonPinTumbler *lock);
 
-void dungeon_vault_dial_init(DungeonVaultDial *lock, uint32_t seed, uint32_t step_count);
+/* Seeds the press order. Nothing is driven and the selection starts on pin 0. */
+void dungeon_safe_pins_init(DungeonSafePins *lock, uint32_t seed);
 
-/* Whether the tick currently under the index pin is the next number of the
- * combination -- that is, whether the pin should be flashing. */
-bool dungeon_vault_dial_on_number(const DungeonVaultDial *lock);
+/* Whether this pin has already been driven forward -- that is, whether it
+ * appears in the part of the order banked so far. This is what the renderer
+ * animates and what the player reads the puzzle's state off. */
+bool dungeon_safe_pins_driven(const DungeonSafePins *lock, uint32_t pin);
 
-/* Turns one tick, either way. Returns dungeon_vault_dial_on_number for the tick
- * it arrived at, so a caller can react to the pin starting to flash. Turning
- * alone never banks anything and never loses anything. */
-bool dungeon_vault_dial_step(DungeonVaultDial *lock, int direction);
+/* Whether the selected pin is the one the order wants next. Deliberately NOT
+ * shown to the player -- the session uses it, and the tests and the harness
+ * drive the lock with it, but no light on the face reports it. */
+bool dungeon_safe_pins_selected_is_next(const DungeonSafePins *lock);
 
-/* The confirm key. On a flashing pin this banks the number and advances, and
- * opens the lock on the last one. Anywhere else it resets the combination to
- * the beginning -- which is the whole risk in the puzzle, since turning is
- * free. Returns whether a number was banked. */
-bool dungeon_vault_dial_commit(DungeonVaultDial *lock);
+/* Moves the selection along the row. Wraps: four pins is short enough that
+ * clamping at the ends would only ever be an annoyance. Free -- moving banks
+ * nothing and loses nothing, so the press is the whole risk in the puzzle. */
+void dungeon_safe_pins_move(DungeonSafePins *lock, int direction);
+
+/* The confirm key. Drives the selected pin and advances if it was the one the
+ * order wanted next, opening the safe on the last one; on any other pin it
+ * springs the whole face back out and starts the order again. Returns whether a
+ * pin was driven. */
+bool dungeon_safe_pins_press(DungeonSafePins *lock);

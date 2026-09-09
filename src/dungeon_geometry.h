@@ -53,7 +53,7 @@ typedef enum
 {
 	DUNGEON_LOCK_NONE,
 	DUNGEON_LOCK_PIN_TUMBLER,
-	DUNGEON_LOCK_VAULT_DIAL
+	DUNGEON_LOCK_SAFE_PINS
 } DungeonLockKind;
 
 /* A door standing in a hallway aperture. Deliberately NOT carved into the

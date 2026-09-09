@@ -33,14 +33,15 @@
  *   walk_through <n> <seconds>    steer through door n to its far side
  *   sweep_pins                    drive the selection across every pin, checking
  *                                 the pick's clearance on every animation frame
- *   spin_to_numbers <n>           turn and confirm until n more numbers land
- *   spin_off_number               turn until the index pin is definitely dark
- *   commit_dial                   press confirm wherever the dial happens to be
+ *   drive_safe_pins <n>           walk the selection to the pin the order wants
+ *                                 next and press it, until n more stand driven
+ *   select_wrong_pin              move the selection onto a pin the order does
+ *                                 NOT want next, ready for a real confirm
  *   solve                         fill the focused lock with its solution --
  *                                 proves the gate, not the input path
  *   capture <path.png>            settle two frames, then write the frame
  *   report                        print one line of state
- *   expect phase <exploring|pin|dial>
+ *   expect phase <exploring|pin|safe>
  *   expect facing <tolerance_deg> camera yaw faces the focused lock
  *   expect focus <minimum>        eased focus weight at least this
  *   expect aimed <tolerance_deg>  the camera is actually pointing at the lock
@@ -52,9 +53,14 @@
  *   expect pin_locked <n> | pin_free <n>
  *                                 whether a pin has set and stopped responding
  *   expect all_pins_free          no pin is set yet -- every bore needs working
- *   expect dial_progress <n>      numbers of the combination banked so far
- *   expect dial_pin_lit | dial_pin_dark
- *                                 whether the red index pin is flashing
+ *   expect safe_progress <n>      safe pins driven so far
+ *   expect safe_selected <n>      which face pin the keys are on
+ *   expect safe_pin_next | safe_pin_wrong
+ *                                 whether the selected pin is the one the order
+ *                                 wants next -- nothing on the face reports it
+ *   expect safe_pins_out <n>      how many pins the RENDERER will draw fully
+ *                                 driven, so the animation is proved not assumed
+ *   expect safe_pins_flush        no pin is standing proud of the face
  *   expect door_open <n> | door_shut <n>
  *   expect past_door <n>          player is on the far side of door n
  *   quit

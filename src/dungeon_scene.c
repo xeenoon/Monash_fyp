@@ -26,7 +26,7 @@ static const char *const ALBEDO_PATHS[DUNGEON_MESH_BATCH_COUNT] = {
 	/* The door leaf borrows the exit's medieval-wood set: it is the only wood
 	 * material checked in, and it is exactly what a dungeon door wants. */
 	[DUNGEON_MESH_DOOR] = DUNGEON_TEXTURE_DIR "/exit_albedo.jpg",
-	/* Aged metal on the STRUCTURE only -- casing, housing, bores, dial. The
+	/* Aged metal on the STRUCTURE only -- casing, housing, bores, safe face. The
 	 * READOUTS (pins, springs, shear marks) stay untextured on purpose:
 	 * mesh.frag multiplies the albedo sample by draw.geometry.rgb, so a tint
 	 * can only ever darken what the texture already has, and on a saturated
@@ -36,10 +36,12 @@ static const char *const ALBEDO_PATHS[DUNGEON_MESH_BATCH_COUNT] = {
 	[DUNGEON_MESH_LOCK_BODY] = DUNGEON_TEXTURE_DIR "/lock_albedo.jpg",
 	[DUNGEON_MESH_LOCK_HOUSING] = DUNGEON_TEXTURE_DIR "/lock_albedo.jpg",
 	[DUNGEON_MESH_LOCK_CHANNEL] = DUNGEON_TEXTURE_DIR "/lock_albedo.jpg",
-	[DUNGEON_MESH_LOCK_DIAL] = DUNGEON_TEXTURE_DIR "/lock_albedo.jpg",
+	[DUNGEON_MESH_LOCK_FACE] = DUNGEON_TEXTURE_DIR "/lock_albedo.jpg",
 	/* The pins, their springs and the pick all carry the same worn metal now
-	 * that none of them encode state through colour. */
+	 * that none of them encode state through colour -- the safe's pins included:
+	 * what they say, they say by how far they stand out of the face. */
 	[DUNGEON_MESH_LOCK_PIN] = DUNGEON_TEXTURE_DIR "/lock_albedo.jpg",
+	[DUNGEON_MESH_LOCK_SAFE_PIN] = DUNGEON_TEXTURE_DIR "/lock_albedo.jpg",
 	[DUNGEON_MESH_LOCK_SPRING] = DUNGEON_TEXTURE_DIR "/lock_albedo.jpg",
 	[DUNGEON_MESH_LOCK_PICK] = DUNGEON_TEXTURE_DIR "/lock_albedo.jpg",
 };
@@ -52,8 +54,9 @@ static const char *const ORM_PATHS[DUNGEON_MESH_BATCH_COUNT] = {
 	[DUNGEON_MESH_LOCK_BODY] = DUNGEON_TEXTURE_DIR "/lock_orm.png",
 	[DUNGEON_MESH_LOCK_HOUSING] = DUNGEON_TEXTURE_DIR "/lock_orm.png",
 	[DUNGEON_MESH_LOCK_CHANNEL] = DUNGEON_TEXTURE_DIR "/lock_orm.png",
-	[DUNGEON_MESH_LOCK_DIAL] = DUNGEON_TEXTURE_DIR "/lock_orm.png",
+	[DUNGEON_MESH_LOCK_FACE] = DUNGEON_TEXTURE_DIR "/lock_orm.png",
 	[DUNGEON_MESH_LOCK_PIN] = DUNGEON_TEXTURE_DIR "/lock_orm.png",
+	[DUNGEON_MESH_LOCK_SAFE_PIN] = DUNGEON_TEXTURE_DIR "/lock_orm.png",
 	[DUNGEON_MESH_LOCK_SPRING] = DUNGEON_TEXTURE_DIR "/lock_orm.png",
 	[DUNGEON_MESH_LOCK_PICK] = DUNGEON_TEXTURE_DIR "/lock_orm.png",
 };
@@ -66,8 +69,9 @@ static const char *const NORMAL_PATHS[DUNGEON_MESH_BATCH_COUNT] = {
 	[DUNGEON_MESH_LOCK_BODY] = DUNGEON_TEXTURE_DIR "/lock_normal.png",
 	[DUNGEON_MESH_LOCK_HOUSING] = DUNGEON_TEXTURE_DIR "/lock_normal.png",
 	[DUNGEON_MESH_LOCK_CHANNEL] = DUNGEON_TEXTURE_DIR "/lock_normal.png",
-	[DUNGEON_MESH_LOCK_DIAL] = DUNGEON_TEXTURE_DIR "/lock_normal.png",
+	[DUNGEON_MESH_LOCK_FACE] = DUNGEON_TEXTURE_DIR "/lock_normal.png",
 	[DUNGEON_MESH_LOCK_PIN] = DUNGEON_TEXTURE_DIR "/lock_normal.png",
+	[DUNGEON_MESH_LOCK_SAFE_PIN] = DUNGEON_TEXTURE_DIR "/lock_normal.png",
 	[DUNGEON_MESH_LOCK_SPRING] = DUNGEON_TEXTURE_DIR "/lock_normal.png",
 	[DUNGEON_MESH_LOCK_PICK] = DUNGEON_TEXTURE_DIR "/lock_normal.png",
 };
@@ -284,8 +288,9 @@ static WorldPosition lock_point(DungeonPoint origin, DungeonPoint across, Dungeo
 /* A transform for a piece whose axis is the door NORMAL rather than world up:
  * local +Y maps to the normal, and local +X/+Z spin in the plane of the door
  * face by `spin` radians. coordinate_rotation_y cannot express either half of
- * that. Only the safe dial needs it -- it is a disc lying against the door that
- * has to turn about its own centre. */
+ * that. Only the safe needs it -- its face plate is a disc lying against the
+ * door, and its pins drive straight out of that face toward the player, which
+ * is the door normal and not any axis coordinate_rotation_y can name. */
 static LocalToWorldTransform lock_face_spin(WorldPosition translation, DungeonPoint across,
 											DungeonPoint normal, float spin)
 {
@@ -405,9 +410,9 @@ bool dungeon_scene_pin_world(const DungeonScene *scene, uint32_t door_index, uin
 	return true;
 }
 
-static void append_vault_dial_draws(DungeonScene *scene, uint32_t index, bool focused,
-									WorldPosition camera, RendererDraw *out, uint32_t *count,
-									uint32_t capacity)
+static void append_safe_pins_draws(DungeonScene *scene, uint32_t index, bool focused,
+								   WorldPosition camera, RendererDraw *out, uint32_t *count,
+								   uint32_t capacity)
 {
 	const DungeonSession *session = &scene->session;
 	const DungeonDoorState *state = &session->doors[index];
@@ -417,51 +422,37 @@ static void append_vault_dial_draws(DungeonScene *scene, uint32_t index, bool fo
 
 	append_lock_body(scene, origin, across, normal, tint, camera, out, count, capacity);
 
-	/* One tick of the dial is one step of rotation. Negated so that holding
-	 * "right" turns the face clockwise on screen, which is the direction the
-	 * key is named for. */
-	float spin = -(float)state->dial.position *
-				 (6.28318530718f / (float)DUNGEON_DIAL_POSITIONS);
-	/* The shake: the only feedback that a number has been picked up. It decays
-	 * in the session, and sin() of the decaying value gives a wobble that rings
-	 * down on its own without a second piece of state to carry a phase. */
-	spin += sinf(state->dial_shake * 46.0f) * state->dial_shake * 0.075f;
-	float dial_centre_y = LOCK_HOUSING_Y + 0.20f;
-	push_instance(scene, DUNGEON_MESH_LOCK_DIAL,
-				  lock_face_spin(lock_point(origin, across, normal, 0.0f, 0.0f, dial_centre_y),
-								 across, normal, spin),
+	/* The jolt a press lands with, along the door normal so the whole face
+	 * kicks toward the player and settles. It decays in the session, and sin()
+	 * of the decaying value rings down on its own without a second piece of
+	 * state to carry a phase. Given to a driven pin and to a reset alike --
+	 * confirm always lands, whichever way it went. */
+	float jolt = sinf(state->safe_shake * 46.0f) * state->safe_shake * 0.006f;
+	push_instance(scene, DUNGEON_MESH_LOCK_FACE,
+				  lock_face_spin(lock_point(origin, across, normal, 0.0f, jolt,
+											DUNGEON_LOCK_FACE_Y),
+								 across, normal, 0.0f),
 				  camera, 0.46f * tint, 0.44f * tint, 0.42f * tint, 0.52f, LOCK_METAL, out, count,
 				  capacity);
 
-	/* The index pin, which does NOT turn: without a fixed reference the dial has
-	 * no readable position at all. It is red, and it flashes while the tick
-	 * under it is the number the combination wants next -- that flash is the
-	 * entire signal in this puzzle, since turning the dial is free and only
-	 * confirm can lose progress. */
-	bool flashing = dungeon_vault_dial_on_number(&state->dial);
-	float pulse = flashing ? 0.55f + 0.45f * sinf(state->dial_flash_time * 11.0f) : 0.0f;
-	/* Wide gap between the two states on purpose: the rust texture underneath
-	 * is bright, so a dim red and a bright red land closer together on screen
-	 * than the numbers suggest. */
-	float pin_red = 0.13f + 0.87f * pulse;
-	float pin_dark = 0.05f + 0.07f * pulse;
-	push_instance(scene, DUNGEON_MESH_LOCK_PIN,
-				  aim_x(across, lock_point(origin, across, normal, 0.0f, 0.058f,
-										   dial_centre_y + DUNGEON_LOCK_DIAL_RADIUS_M - 0.030f)),
-				  camera, pin_red * tint, pin_dark * tint, pin_dark * tint, 0.36f, 0.0f, out,
-				  count, capacity);
-
-	/* Numbers banked so far. */
-	float pip_span = (float)(state->dial.step_count - 1u) * 0.145f * 0.5f;
-	for (uint32_t step = 0; step < state->dial.step_count; ++step)
+	/* The four pins, in a row across the face. How far out of the face a pin
+	 * stands is the whole of this puzzle's readout: flush is untouched, a
+	 * fraction out is the one the keys are on, and all the way out is driven
+	 * and banked. The session eases `safe_push`, so a press animates and a
+	 * wrong press springs every pin back without the renderer tracking any of
+	 * it. */
+	float span = (float)(state->safe.pin_count - 1u) * DUNGEON_SAFE_PIN_PITCH_M * 0.5f;
+	for (uint32_t pin = 0; pin < state->safe.pin_count; ++pin)
 	{
-		bool banked = step < state->dial.progress;
-		push_instance(scene, DUNGEON_MESH_LOCK_NOTCH,
-					  aim_x(across, lock_point(origin, across, normal,
-											   (float)step * 0.145f - pip_span,
-											   LOCK_PROUD_BACK_M, 0.45f)),
-					  camera, (banked ? 1.00f : 0.15f) * tint, (banked ? 0.74f : 0.15f) * tint,
-					  (banked ? 0.12f : 0.17f) * tint, 0.42f, 0.0f, out, count, capacity);
+		float lateral = (float)pin * DUNGEON_SAFE_PIN_PITCH_M - span;
+		float proud = DUNGEON_SAFE_PIN_BASE_PROUD_M + jolt +
+					  state->safe_push[pin] * DUNGEON_SAFE_PIN_DRIVE_M;
+		push_instance(scene, DUNGEON_MESH_LOCK_SAFE_PIN,
+					  lock_face_spin(lock_point(origin, across, normal, lateral, proud,
+												DUNGEON_LOCK_FACE_Y + DUNGEON_SAFE_PIN_LIFT_M),
+									 across, normal, 0.0f),
+					  camera, 0.80f * tint, 0.79f * tint, 0.76f * tint, 0.34f, LOCK_METAL, out,
+					  count, capacity);
 	}
 }
 
@@ -493,8 +484,8 @@ static void append_door_draws(DungeonScene *scene, WorldPosition camera, Rendere
 		if (state->open)
 			continue;
 		bool focused = session->phase != DUNGEON_PHASE_EXPLORING && session->focused_door == i;
-		if (door->lock == DUNGEON_LOCK_VAULT_DIAL)
-			append_vault_dial_draws(scene, i, focused, camera, out, count, capacity);
+		if (door->lock == DUNGEON_LOCK_SAFE_PINS)
+			append_safe_pins_draws(scene, i, focused, camera, out, count, capacity);
 		else
 			append_pin_tumbler_draws(scene, i, focused, camera, out, count, capacity);
 	}

@@ -66,13 +66,13 @@ and the movement keys drive the puzzle instead of the player:
 | Lock | Controls |
 |------|----------|
 | Pin tumbler (bores below the lock casing) | **A**/**D** or left/right move the pick between pins, **W**/**S** or up/down raise or lower the one it is under, **Enter**/**Space** tries the lock. Nothing marks the answer: raise a pin until it visibly sets back into its bore. A set pin is locked in place and stops responding, so work one pin at a time and progress is never lost. No pin ever starts on its target -- every bore needs working. |
-| Safe dial (disc below the lock casing) | **Hold** **A**/**D** or left/right to turn the dial, either way; it ticks round under a red index pin. The pin flashes when the tick under it is the number the combination wants next. **Enter**/**Space** while it is flashing banks that number and you go looking for the next. Press it while the pin is dark and the whole combination resets. Turning is free -- confirming is the only risk. |
+| Safe (round face below the lock casing) | Four pins stand in a row on the face, and there is a hidden order to press them in. **A**/**D** or left/right walk the selection along the row, which wraps; **Enter**/**Space** presses the pin it is on. Press the one the order wants next and it drives forward out of the face toward you and stays there. Press any other -- including one already driven -- and every pin springs back flush and the order starts again. Nothing marks the answer: a pin driving forward is the only tell. Moving is free -- pressing is the only risk. |
 
 Every lock's answer is seeded per door from `DUNGEON_SEED`, so no two doors in a
 level share a combination and no two levels repeat.
 
 **E** or **Q** steps back out of a lock without solving it. The window title carries the
-current phase, pin values or dial progress, and how many doors are still
+current phase, pin values or how many safe pins are driven, and how many doors are still
 locked -- this renderer draws no text, so the title bar is the status line.
 
 Inspect a generated layout without running the game:
@@ -83,7 +83,7 @@ python3 tools/preview_cave.py cave.bin cave.png
 ```
 
 Doorways render as the segment each one seals (amber = pin tumbler,
-magenta = vault dial).
+magenta = safe).
 
 ### Driving the dungeon from a script
 

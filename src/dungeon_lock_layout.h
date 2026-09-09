@@ -39,7 +39,37 @@
 #define DUNGEON_LOCK_CHANNEL_HALF_X 0.034f
 #define DUNGEON_LOCK_PIN_RADIUS_M 0.024f
 #define DUNGEON_LOCK_SPRING_RADIUS_M 0.026f
-#define DUNGEON_LOCK_DIAL_RADIUS_M 0.175f
+
+/* The safe's face: a round plate standing on the door with a stepped bezel,
+ * and four pins in a row across it. A pin's local origin is its BACK, buried in
+ * the plate, so `proud + length` is where its head sits -- flush-and-a-bit when
+ * the pin is at rest, a whole DRIVE further out when it has been driven.
+ *
+ * The row has to fit inside the bezel: the outermost pin centre is 1.5 pitches
+ * from the middle, and that plus a pin radius is what must stay under
+ * DUNGEON_LOCK_FACE_BEZEL_RADIUS_M. */
+#define DUNGEON_LOCK_FACE_Y 0.72f
+#define DUNGEON_LOCK_FACE_RADIUS_M 0.175f
+#define DUNGEON_LOCK_FACE_BEZEL_RADIUS_M 0.150f
+#define DUNGEON_LOCK_FACE_PLATE_M 0.052f
+#define DUNGEON_LOCK_FACE_BEZEL_M 0.066f
+#define DUNGEON_SAFE_PIN_RADIUS_M 0.026f
+#define DUNGEON_SAFE_PIN_LENGTH_M 0.075f
+#define DUNGEON_SAFE_PIN_PITCH_M 0.076f
+/* Off the plate's back face, not zero: a pin whose end cap were coplanar with
+ * the plate's would z-fight it wherever the two are seen edge-on. */
+#define DUNGEON_SAFE_PIN_BASE_PROUD_M 0.006f
+/* How far a driven pin travels toward the player. Large next to the 9 mm of pin
+ * showing at rest, because that contrast IS the puzzle's readout. */
+#define DUNGEON_SAFE_PIN_DRIVE_M 0.055f
+/* The row sits this far ABOVE the plate's centre. The focus camera looks down
+ * on the lock at roughly 24 degrees, and anything standing out of the face
+ * projects that much lower on screen than the plate behind it: laid out on the
+ * centreline the row hung off the bottom of the plate, and a driven pin cleared
+ * its edge entirely. Tuned against the head of a pin at rest, so the driven
+ * ones drop back toward the middle as they come out -- which reads as travel
+ * toward the player rather than as a row that has slipped. */
+#define DUNGEON_SAFE_PIN_LIFT_M 0.030f
 
 /* Proud offsets: how far out of the door face each layer sits. */
 #define DUNGEON_LOCK_PROUD_BODY_M 0.070f

@@ -5,8 +5,8 @@
  * matter what else in the process has drawn random numbers first.
  *
  * `domain` separates the two locks' streams. Seeding both from the door's seed
- * alone gave a door's dial combination the same digits as its pin target,
- * because both drew the same numbers from the same starting state.
+ * alone gave a door's safe order the same digits as its pin target, because
+ * both drew the same numbers from the same starting state.
  *
  * The finalizer on the seed matters for the same reason it does in
  * dungeon_cave.c: lock_rng_next advances by the constant a plain seeding would
@@ -17,7 +17,7 @@ typedef struct
 } LockRng;
 
 #define DUNGEON_LOCK_DOMAIN_PINS 0x5FA1B7C39D2E4801ULL
-#define DUNGEON_LOCK_DOMAIN_DIAL 0xC13E9A47B62D5F0BULL
+#define DUNGEON_LOCK_DOMAIN_SAFE 0xC13E9A47B62D5F0BULL
 
 static LockRng lock_rng_create(uint32_t seed, uint64_t domain)
 {
@@ -109,78 +109,71 @@ bool dungeon_pin_tumbler_submit(DungeonPinTumbler *lock)
 	return matched;
 }
 
-void dungeon_vault_dial_init(DungeonVaultDial *lock, uint32_t seed, uint32_t step_count)
+void dungeon_safe_pins_init(DungeonSafePins *lock, uint32_t seed)
 {
 	if (!lock)
 		return;
-	*lock = (DungeonVaultDial){0};
-	lock->step_count = clamp_count(step_count, 2u, DUNGEON_LOCK_MAX_STEPS);
-	LockRng rng = lock_rng_create(seed, DUNGEON_LOCK_DOMAIN_DIAL);
+	*lock = (DungeonSafePins){0};
+	lock->pin_count = DUNGEON_SAFE_PIN_COUNT;
+	for (uint32_t pin = 0; pin < lock->pin_count; ++pin)
+		lock->order[pin] = (uint8_t)pin;
 
-	/* Numbers are spread around the rim by CONSTRUCTION: one per slot, with a
-	 * little jitter inside it. The obvious alternative -- draw a random tick
-	 * and re-draw until it clears the others -- cannot terminate once the rim
-	 * runs out of room, and at six numbers with a three-tick separation on a
-	 * twenty-four tick rim it does exactly that. It hung the test suite.
-	 *
-	 * Tick 0 is excluded throughout: that is where the dial starts, and a
-	 * number sitting there would be banked before the player turned anything.
-	 * The slot size is taken over the ticks ABOVE zero for the same reason. */
-	const uint32_t minimum_gap = 3u;
-	uint32_t usable = DUNGEON_DIAL_POSITIONS - 1u;
-	uint32_t slot = usable / lock->step_count;
-	if (slot < minimum_gap)
-		slot = minimum_gap;
-	uint32_t jitter = slot > minimum_gap ? slot - minimum_gap + 1u : 1u;
-	uint32_t base = 1u + lock_rng_index(&rng, minimum_gap);
-	for (uint32_t step = 0; step < lock->step_count; ++step)
-	{
-		uint32_t position = base + step * slot + lock_rng_index(&rng, jitter);
-		if (position >= DUNGEON_DIAL_POSITIONS)
-			position = DUNGEON_DIAL_POSITIONS - 1u;
-		lock->combination[step] = (uint8_t)position;
-	}
-	/* Shuffle the order, or every combination would run one way round the rim
-	 * and the alternating-direction rule would be the only thing to solve. */
-	for (uint32_t i = lock->step_count; i > 1u; --i)
+	/* Fisher-Yates over the pins themselves, so the order is a PERMUTATION by
+	 * construction rather than four independent draws. Independent draws can
+	 * name the same pin twice, and the second press of a pin that is already
+	 * standing proud has nothing to show for it -- the face would stop being a
+	 * readable account of how far the player has got. */
+	LockRng rng = lock_rng_create(seed, DUNGEON_LOCK_DOMAIN_SAFE);
+	for (uint32_t i = lock->pin_count; i > 1u; --i)
 	{
 		uint32_t j = lock_rng_index(&rng, i);
-		uint8_t swap = lock->combination[i - 1u];
-		lock->combination[i - 1u] = lock->combination[j];
-		lock->combination[j] = swap;
+		uint8_t swap = lock->order[i - 1u];
+		lock->order[i - 1u] = lock->order[j];
+		lock->order[j] = swap;
 	}
 }
 
-bool dungeon_vault_dial_on_number(const DungeonVaultDial *lock)
+bool dungeon_safe_pins_driven(const DungeonSafePins *lock, uint32_t pin)
 {
-	if (!lock || lock->solved || lock->progress >= lock->step_count)
+	if (!lock || pin >= lock->pin_count)
 		return false;
-	return lock->position == lock->combination[lock->progress];
+	uint32_t banked = lock->progress < lock->pin_count ? lock->progress : lock->pin_count;
+	for (uint32_t step = 0; step < banked; ++step)
+		if (lock->order[step] == pin)
+			return true;
+	return false;
 }
 
-bool dungeon_vault_dial_step(DungeonVaultDial *lock, int direction)
+bool dungeon_safe_pins_selected_is_next(const DungeonSafePins *lock)
 {
-	if (!lock || !lock->step_count || lock->solved || !direction)
+	if (!lock || lock->solved || lock->progress >= lock->pin_count)
 		return false;
+	return lock->selected == lock->order[lock->progress];
+}
+
+void dungeon_safe_pins_move(DungeonSafePins *lock, int direction)
+{
+	if (!lock || !lock->pin_count || lock->solved || !direction)
+		return;
 	int step = direction > 0 ? 1 : -1;
-	lock->position = (uint32_t)(((int)lock->position + step + (int)DUNGEON_DIAL_POSITIONS) %
-								(int)DUNGEON_DIAL_POSITIONS);
-	return dungeon_vault_dial_on_number(lock);
+	int count = (int)lock->pin_count;
+	lock->selected = (uint32_t)(((int)lock->selected + step + count) % count);
 }
 
-bool dungeon_vault_dial_commit(DungeonVaultDial *lock)
+bool dungeon_safe_pins_press(DungeonSafePins *lock)
 {
-	if (!lock || !lock->step_count || lock->solved)
+	if (!lock || !lock->pin_count || lock->solved)
 		return false;
-	if (!dungeon_vault_dial_on_number(lock))
+	if (!dungeon_safe_pins_selected_is_next(lock))
 	{
-		/* Committing on a dark pin throws the whole combination away. Turning
-		 * costs nothing, so this is the only way to lose progress -- and the
-		 * only reason to look before pressing. */
+		/* Pressing the wrong pin -- an untouched one out of turn, or one
+		 * already driven -- throws the whole order away. Moving the selection
+		 * costs nothing, so this is the only way to lose progress, and the only
+		 * reason to think before pressing. */
 		lock->progress = 0;
 		return false;
 	}
 	++lock->progress;
-	lock->solved = lock->progress == lock->step_count;
+	lock->solved = lock->progress == lock->pin_count;
 	return true;
 }

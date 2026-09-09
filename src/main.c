@@ -641,13 +641,17 @@ int main(int argc, char *argv[])
 				}
 				else
 				{
-					/* The safe dial spins while a direction is HELD, ticking
-					 * round at a fixed rate. Turning is free; confirm is what
-					 * banks a number, and what throws the combination away if
-					 * the index pin is not lit. */
-					dungeon_session_spin_dial(session, input.dial_spin, dt);
+					/* The safe's face pins: left and right walk the selection
+					 * along the row, confirm presses whichever pin it is on.
+					 * Moving is free; the press is what drives a pin forward,
+					 * and what springs the whole face back out if it was the
+					 * wrong pin. */
+					if (input.puzzle_left)
+						dungeon_session_move_safe_pin(session, -1);
+					if (input.puzzle_right)
+						dungeon_session_move_safe_pin(session, 1);
 					if (input.puzzle_confirm)
-						dungeon_session_commit_dial(session);
+						dungeon_session_press_safe_pin(session);
 				}
 				/* E steps back out as well as in: the key that got you into the
 				 * lock is the one a player reaches for to leave it. */

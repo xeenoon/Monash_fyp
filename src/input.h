@@ -28,16 +28,13 @@ typedef struct
 	bool clear_shader_dump; /* C pressed (dump-enabled builds) */
 	bool toggle_auto_exposure; /* E pressed */
 	/* Dungeon lock picking. All edge-triggered: one press is one pin step, one
-	 * dial entry, or one attempt -- holding a key must not spin a tumbler.
+	 * safe pin pressed, or one attempt -- holding a key must not walk a lock.
 	 * The directions fire on the arrows AND on WASD, as the source game does;
 	 * outside a lock they are simply ignored, so they cost the free-fly and
 	 * exploring paths nothing. `interact` shares E with the auto-exposure
 	 * toggle, which the dungeon scene does not use. */
 	bool interact;
 	bool puzzle_left, puzzle_right, puzzle_up, puzzle_down;
-	/* Held, not edge-triggered: the safe dial spins for as long as a direction
-	 * is down, so it needs the key STATE, not the key press. */
-	float dial_spin; /* -1 left, +1 right, 0 released */
 	bool puzzle_confirm; /* Enter or Space: try the lock */
 	bool puzzle_cancel;	 /* Q: step back from a lock without solving it */
 } Input;

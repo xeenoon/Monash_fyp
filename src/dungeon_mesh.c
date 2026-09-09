@@ -769,14 +769,14 @@ static bool build_moss(const DungeonLevel *level,
 #define LOCK_SPRING_SEGMENTS 12u
 #define LOCK_PIN_SEGMENTS 14u
 #define LOCK_PICK_SEGMENTS 10u
-#define LOCK_DIAL_SEGMENTS 28u
-#define LOCK_DIAL_TICK_SEGMENTS 6u
+#define LOCK_FACE_SEGMENTS 28u
+#define LOCK_SAFE_PIN_SEGMENTS 14u
 
 static bool build_door_hardware(const DungeonLevel *level, DungeonMeshData *out,
 								DungeonLevelError *error)
 {
 	Builder door = {0}, body = {0}, housing = {0}, channel = {0}, spring = {0}, pin = {0},
-			notch = {0}, dial = {0}, pick = {0};
+			safe_pin = {0}, face = {0}, pick = {0};
 	if (!builder_create(&door, &out->batches[DUNGEON_MESH_DOOR], 24u, 36u, 1.4f) ||
 		!builder_create(&body, &out->batches[DUNGEON_MESH_LOCK_BODY], 144u, 216u, LOCK_MATERIAL_WIDTH_M) ||
 		!builder_create(&housing, &out->batches[DUNGEON_MESH_LOCK_HOUSING], 24u, 36u, LOCK_MATERIAL_WIDTH_M) ||
@@ -788,15 +788,12 @@ static bool build_door_hardware(const DungeonLevel *level, DungeonMeshData *out,
 		!builder_create(&pin, &out->batches[DUNGEON_MESH_LOCK_PIN],
 						CYLINDER_VERTEX_COUNT(LOCK_PIN_SEGMENTS),
 						CYLINDER_INDEX_COUNT(LOCK_PIN_SEGMENTS), LOCK_MATERIAL_WIDTH_M) ||
-		!builder_create(&notch, &out->batches[DUNGEON_MESH_LOCK_NOTCH], 24u, 36u, LOCK_MATERIAL_WIDTH_M) ||
-		!builder_create(&dial, &out->batches[DUNGEON_MESH_LOCK_DIAL],
-						CYLINDER_VERTEX_COUNT(LOCK_DIAL_SEGMENTS) +
-							DUNGEON_DIAL_POSITIONS * CYLINDER_VERTEX_COUNT(LOCK_DIAL_TICK_SEGMENTS) +
-							BOX_VERTEX_COUNT,
-						CYLINDER_INDEX_COUNT(LOCK_DIAL_SEGMENTS) +
-							DUNGEON_DIAL_POSITIONS * CYLINDER_INDEX_COUNT(LOCK_DIAL_TICK_SEGMENTS) +
-							BOX_INDEX_COUNT,
-						LOCK_MATERIAL_WIDTH_M) ||
+		!builder_create(&safe_pin, &out->batches[DUNGEON_MESH_LOCK_SAFE_PIN],
+						CYLINDER_VERTEX_COUNT(LOCK_SAFE_PIN_SEGMENTS),
+						CYLINDER_INDEX_COUNT(LOCK_SAFE_PIN_SEGMENTS), LOCK_MATERIAL_WIDTH_M) ||
+		!builder_create(&face, &out->batches[DUNGEON_MESH_LOCK_FACE],
+						2u * CYLINDER_VERTEX_COUNT(LOCK_FACE_SEGMENTS),
+						2u * CYLINDER_INDEX_COUNT(LOCK_FACE_SEGMENTS), LOCK_MATERIAL_WIDTH_M) ||
 		!builder_create(&pick, &out->batches[DUNGEON_MESH_LOCK_PICK],
 						CYLINDER_VERTEX_COUNT(LOCK_PICK_SEGMENTS) + 2u * BOX_VERTEX_COUNT,
 						CYLINDER_INDEX_COUNT(LOCK_PICK_SEGMENTS) + 2u * BOX_INDEX_COUNT,
@@ -837,28 +834,25 @@ static bool build_door_hardware(const DungeonLevel *level, DungeonMeshData *out,
 	 * straight at, and a faceted prism at this range reads as a toy. */
 	if (!append_cylinder(&pin, 0.024f, 0.0f, 0.11f, LOCK_PIN_SEGMENTS))
 		return mesh_fail(error, "internal lock pin mesh capacity error");
-	if (!append_box(&notch, (DungeonRect){{-0.060f, -0.017f}, {0.060f, 0.017f}}, 0.0f, 0.016f))
-		return mesh_fail(error, "internal lock notch mesh capacity error");
-	/* The safe dial: a disc whose axis is the door normal (the instance
-	 * transform stands it up), with the tick dots engraved into the same mesh
-	 * so they turn WITH the face -- they are what makes the rotation readable,
-	 * and an unrotating ring of dots would say nothing. Every sixth dot is
-	 * bigger, the way a real dial marks its quarters, plus a grip bar across
-	 * the face so the angle is legible even between dots. */
-	if (!append_cylinder(&dial, DUNGEON_LOCK_DIAL_RADIUS_M, 0.0f, 0.052f, LOCK_DIAL_SEGMENTS))
-		return mesh_fail(error, "internal lock dial mesh capacity error");
-	for (uint32_t tick = 0; tick < DUNGEON_DIAL_POSITIONS; ++tick)
-	{
-		float angle = (float)tick / (float)DUNGEON_DIAL_POSITIONS * 6.28318530718f;
-		bool quarter = (tick % 6u) == 0u;
-		float ring = DUNGEON_LOCK_DIAL_RADIUS_M - (quarter ? 0.030f : 0.022f);
-		if (!append_cylinder_at(&dial, cosf(angle) * ring, sinf(angle) * ring,
-								quarter ? 0.016f : 0.010f, 0.052f, quarter ? 0.068f : 0.062f,
-								LOCK_DIAL_TICK_SEGMENTS))
-			return mesh_fail(error, "internal lock dial tick capacity error");
-	}
-	if (!append_box(&dial, (DungeonRect){{-0.020f, -0.108f}, {0.020f, 0.108f}}, 0.052f, 0.074f))
-		return mesh_fail(error, "internal lock dial grip capacity error");
+	/* The safe's face: a plate standing on the door with a narrower, thicker
+	 * bezel stepped on top of it, both discs about the door normal (the
+	 * instance transform stands them up). The face does not turn and carries no
+	 * markings -- the four pins standing on it are the entire readout, so a
+	 * ring of engraved ticks would only be describing a rotation that no longer
+	 * happens. */
+	if (!append_cylinder(&face, DUNGEON_LOCK_FACE_RADIUS_M, 0.0f, DUNGEON_LOCK_FACE_PLATE_M,
+						 LOCK_FACE_SEGMENTS) ||
+		!append_cylinder(&face, DUNGEON_LOCK_FACE_BEZEL_RADIUS_M, DUNGEON_LOCK_FACE_PLATE_M,
+						 DUNGEON_LOCK_FACE_BEZEL_M, LOCK_FACE_SEGMENTS))
+		return mesh_fail(error, "internal safe face mesh capacity error");
+	/* One safe pin. Built along local +Y like every other cylinder here, which
+	 * the face transform maps onto the door normal, so the pin's length runs
+	 * straight out of the door toward the player and a driven pin is simply
+	 * this mesh pushed further along that axis. Stubbier than a tumbler pin: it
+	 * is seen end-on, and it has to read as a button rather than as a rod. */
+	if (!append_cylinder(&safe_pin, DUNGEON_SAFE_PIN_RADIUS_M, 0.0f, DUNGEON_SAFE_PIN_LENGTH_M,
+						 LOCK_SAFE_PIN_SEGMENTS))
+		return mesh_fail(error, "internal safe pin mesh capacity error");
 
 	/* The pick. Its local origin is the foot of the tip stub, and the stub
 	 * rises from there so the tip meets the UNDERSIDE of the pin it is working
