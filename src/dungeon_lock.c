@@ -53,16 +53,15 @@ void dungeon_pin_tumbler_init(DungeonPinTumbler *lock, uint32_t seed, uint32_t p
 	*lock = (DungeonPinTumbler){0};
 	lock->pin_count = clamp_count(pin_count, 2u, DUNGEON_LOCK_MAX_PINS);
 	LockRng rng = lock_rng_create(seed, DUNGEON_LOCK_DOMAIN_PINS);
-	bool trivial = true;
-	while (trivial)
-	{
-		for (uint32_t pin = 0; pin < lock->pin_count; ++pin)
-		{
-			lock->target[pin] = (uint8_t)lock_rng_index(&rng, DUNGEON_LOCK_PIN_STATES);
-			if (lock->target[pin] != 0u)
-				trivial = false;
-		}
-	}
+	/* Every target is at least one step up, so no pin is ever already sitting
+	 * on its target when the lock opens. Pins start at zero and a pin that is
+	 * set is locked in place, so a zero target would hand the player a pin they
+	 * can neither move nor need to -- a dead bore in the middle of the puzzle.
+	 * Drawing from [1, states) rather than re-rolling the whole set until one
+	 * pin is non-zero also makes this exact by construction: the old rule only
+	 * guaranteed that SOME pin needed work. */
+	for (uint32_t pin = 0; pin < lock->pin_count; ++pin)
+		lock->target[pin] = (uint8_t)(1u + lock_rng_index(&rng, DUNGEON_LOCK_PIN_STATES - 1u));
 }
 
 void dungeon_pin_tumbler_move(DungeonPinTumbler *lock, int direction)

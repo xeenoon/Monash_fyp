@@ -46,8 +46,10 @@ typedef struct
 	bool solved;
 } DungeonVaultDial;
 
-/* Every pin starts at 0, so a target of all zeroes would be solved on sight;
- * generation re-rolls until at least one pin is off zero. */
+/* Every pin starts at height 0 and every target is at least 1, so every pin has
+ * to be moved. A pin already on its target would be locked in place from the
+ * first frame (see dungeon_pin_tumbler_adjust) and read as a bore the player
+ * cannot touch. */
 void dungeon_pin_tumbler_init(DungeonPinTumbler *lock, uint32_t seed, uint32_t pin_count);
 
 /* Clamped, matching the source's Math.Clamp -- moving off either end is a
@@ -64,9 +66,8 @@ bool dungeon_pin_tumbler_pin_set(const DungeonPinTumbler *lock, uint32_t pin);
  * A pin that has reached its target is LOCKED and ignores this: it has dropped
  * into place and cannot be knocked back out. That is what keeps the puzzle a
  * short, monotonic search -- work one pin until it sets, move to the next --
- * rather than a state you can undo by leaning on a key. It also means a pin
- * whose target is its resting position is set before the player touches
- * anything, which reads correctly: it is already seated in its bore. */
+ * rather than a state you can undo by leaning on a key. Generation guarantees
+ * no pin starts on its target, so every bore is one the player has to work. */
 void dungeon_pin_tumbler_adjust(DungeonPinTumbler *lock, int direction);
 
 /* All-or-nothing against the target. Sets and returns `solved`. */

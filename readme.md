@@ -65,7 +65,7 @@ and the movement keys drive the puzzle instead of the player:
 
 | Lock | Controls |
 |------|----------|
-| Pin tumbler (bores below the lock casing) | **A**/**D** or left/right move the pick between pins, **W**/**S** or up/down raise or lower the one it is under, **Enter**/**Space** tries the lock. Nothing marks the answer: raise a pin until it visibly sets back into its bore. A set pin is locked in place and stops responding, so work one pin at a time and progress is never lost. |
+| Pin tumbler (bores below the lock casing) | **A**/**D** or left/right move the pick between pins, **W**/**S** or up/down raise or lower the one it is under, **Enter**/**Space** tries the lock. Nothing marks the answer: raise a pin until it visibly sets back into its bore. A set pin is locked in place and stops responding, so work one pin at a time and progress is never lost. No pin ever starts on its target -- every bore needs working. |
 | Safe dial (disc below the lock casing) | **Hold** **A**/**D** or left/right to turn the dial, either way; it ticks round under a red index pin. The pin flashes when the tick under it is the number the combination wants next. **Enter**/**Space** while it is flashing banks that number and you go looking for the next. Press it while the pin is dark and the whole combination resets. Turning is free -- confirming is the only risk. |
 
 Every lock's answer is seeded per door from `DUNGEON_SEED`, so no two doors in a

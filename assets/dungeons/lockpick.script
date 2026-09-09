@@ -28,12 +28,11 @@ capture lockpick_02_facing_pin_tumbler.png
 # the selection was on -- not by looking at the picture.
 expect pin_selected 0
 expect pin_height 0 0
+# No pin may start on its target: every bore is one the player has to work.
+expect all_pins_free
 press right
 wait 0.1
 expect pin_selected 1
-# Pin 1 of this seed's first door starts free with a target two steps up. If a
-# generator change ever makes it start set, this fails loudly rather than
-# quietly asserting nothing about the keys below.
 expect pin_free 1
 press up
 wait 0.1

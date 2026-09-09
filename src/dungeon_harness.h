@@ -51,6 +51,7 @@
  *   expect pin_height <n> <value> a pin's slot, so key input is proved not eyeballed
  *   expect pin_locked <n> | pin_free <n>
  *                                 whether a pin has set and stopped responding
+ *   expect all_pins_free          no pin is set yet -- every bore needs working
  *   expect dial_progress <n>      numbers of the combination banked so far
  *   expect dial_pin_lit | dial_pin_dark
  *                                 whether the red index pin is flashing

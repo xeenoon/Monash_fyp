@@ -229,6 +229,17 @@ static void run_expect(DungeonHarness *harness, DungeonScene *scene, const Dunge
 		check(harness, degrees <= tolerance, "expect aimed +/-%.1f deg (off by %.2f, range %.2f m)",
 			  (double)tolerance, (double)degrees, (double)length);
 	}
+	else if (!strcmp(what, "all_pins_free"))
+	{
+		bool picking = session->phase == DUNGEON_PHASE_PIN_TUMBLER;
+		const DungeonPinTumbler *pins =
+			picking ? &session->doors[session->focused_door].pins : NULL;
+		uint32_t set_count = 0;
+		for (uint32_t pin = 0; pins && pin < pins->pin_count; ++pin)
+			set_count += dungeon_pin_tumbler_pin_set(pins, pin) ? 1u : 0u;
+		check(harness, picking && set_count == 0u, "expect all_pins_free (%u of %u already set)",
+			  set_count, pins ? pins->pin_count : 0u);
+	}
 	else if (!strcmp(what, "pin_locked") || !strcmp(what, "pin_free"))
 	{
 		uint32_t index = (uint32_t)atoi(rest);

@@ -77,15 +77,20 @@ static void a_set_pin_is_locked_in_place(void)
 	dungeon_pin_tumbler_move(&lock, 1);
 	assert(lock.selected == 1u);
 
-	/* A pin whose target is its resting position starts out set, and is
-	 * therefore locked from the first frame. */
-	DungeonPinTumbler resting = {0};
-	dungeon_pin_tumbler_init(&resting, 7u, 3u);
-	resting.target[0] = 0u;
-	resting.selected = 0u;
-	assert(dungeon_pin_tumbler_pin_set(&resting, 0u));
-	dungeon_pin_tumbler_adjust(&resting, 1);
-	assert(resting.heights[0] == 0u);
+	/* Generation never hands out a pin that is already on its target, across
+	 * every pin count and a wide sweep of seeds -- so no bore is ever locked
+	 * before the player has touched it. */
+	for (uint32_t seed = 1u; seed <= 400u; ++seed)
+		for (uint32_t count = 2u; count <= DUNGEON_LOCK_MAX_PINS; ++count)
+		{
+			DungeonPinTumbler fresh = {0};
+			dungeon_pin_tumbler_init(&fresh, seed, count);
+			for (uint32_t pin = 0; pin < fresh.pin_count; ++pin)
+			{
+				assert(fresh.heights[pin] == 0u);
+				assert(!dungeon_pin_tumbler_pin_set(&fresh, pin));
+			}
+		}
 
 	/* And with every pin set the lock opens -- locking cannot strand the
 	 * player in a state that no longer submits. */
@@ -108,15 +113,15 @@ static void pin_targets_are_seeded_never_trivial_and_all_or_nothing(void)
 	{
 		DungeonPinTumbler lock = {0};
 		dungeon_pin_tumbler_init(&lock, seed, 3u);
-		/* Every pin starts at 0, so an all-zero target would be solved before
-		 * the player touched anything. */
-		bool any_nonzero = false;
+		/* EVERY pin has to be moved. Pins start at 0 and a set pin is locked in
+		 * place, so a zero target would be a bore the player can neither move
+		 * nor needs to. */
 		for (uint32_t pin = 0; pin < lock.pin_count; ++pin)
 		{
+			assert(lock.target[pin] >= 1u);
 			assert(lock.target[pin] < DUNGEON_LOCK_PIN_STATES);
-			any_nonzero = any_nonzero || lock.target[pin] != 0u;
+			assert(!dungeon_pin_tumbler_pin_set(&lock, pin));
 		}
-		assert(any_nonzero);
 		assert(!dungeon_pin_tumbler_submit(&lock));
 	}
 
