@@ -57,6 +57,12 @@ void dungeon_field_keep_largest_component(DungeonField *field, float iso, Dungeo
 bool dungeon_field_bfs_farthest(const DungeonField *field, float iso, DungeonPoint start_world,
 								DungeonPoint *out_farthest);
 
+/* Breadth-first search from start_world to goal_world over open corners.
+   Returns true if goal is reachable, false otherwise. On success, out_initial_direction
+   receives the normalized direction of the first step away from start_world toward goal. */
+bool dungeon_field_bfs_direction(const DungeonField *field, float iso, DungeonPoint start_world,
+								  DungeonPoint goal_world, DungeonPoint *out_initial_direction);
+
 /* Two-pass chamfer distance transform (metres) from every corner to the
  * nearest solid (value < iso) corner; open corners with no solid anywhere in
  * the field read as a large sentinel distance. `out_distance` must have

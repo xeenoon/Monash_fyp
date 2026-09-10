@@ -116,9 +116,10 @@ void main() {
 
     /* Rim fade: blend into the surrounding floor over the outer ~20% of the
        fan radius using the packed radial coordinate, plus a touch of noise
-       so the edge isn't a perfect circle. */
+       so the edge isn't a perfect circle. Ensure minimum alpha for top-down
+       viewing where fresnel is at its minimum. */
     float rim_noise = dungeon_fbm(world_xz * 3.0) * 0.08;
-    float alpha = (1.0 - smoothstep(0.8 + rim_noise, 1.0 + rim_noise, uv.x)) * fresnel;
+    float alpha = (1.0 - smoothstep(0.8 + rim_noise, 1.0 + rim_noise, uv.x)) * max(fresnel, 0.15);
 
     out_color = vec4(final_color, alpha);
     vec2 current_uv = current_clip.xy / current_clip.w * 0.5 + 0.5;

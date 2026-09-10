@@ -12,7 +12,7 @@ The blob format (little-endian, written by tools/dungeon_cave_dump.c):
 
 Field values render as grayscale (white = open floor, black = rock); spawn is
 a green dot, exit a blue dot, puddles translucent cyan discs, and each locked
-doorway the blocker segment it seals (amber = pin tumbler, magenta = safe).
+doorway the blocker segment it seals (amber = pin tumbler, magenta = safe, cream = prism).
 This is how layouts get inspected -- never by screenshotting the
 running game.
 """
@@ -64,7 +64,7 @@ def render(cave, scale=4):
         px, pz = px * scale, pz * scale
         r = radius / cave["cell_size"] * scale
         draw.ellipse([px - r, pz - r, px + r, pz + r], fill=(60, 160, 220, 140))
-    lock_colors = {1: (240, 176, 60, 255), 2: (222, 96, 220, 255)}
+    lock_colors = {1: (240, 176, 60, 255), 2: (222, 96, 220, 255), 3: (235, 224, 187, 255)}
     for ax, az, bx, bz, lock in cave["doors"]:
         pax, paz = world_to_pixel(cave, ax, az)
         pbx, pbz = world_to_pixel(cave, bx, bz)

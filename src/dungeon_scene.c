@@ -26,6 +26,8 @@ static const char *const ALBEDO_PATHS[DUNGEON_MESH_BATCH_COUNT] = {
 	/* The door leaf borrows the exit's medieval-wood set: it is the only wood
 	 * material checked in, and it is exactly what a dungeon door wants. */
 	[DUNGEON_MESH_DOOR] = DUNGEON_TEXTURE_DIR "/exit_albedo.jpg",
+	[DUNGEON_MESH_PRISM_BOARD] = DUNGEON_TEXTURE_DIR "/exit_albedo.jpg",
+	[DUNGEON_MESH_PRISM] = DUNGEON_TEXTURE_DIR "/exit_albedo.jpg",
 	/* Aged metal on the STRUCTURE only -- casing, housing, bores, safe face. The
 	 * READOUTS (pins, springs, shear marks) stay untextured on purpose:
 	 * mesh.frag multiplies the albedo sample by draw.geometry.rgb, so a tint
@@ -456,6 +458,140 @@ static void append_safe_pins_draws(DungeonScene *scene, uint32_t index, bool foc
 	}
 }
 
+#define PRISM_BOARD_WIDTH .78f
+
+/* Local XY is screen-right/up, +Z out of the door. Scaling is used only for
+ * flat quads; crystal transforms remain rigid for analytic refraction. */
+static LocalToWorldTransform prism_transform(WorldPosition position, DungeonPoint across,
+											 DungeonPoint normal, float angle, float sx, float sy)
+{
+	LocalToWorldTransform t = {.translation = position};
+	float c = cosf(angle), s = sinf(angle);
+	t.rotation[0][0] = across.x * c * sx;
+	t.rotation[0][1] = s * sx;
+	t.rotation[0][2] = across.z * c * sx;
+	t.rotation[1][0] = -across.x * s * sy;
+	t.rotation[1][1] = c * sy;
+	t.rotation[1][2] = -across.z * s * sy;
+	t.rotation[2][0] = normal.x;
+	t.rotation[2][2] = normal.z;
+	return t;
+}
+static void prism_draw(DungeonScene *scene, DungeonMeshBatchKind mesh,
+					   LocalToWorldTransform transform, WorldPosition camera, int mode, float r,
+					   float g, float b, float bx, float by, float angle, bool lit, bool rotating,
+					   RendererDraw *out, uint32_t *count, uint32_t capacity)
+{
+	uint32_t before = *count;
+	push_instance(scene, mesh, transform, camera, r, g, b, .2f, 0, out, count, capacity);
+	if (*count == before)
+		return;
+	RendererDraw *draw = &out[*count - 1];
+	draw->pipeline = mode == 1	 ? RENDERER_PIPELINE_DUNGEON_GLASS
+					 : mode == 2 ? RENDERER_PIPELINE_DUNGEON_LIGHT
+					 : mode == 0 ? RENDERER_PIPELINE_DUNGEON_PRISM
+								 : RENDERER_PIPELINE_DUNGEON_BEAM;
+	draw->push.elevation_uv = (vec4s){{bx, by, angle, PRISM_BOARD_WIDTH}};
+	draw->push.material = (vec4s){{(float)mode, lit ? 1.f : 0.f, rotating ? 1.f : 0.f, 0}};
+}
+static void append_prism_draws(DungeonScene *scene, uint32_t index, bool overlays,
+							   WorldPosition camera, RendererDraw *out, uint32_t *count,
+							   uint32_t capacity)
+{
+	const DungeonSession *session = &scene->session;
+	const DungeonPrismPuzzle *p = &session->doors[index].prism;
+	DungeonPoint origin, across, normal;
+	lock_frame(&scene->level, session, index, &origin, &across, &normal);
+	bool focused = session->phase == DUNGEON_PHASE_PRISM && session->focused_door == index;
+	DungeonPrismTrace trace = dungeon_prism_trace(p);
+	float center = DUNGEON_LOCK_CENTRE_Y_M;
+	if (!overlays)
+	{
+		WorldPosition position = lock_point(origin, across, normal, 0, 0, center);
+		prism_draw(
+			scene, DUNGEON_MESH_PRISM_BOARD,
+			prism_transform(position, across, normal, 0, PRISM_BOARD_WIDTH, PRISM_BOARD_WIDTH),
+			camera, 0, 1, 1, 1, 0, 0, 0, false, false, out, count, capacity);
+		return;
+	}
+	for (uint32_t i = 0; i < p->count; ++i)
+	{
+		float x = p->prisms[i].position.x;
+		float y = p->prisms[i].position.y;
+		float turn = (float)p->prisms[i].orientation;
+		if (i == p->selected && p->turn_remaining > 0)
+		{
+			float a = 1.f - p->turn_remaining / DUNGEON_PRISM_TURN_SECONDS;
+			a = a * a * (3.f - 2.f * a);
+			turn += p->turn_direction * a;
+		}
+		float angle = -turn * .01745329252f;
+		WorldPosition position = lock_point(origin, across, normal, x, .015f, center + y);
+		DungeonMeshBatchKind mesh =
+			p->prisms[i].kind == DUNGEON_OPTIC_CONVEX	 ? DUNGEON_MESH_CONVEX_LENS
+			: p->prisms[i].kind == DUNGEON_OPTIC_CONCAVE ? DUNGEON_MESH_CONCAVE_LENS
+														 : DUNGEON_MESH_PRISM;
+		uint32_t before = *count;
+		prism_draw(scene, mesh, prism_transform(position, across, normal, angle, 1, 1), camera, 1,
+				   1, 1, 1, x, y, angle, (trace.lit_mask & (1u << i)) != 0, false, out, count,
+				   capacity);
+		if (*count > before)
+			out[*count - 1].push.material.w = (float)p->prisms[i].kind;
+	}
+	/* Soft fans share exact solver endpoints and continuous widths. They
+	 * enter the scene snapshot before glass refracts them in the final pass. */
+	for (uint32_t i = 0; i < trace.count; ++i)
+	{
+		DungeonPrismSegment segment = trace.segments[i];
+		float ax = segment.a.x, ay = segment.a.y;
+		float bx = segment.b.x, by = segment.b.y;
+		WorldPosition position =
+			lock_point(origin, across, normal, (ax + bx) * .5f, .022f, center + (ay + by) * .5f);
+		prism_draw(scene, DUNGEON_MESH_PRISM_QUAD,
+				   prism_transform(position, across, normal, atan2f(by - ay, bx - ax),
+								   hypotf(bx - ax, by - ay), segment.width_b),
+				   camera, 2, segment.channel == 0 ? 24.f * segment.intensity : 0,
+				   segment.channel == 1 ? 19.f * segment.intensity : 0,
+				   segment.channel == 2 ? 12.f * segment.intensity : 0,
+				   segment.width_a / segment.width_b, 1, 0, false, false, out, count, capacity);
+	}
+	for (uint32_t i = 0; i < p->count; ++i)
+	{
+		float x = p->prisms[i].position.x;
+		float y = p->prisms[i].position.y;
+		bool selected = focused && p->selected == i;
+		WorldPosition position = lock_point(origin, across, normal, x, .063f, center + y);
+		prism_draw(scene, DUNGEON_MESH_PRISM_QUAD,
+				   prism_transform(position, across, normal, 0, .12f, .12f), camera, 3,
+				   selected ? (p->rotating ? .85f : .65f) : .13f,
+				   selected ? (p->rotating ? .58f : .60f) : .11f,
+				   selected ? (p->rotating ? .25f : .46f) : .08f, 0, 0, 0, false,
+				   selected && p->rotating, out, count, capacity);
+	}
+	DungeonPrismPoint glyphs[2] = {p->source, p->key};
+	for (unsigned i = 0; i < 2; ++i)
+	{
+		WorldPosition position =
+			lock_point(origin, across, normal, glyphs[i].x, .027f, center + glyphs[i].y);
+		float angle = i ? p->key_angle : p->source_angle;
+		bool lit = !i || trace.hit_key;
+		prism_draw(scene, DUNGEON_MESH_PRISM_QUAD,
+				   prism_transform(position, across, normal, angle, .085f, .085f), camera,
+				   i ? 4 : 5, lit ? 1.0f : .35f, lit ? .72f : .25f, lit ? .34f : .12f, 0, 0, 0,
+				   false, false, out, count, capacity);
+	} // A live power gauge beside the keyhole. Its fill is current collected
+	// light / required light, and falls immediately when a beam moves away.
+	float gauge_x = fmaxf(-.29f, fminf(.29f, p->key.x));
+	float gauge_y = p->key.y > .27f ? p->key.y - .052f : p->key.y + .052f;
+	WorldPosition gauge = lock_point(origin, across, normal, gauge_x, .067f, center + gauge_y);
+	uint32_t before = *count;
+	prism_draw(scene, DUNGEON_MESH_PRISM_QUAD,
+			   prism_transform(gauge, across, normal, 0, .12f, .016f), camera, 6, 1, .72f, .35f, 0,
+			   0, 0, false, false, out, count, capacity);
+	if (*count > before)
+		out[*count - 1].push.material.z = fminf(trace.key_power / DUNGEON_OPTIC_KEY_POWER, 1.f);
+}
+
 /* Doors and their lock hardware. A door leaf sinks into the floor as it opens
  * rather than swinging: it is exactly as wide as the hallway, so a swung leaf
  * would pass through the corridor wall. Its collider is already gone by then
@@ -484,7 +620,9 @@ static void append_door_draws(DungeonScene *scene, WorldPosition camera, Rendere
 		if (state->open)
 			continue;
 		bool focused = session->phase != DUNGEON_PHASE_EXPLORING && session->focused_door == i;
-		if (door->lock == DUNGEON_LOCK_SAFE_PINS)
+		if (door->lock == DUNGEON_LOCK_PRISM)
+			append_prism_draws(scene, i, false, camera, out, count, capacity);
+		else if (door->lock == DUNGEON_LOCK_SAFE_PINS)
 			append_safe_pins_draws(scene, i, focused, camera, out, count, capacity);
 		else
 			append_pin_tumbler_draws(scene, i, focused, camera, out, count, capacity);
@@ -664,6 +802,12 @@ uint32_t dungeon_scene_draws(DungeonScene *scene, WorldPosition camera_position,
 			.push = puddle_push(&scene->meshes[DUNGEON_MESH_PUDDLE], camera_position),
 			.static_mesh = true,
 			.pipeline = RENDERER_PIPELINE_DUNGEON_PUDDLE};
+	/* Alpha ribbons and glyphs are excluded from the shadow prefix. */
+	for (uint32_t i = 0; i < scene->session.door_count; ++i)
+	{
+		if (!scene->session.doors[i].open && scene->level.doors[i].lock == DUNGEON_LOCK_PRISM)
+			append_prism_draws(scene, i, true, camera_position, out, &draw_count, capacity);
+	}
 	return draw_count;
 }
 

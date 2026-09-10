@@ -37,11 +37,13 @@
  *                                 next and press it, until n more stand driven
  *   select_wrong_pin              move the selection onto a pin the order does
  *                                 NOT want next, ready for a real confirm
+ *   drive_prisms                  solve the prism lock through real Input flags
+ *   expect prism_selected <n> | prism_rotating <0|1> | prism_solved
  *   solve                         fill the focused lock with its solution --
  *                                 proves the gate, not the input path
  *   capture <path.png>            settle two frames, then write the frame
  *   report                        print one line of state
- *   expect phase <exploring|pin|safe>
+ *   expect phase <exploring|pin|safe|prism>
  *   expect facing <tolerance_deg> camera yaw faces the focused lock
  *   expect focus <minimum>        eased focus weight at least this
  *   expect aimed <tolerance_deg>  the camera is actually pointing at the lock

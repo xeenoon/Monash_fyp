@@ -626,7 +626,23 @@ int main(int argc, char *argv[])
 			 * game's GameplayPhase switch does. */
 			if (picking)
 			{
-				if (session->phase == DUNGEON_PHASE_PIN_TUMBLER)
+				if (session->phase == DUNGEON_PHASE_PRISM)
+				{
+					bool turning = session->doors[session->focused_door].prism.rotating;
+					if (input.puzzle_left ||
+						(turning && (input.orbit_yaw < 0 || input.move_right < 0)))
+						dungeon_session_prism_direction(session, DUNGEON_PRISM_WEST);
+					if (input.puzzle_right ||
+						(turning && (input.orbit_yaw > 0 || input.move_right > 0)))
+						dungeon_session_prism_direction(session, DUNGEON_PRISM_EAST);
+					if (input.puzzle_up)
+						dungeon_session_prism_direction(session, DUNGEON_PRISM_NORTH);
+					if (input.puzzle_down)
+						dungeon_session_prism_direction(session, DUNGEON_PRISM_SOUTH);
+					if (input.puzzle_confirm)
+						dungeon_session_prism_confirm(session);
+				}
+				else if (session->phase == DUNGEON_PHASE_PIN_TUMBLER)
 				{
 					if (input.puzzle_left)
 						dungeon_session_move_selection(session, -1);
@@ -639,7 +655,7 @@ int main(int argc, char *argv[])
 					if (input.puzzle_confirm)
 						dungeon_session_confirm(session);
 				}
-				else
+				else if (session->phase == DUNGEON_PHASE_SAFE_PINS)
 				{
 					/* The safe's face pins: left and right walk the selection
 					 * along the row, confirm presses whichever pin it is on.

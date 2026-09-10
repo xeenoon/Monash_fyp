@@ -696,9 +696,9 @@ bool dungeon_cave_generate(const DungeonCaveParams *params, DungeonCaveResult *o
 		};
 		if (!door_is_chokepoint(&out->field, overlay, out->spawn, out->exit, &door))
 			continue; /* a pocket or a loop hallway already routes around it */
-		/* Mirrors the source's DungeonNumber % 2 split between the two locks. */
-		door.lock = (out->door_count % 2u) == 0u ? DUNGEON_LOCK_PIN_TUMBLER
-												 : DUNGEON_LOCK_SAFE_PINS;
+		const DungeonLockKind lock_kinds[] = {DUNGEON_LOCK_PIN_TUMBLER, DUNGEON_LOCK_SAFE_PINS,
+											  DUNGEON_LOCK_PRISM};
+		door.lock = lock_kinds[out->door_count % 3u];
 		out->doors[out->door_count++] = door;
 	}
 

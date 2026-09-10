@@ -68,6 +68,8 @@ and the movement keys drive the puzzle instead of the player:
 | Pin tumbler (bores below the lock casing) | **A**/**D** or left/right move the pick between pins, **W**/**S** or up/down raise or lower the one it is under, **Enter**/**Space** tries the lock. Nothing marks the answer: raise a pin until it visibly sets back into its bore. A set pin is locked in place and stops responding, so work one pin at a time and progress is never lost. No pin ever starts on its target -- every bore needs working. |
 | Safe (round face below the lock casing) | Four pins stand in a row on the face, and there is a hidden order to press them in. **A**/**D** or left/right walk the selection along the row, which wraps; **Enter**/**Space** presses the pin it is on. Press the one the order wants next and it drives forward out of the face toward you and stays there. Press any other -- including one already driven -- and every pin springs back flush and the order starts again. Nothing marks the answer: a pin driving forward is the only tell. Moving is free -- pressing is the only risk. |
 
+| Optical lock (cracked wooden board) | **Arrow keys** choose an optic; **Enter**/**Space** selects it. Tap **left/right** for one-degree turns or hold to rotate; **Enter** releases it. Route a parallel light bundle through scattered prisms and convex/concave lenses, concentrating enough light into the keyhole to fill its power meter. **Q/E** leaves the board and keeps your rotations. |
+
 Every lock's answer is seeded per door from `DUNGEON_SEED`, so no two doors in a
 level share a combination and no two levels repeat.
 
@@ -104,6 +106,17 @@ the lock; drives the pins with real key presses and asserts their values;
 solves each lock; and asserts the player then crosses to the far side of the
 gate. It leaves `lockpick_*.png` captures behind as evidence. The command set
 is documented at the top of [`src/dungeon_harness.h`](src/dungeon_harness.h).
+
+The third lock has a separate input-driven test:
+
+```sh
+TERRAIN_SCENE=dungeon DUNGEON_SEED=7 \
+  DUNGEON_SCRIPT=assets/dungeons/prism.script ./build/terrain_renderer
+```
+
+It checks navigation/rotation modes, leaving and re-entering, solves through
+keyboard input, and verifies the opened door can be crossed. Captures go to
+`/tmp/prism_board.png`, `/tmp/prism_rotating.png`, and `/tmp/prism_solved.png`.
 
 The four CC0 dungeon PBR materials are checked in for offline use. Their
 source pages, physical scales, and checksums are recorded in

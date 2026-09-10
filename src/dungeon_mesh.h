@@ -12,22 +12,27 @@ typedef enum
 	DUNGEON_MESH_EXIT,
 	DUNGEON_MESH_PLAYER,
 	DUNGEON_MESH_PUDDLE, /* untextured; radial fade packed into texcoord.x */
-	DUNGEON_MESH_MOSS, /* static bent fronds, real leaf silhouettes */
+	DUNGEON_MESH_MOSS,	 /* static bent fronds, real leaf silhouettes */
 	/* The four below are UNIT meshes in local coordinates, built once and
 	 * drawn once per instance with their own transform -- the same pattern the
 	 * torches use. They are the only dungeon geometry that moves, so they can
 	 * never be baked into a level-space batch. */
-	DUNGEON_MESH_DOOR,		 /* one leaf, anchored at one end of its blocker */
+	DUNGEON_MESH_DOOR, /* one leaf, anchored at one end of its blocker */
 	/* The lock is mounted on the door face and read head-on, so all of it is
 	 * built standing in the XY plane rather than lying on the floor. */
-	DUNGEON_MESH_LOCK_BODY,	   /* the lock casing itself, above the mechanism */
-	DUNGEON_MESH_LOCK_HOUSING, /* cutaway panel below the casing */
-	DUNGEON_MESH_LOCK_CHANNEL, /* one pin's bore through the housing */
-	DUNGEON_MESH_LOCK_SPRING,  /* one coil of the spring above a pin */
-	DUNGEON_MESH_LOCK_PIN,	   /* one pin; it RISES in its bore */
+	DUNGEON_MESH_LOCK_BODY,		/* the lock casing itself, above the mechanism */
+	DUNGEON_MESH_LOCK_HOUSING,	/* cutaway panel below the casing */
+	DUNGEON_MESH_LOCK_CHANNEL,	/* one pin's bore through the housing */
+	DUNGEON_MESH_LOCK_SPRING,	/* one coil of the spring above a pin */
+	DUNGEON_MESH_LOCK_PIN,		/* one pin; it RISES in its bore */
 	DUNGEON_MESH_LOCK_SAFE_PIN, /* one pin on the safe's face; it DRIVES forward */
-	DUNGEON_MESH_LOCK_PICK,	   /* the pick, swung to whichever pin is selected */
-	DUNGEON_MESH_LOCK_FACE,	   /* the safe's face plate */
+	DUNGEON_MESH_LOCK_PICK,		/* the pick, swung to whichever pin is selected */
+	DUNGEON_MESH_LOCK_FACE,		/* the safe's face plate */
+	DUNGEON_MESH_PRISM_BOARD,	/* cracked planks with thickness and chipped ends */
+	DUNGEON_MESH_PRISM_QUAD,	/* XY unit quad: optical board, ribbons, glyphs */
+	DUNGEON_MESH_PRISM,			/* beveled right-angle crystal */
+	DUNGEON_MESH_CONVEX_LENS,
+	DUNGEON_MESH_CONCAVE_LENS,
 	DUNGEON_MESH_BATCH_COUNT
 } DungeonMeshBatchKind;
 

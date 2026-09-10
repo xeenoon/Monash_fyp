@@ -68,12 +68,27 @@ bool dungeon_session_create(DungeonSession *session, const DungeonLevel *level)
 		 * variety from the order they have to be pressed in. */
 		dungeon_pin_tumbler_init(&state->pins, door->seed, 3u + (door->seed & 1u));
 		dungeon_safe_pins_init(&state->safe, door->seed);
+		dungeon_prism_init(&state->prism, door->seed);
 		/* Put the lock hardware on the side the player approaches from, so the
-		 * first door met is never locked from behind. */
+		 * first door met is never locked from behind. Use pathfinding to find the
+		 * actual approach direction through the dungeon rather than a straight line. */
 		float normal_x = cosf(door->yaw), normal_z = sinf(door->yaw);
-		float to_spawn = (level->spawn.x - door->center.x) * normal_x +
-						 (level->spawn.z - door->center.z) * normal_z;
-		state->hardware_side = to_spawn < 0.0f ? -1.0f : 1.0f;
+		DungeonPoint approach_direction;
+		if (dungeon_field_bfs_direction(&level->field, 0.5f, level->spawn, door->center,
+										&approach_direction))
+		{
+			/* approach_direction points FROM spawn TOWARD door. Negate it to get the
+			 * direction the player is coming FROM (like the original spawn-to-door check). */
+			float from_spawn = -(approach_direction.x * normal_x + approach_direction.z * normal_z);
+			state->hardware_side = from_spawn < 0.0f ? -1.0f : 1.0f;
+		}
+		else
+		{
+			/* Fallback to straight-line direction if pathfinding fails. */
+			float to_spawn = (level->spawn.x - door->center.x) * normal_x +
+							 (level->spawn.z - door->center.z) * normal_z;
+			state->hardware_side = to_spawn < 0.0f ? -1.0f : 1.0f;
+		}
 	}
 	if (!rebuild_blockers(session))
 	{
@@ -125,7 +140,12 @@ bool dungeon_session_interact(DungeonSession *session, DungeonPoint player)
 		return false;
 	}
 	session->focused_door = door;
-	if (session->level->doors[door].lock == DUNGEON_LOCK_SAFE_PINS)
+	if (session->level->doors[door].lock == DUNGEON_LOCK_PRISM)
+	{
+		session->phase = DUNGEON_PHASE_PRISM;
+		session->doors[door].prism.rotating = false;
+	}
+	else if (session->level->doors[door].lock == DUNGEON_LOCK_SAFE_PINS)
 	{
 		session->phase = DUNGEON_PHASE_SAFE_PINS;
 		session->status = DUNGEON_STATUS_ENTER_THE_SEQUENCE;
@@ -154,6 +174,25 @@ static void unlock_focused_door(DungeonSession *session)
 	rebuild_blockers(session);
 	session->phase = DUNGEON_PHASE_EXPLORING;
 	session->status = DUNGEON_STATUS_LOCK_OPEN;
+}
+
+void dungeon_session_prism_direction(DungeonSession *session, DungeonPrismDirection direction)
+{
+	if (!session || session->phase != DUNGEON_PHASE_PRISM)
+		return;
+	DungeonPrismPuzzle *p = &session->doors[session->focused_door].prism;
+	if (!p->rotating)
+		dungeon_prism_move(p, direction);
+	else if (direction == DUNGEON_PRISM_EAST)
+		dungeon_prism_turn(p, 1);
+	else if (direction == DUNGEON_PRISM_WEST)
+		dungeon_prism_turn(p, -1);
+}
+
+void dungeon_session_prism_confirm(DungeonSession *session)
+{
+	if (session && session->phase == DUNGEON_PHASE_PRISM)
+		dungeon_prism_confirm(&session->doors[session->focused_door].prism);
 }
 
 void dungeon_session_move_selection(DungeonSession *session, int direction)
@@ -222,6 +261,23 @@ void dungeon_session_update(DungeonSession *session, float dt)
 	for (uint32_t i = 0; i < session->door_count; ++i)
 	{
 		DungeonDoorState *state = &session->doors[i];
+		dungeon_prism_update(&state->prism, dt);
+		if (state->prism.solved && !state->open)
+			state->prism_solved_time += dt;
+		if (state->prism.solved && !state->open && state->prism_solved_time >= .45f)
+		{
+			uint32_t previous_focus = session->focused_door;
+			DungeonPhase previous_phase = session->phase;
+			DungeonStatus previous_status = session->status;
+			session->focused_door = i;
+			unlock_focused_door(session);
+			if (previous_focus != i)
+			{
+				session->focused_door = previous_focus;
+				session->phase = previous_phase;
+				session->status = previous_status;
+			}
+		}
 		float target = state->open ? 1.0f : 0.0f;
 		state->swing += (target - state->swing) * blend;
 		state->safe_shake -= state->safe_shake * shake_decay;
@@ -254,6 +310,21 @@ void dungeon_session_status_text(const DungeonSession *session, char *out, size_
 		session->focused_door < session->door_count ? &session->doors[session->focused_door] : NULL;
 	switch (session->phase)
 	{
+	case DUNGEON_PHASE_PRISM:
+	{
+		const DungeonPrism *optic = state ? &state->prism.prisms[state->prism.selected] : NULL;
+		const char *kind = !optic || optic->kind == DUNGEON_OPTIC_PRISM ? "PRISM"
+						   : optic->kind == DUNGEON_OPTIC_CONVEX		? "CONVEX LENS (FOCUS)"
+																		: "CONCAVE LENS (SPREAD)";
+		snprintf(out, capacity,
+				 "Dungeon | OPTICS | %s %u/%u | %u deg | LIGHT %.0f%% | %s | Q/E: leave", kind,
+				 state ? state->prism.selected + 1 : 0, state ? state->prism.count : 0,
+				 optic ? optic->orientation : 0,
+				 state ? 100.0 * fminf(state->prism.key_power / DUNGEON_OPTIC_KEY_POWER, 1.f) : 0.0,
+				 state && state->prism.rotating ? "LEFT/RIGHT: turn (hold to rotate) ENTER: release"
+												: "ARROWS: choose ENTER: select LIGHT THE KEY");
+		return;
+	}
 	case DUNGEON_PHASE_PIN_TUMBLER:
 	{
 		char heights[DUNGEON_LOCK_MAX_PINS + 1u] = {0};

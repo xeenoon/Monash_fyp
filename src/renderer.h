@@ -131,9 +131,13 @@ typedef struct
 typedef enum
 {
 	RENDERER_PIPELINE_AUTO = 0,
-	RENDERER_PIPELINE_DUNGEON_MOSS, /* opaque leaf geometry, two-sided foliage lighting */
+	RENDERER_PIPELINE_DUNGEON_PRISM,
+	RENDERER_PIPELINE_DUNGEON_GLASS,   /* scene refraction, drawn after the scene snapshot */
+	RENDERER_PIPELINE_DUNGEON_LIGHT, /* additive radiance for sampled optical rays */
+	RENDERER_PIPELINE_DUNGEON_BEAM,	   /* alpha blend; no depth writes or shadow draws */
+	RENDERER_PIPELINE_DUNGEON_MOSS,	   /* opaque leaf geometry, two-sided foliage lighting */
 	RENDERER_PIPELINE_DUNGEON_SURFACE, /* mesh.frag + textured moss */
-	RENDERER_PIPELINE_DUNGEON_PUDDLE,	/* alpha-blended, depth-write off */
+	RENDERER_PIPELINE_DUNGEON_PUDDLE,  /* alpha-blended, depth-write off */
 } RendererPipelineKind;
 
 typedef struct
@@ -218,10 +222,13 @@ typedef struct Renderer
 	Texture terrain_micro_ormh;
 	VkDescriptorSet fallback_material_set;
 	VkDescriptorSet display_set;
+	VkDescriptorSet refraction_set;
+	Texture refraction_color, refraction_depth;
 	VkDescriptorSet temporal_set[2];
 	VkDescriptorSet atmosphere_set;
 
 	VkRenderPass scene_render_pass;
+	VkRenderPass glass_render_pass; /* compatible scene pass, LOAD instead of CLEAR */
 	VkRenderPass display_render_pass;
 	VkRenderPass composite_render_pass;
 	VkRenderPass taa_render_pass;
@@ -232,6 +239,10 @@ typedef struct Renderer
 	VkPipelineLayout atmosphere_pipeline_layout;
 	VkPipeline terrain_pipeline;
 	VkPipeline mesh_pipeline; /* UV-mapped PBR static-mesh and dungeon pipeline */
+	VkPipeline dungeon_prism_pipeline;
+	VkPipeline dungeon_glass_pipeline;
+	VkPipeline dungeon_beam_pipeline;
+	VkPipeline dungeon_light_pipeline;
 	VkPipeline dungeon_moss_pipeline;
 	VkPipeline dungeon_surface_pipeline; /* mesh.vert + dungeon_surface.frag (moss) */
 	VkPipeline dungeon_puddle_pipeline;  /* mesh.vert + dungeon_puddle.frag (alpha-blended) */

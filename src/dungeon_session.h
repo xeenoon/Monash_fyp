@@ -2,6 +2,7 @@
 
 #include "dungeon_level.h"
 #include "dungeon_lock.h"
+#include "dungeon_prism.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -34,7 +35,8 @@ typedef enum
 {
 	DUNGEON_PHASE_EXPLORING,
 	DUNGEON_PHASE_PIN_TUMBLER,
-	DUNGEON_PHASE_SAFE_PINS
+	DUNGEON_PHASE_SAFE_PINS,
+	DUNGEON_PHASE_PRISM
 } DungeonPhase;
 
 typedef enum
@@ -55,6 +57,8 @@ typedef struct
 	float swing; /* 0 shut .. 1 fully swung; eased, so opening reads as motion */
 	DungeonPinTumbler pins;
 	DungeonSafePins safe;
+	DungeonPrismPuzzle prism;
+	float prism_solved_time; /* hold the lit key briefly before the door opens */
 	/* The safe's face, as an animation rather than as state. `safe_push[i]` is
 	 * how far pin i has travelled toward the player -- 0 flush with the face,
 	 * 1 fully driven -- eased here so the renderer gets the motion without
@@ -101,6 +105,9 @@ uint32_t dungeon_session_nearest_door(const DungeonSession *session, DungeonPoin
  * phase. Returns whether a lock was entered. */
 bool dungeon_session_interact(DungeonSession *session, DungeonPoint player);
 void dungeon_session_cancel(DungeonSession *session);
+/* Direction keys browse, or rotate on left/right after Enter. */
+void dungeon_session_prism_direction(DungeonSession *session, DungeonPrismDirection direction);
+void dungeon_session_prism_confirm(DungeonSession *session);
 
 /* Pin tumbler only: pick a pin, then raise or lower it. */
 void dungeon_session_move_selection(DungeonSession *session, int direction);

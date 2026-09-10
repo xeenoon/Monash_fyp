@@ -1,0 +1,33 @@
+# Run with TERRAIN_SCENE=dungeon DUNGEON_SEED=7 DUNGEON_SCRIPT=assets/dungeons/prism.script
+teleport_door 2
+press interact
+wait 1.5
+expect phase prism
+expect focus 0.98
+expect facing 3.0
+expect aimed 2.0
+expect prism_selected 0
+expect prism_rotating 0
+capture /tmp/prism_board.png
+press confirm
+expect prism_rotating 1
+press left
+wait 0.2
+capture /tmp/prism_rotating.png
+press confirm
+expect prism_rotating 0
+press cancel
+expect phase exploring
+press interact
+wait 0.6
+expect phase prism
+expect prism_rotating 0
+drive_prisms
+expect prism_solved
+capture /tmp/prism_solved.png
+wait 1.0
+expect phase exploring
+expect door_open 2
+walk_through 2 1.2
+expect past_door 2
+quit

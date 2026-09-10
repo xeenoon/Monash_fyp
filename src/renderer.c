@@ -519,16 +519,17 @@ static void create_descriptors(Renderer *r)
 		 .descriptorCount = MAX_FRAMES_IN_FLIGHT * 2u /* frame UBO + environment UBO */},
 		{.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		 .descriptorCount =
-			 MAX_TEXTURE_SETS * 6u + MAX_FRAMES_IN_FLIGHT * 2u + 20u + ENV_CUBE_MIPS},
+			 MAX_TEXTURE_SETS * 6u + MAX_FRAMES_IN_FLIGHT * 2u + 26u + ENV_CUBE_MIPS},
 		{.type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = 5u + ENV_CUBE_MIPS},
-		{.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = MAX_FRAMES_IN_FLIGHT * 2u + 2u}};
+		{.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+		 .descriptorCount = MAX_FRAMES_IN_FLIGHT * 2u + 2u}};
 	uint32_t pool_size_count = 4;
-	VkDescriptorPoolCreateInfo pool = {
-		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-		.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
-		.poolSizeCount = pool_size_count,
-		.pPoolSizes = pool_sizes,
-		.maxSets = MAX_FRAMES_IN_FLIGHT + MAX_TEXTURE_SETS + 4u + ENV_CUBE_MIPS};
+	VkDescriptorPoolCreateInfo pool = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+									   .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
+									   .poolSizeCount = pool_size_count,
+									   .pPoolSizes = pool_sizes,
+									   .maxSets = MAX_FRAMES_IN_FLIGHT + MAX_TEXTURE_SETS + 5u +
+												  ENV_CUBE_MIPS};
 	VK_CHECK(vkCreateDescriptorPool(r->device, &pool, NULL, &r->descriptor_pool));
 
 	/* One persistently-mapped UBO + set per frame in flight. */
@@ -943,20 +944,27 @@ static void create_scene_render_pass(Renderer *r, VkFormat depth_format)
 		{.srcSubpass = VK_SUBPASS_EXTERNAL,
 		 .dstSubpass = 0,
 		 .srcStageMask =
-			 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+			 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+			 VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
+			 VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
 		 .dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
-						 VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
-		 .srcAccessMask = VK_ACCESS_SHADER_READ_BIT,
+						 VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+						 VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+		 .srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+						  VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
+						  VK_ACCESS_TRANSFER_READ_BIT,
 		 .dstAccessMask =
-			 VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT},
+			 VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
+			 VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT},
 		{.srcSubpass = 0,
 		 .dstSubpass = VK_SUBPASS_EXTERNAL,
 		 .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+						 VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
 						 VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-		 .dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+		 .dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
 		 .srcAccessMask =
 			 VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-		 .dstAccessMask = VK_ACCESS_SHADER_READ_BIT},
+		 .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT},
 	};
 	VkRenderPassCreateInfo info = {.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
 								   .attachmentCount = 3,
@@ -966,6 +974,14 @@ static void create_scene_render_pass(Renderer *r, VkFormat depth_format)
 								   .dependencyCount = 2,
 								   .pDependencies = dependencies};
 	VK_CHECK(vkCreateRenderPass(r->device, &info, NULL, &r->scene_render_pass));
+	// Same formats/subpass/dependencies: pipelines and framebuffer are compatible.
+	// Preserve colour, motion and depth while drawing refractive surfaces.
+	for (unsigned i = 0; i < 3; ++i)
+	{
+		attachments[i].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+		attachments[i].initialLayout = attachments[i].finalLayout;
+	}
+	VK_CHECK(vkCreateRenderPass(r->device, &info, NULL, &r->glass_render_pass));
 }
 
 static VkRenderPass create_color_post_render_pass(Renderer *r, uint32_t attachment_count,
@@ -1489,7 +1505,9 @@ static void create_scene_pipeline_ex(Renderer *r, const char *vert_name, const c
 	{
 		blend_attachments[0].blendEnable = VK_TRUE;
 		blend_attachments[0].srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-		blend_attachments[0].dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+		blend_attachments[0].dstColorBlendFactor = !strcmp(frag_name, "dungeon_light.frag")
+													   ? VK_BLEND_FACTOR_ONE
+													   : VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
 		blend_attachments[0].colorBlendOp = VK_BLEND_OP_ADD;
 		blend_attachments[0].srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
 		blend_attachments[0].dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
@@ -1535,6 +1553,11 @@ static void create_scene_pipeline(Renderer *r, const char *vert_name, const char
 
 static void create_terrain_pipeline(Renderer *r)
 {
+	create_scene_pipeline(r, "mesh.vert", "dungeon_prism.frag", &r->dungeon_prism_pipeline);
+	create_scene_pipeline(r, "mesh.vert", "dungeon_glass.frag", &r->dungeon_glass_pipeline);
+	create_scene_pipeline_ex(r, "mesh.vert", "dungeon_prism.frag", &r->dungeon_beam_pipeline, true);
+	create_scene_pipeline_ex(r, "mesh.vert", "dungeon_light.frag", &r->dungeon_light_pipeline,
+							 true);
 	create_scene_pipeline(r, "terrain.vert", "terrain.frag", &r->terrain_pipeline);
 	create_scene_pipeline(r, "mesh.vert", "mesh.frag", &r->mesh_pipeline);
 	create_scene_pipeline(r, "mesh.vert", "dungeon_surface.frag", &r->dungeon_surface_pipeline);
@@ -1783,13 +1806,52 @@ static void create_swapchain(Renderer *r)
 	r->taa_render_pass = create_color_post_render_pass(r, 2, taa_formats);
 	create_terrain_pipeline(r);
 	create_post_pipelines(r);
-	r->hdr_color = texture_create_hdr_target(r->device, r->allocator, r->swapchain_extent.width,
-											 r->swapchain_extent.height);
+	TextureDesc optical_target = {.format = VK_FORMAT_R16G16B16A16_SFLOAT,
+								  .width = r->swapchain_extent.width,
+								  .height = r->swapchain_extent.height,
+								  .mip_levels = 1,
+								  .aspect = VK_IMAGE_ASPECT_COLOR_BIT,
+								  .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+										   VK_IMAGE_USAGE_SAMPLED_BIT |
+										   VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+								  .filter = VK_FILTER_LINEAR,
+								  .address_mode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+								  .create_sampler = true};
+	r->hdr_color = texture_create(r->device, r->allocator, &optical_target);
+	optical_target.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+	r->refraction_color = texture_create(r->device, r->allocator, &optical_target);
+	optical_target.format = depth_format;
+	optical_target.aspect = VK_IMAGE_ASPECT_DEPTH_BIT;
+	optical_target.filter = VK_FILTER_NEAREST;
+	r->refraction_depth = texture_create(r->device, r->allocator, &optical_target);
 	r->motion = texture_create_motion_target(r->device, r->allocator, r->swapchain_extent.width,
 											 r->swapchain_extent.height);
-	r->depth =
-		texture_create_sampled_depth_target(r->device, r->allocator, depth_format,
-											r->swapchain_extent.width, r->swapchain_extent.height);
+	optical_target.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+						   VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+	r->depth = texture_create(r->device, r->allocator, &optical_target);
+	VkDescriptorSetAllocateInfo refract_alloc = {.sType =
+													 VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+												 .descriptorPool = r->descriptor_pool,
+												 .descriptorSetCount = 1,
+												 .pSetLayouts = &r->material_set_layout};
+	VK_CHECK(vkAllocateDescriptorSets(r->device, &refract_alloc, &r->refraction_set));
+	VkDescriptorImageInfo refract_images[2] = {
+		{.sampler = r->refraction_color.sampler,
+		 .imageView = r->refraction_color.view,
+		 .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+		{.sampler = r->refraction_depth.sampler,
+		 .imageView = r->refraction_depth.view,
+		 .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+	VkWriteDescriptorSet refract_writes[2];
+	for (unsigned i = 0; i < 2; ++i)
+		refract_writes[i] =
+			(VkWriteDescriptorSet){.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+								   .dstSet = r->refraction_set,
+								   .dstBinding = i,
+								   .descriptorCount = 1,
+								   .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+								   .pImageInfo = &refract_images[i]};
+	vkUpdateDescriptorSets(r->device, 2, refract_writes, 0, NULL);
 	r->composite_color = texture_create_hdr_target(
 		r->device, r->allocator, r->swapchain_extent.width, r->swapchain_extent.height);
 	for (uint32_t i = 0; i < 2; ++i)
@@ -1964,6 +2026,8 @@ static void destroy_swapchain(Renderer *r)
 #ifdef DEBUG_SHADER_DUMP
 	gpu_buffer_destroy(r->device, r->allocator, &r->shader_dump_buffer);
 #endif
+	renderer_free_material_set(r, r->refraction_set);
+	r->refraction_set = VK_NULL_HANDLE;
 	renderer_free_material_set(r, r->display_set);
 	r->display_set = VK_NULL_HANDLE;
 	for (uint32_t i = 0; i < 2; ++i)
@@ -1985,9 +2049,15 @@ static void destroy_swapchain(Renderer *r)
 	texture_destroy(r->device, r->allocator, &r->depth);
 	texture_destroy(r->device, r->allocator, &r->motion);
 	texture_destroy(r->device, r->allocator, &r->hdr_color);
+	texture_destroy(r->device, r->allocator, &r->refraction_color);
+	texture_destroy(r->device, r->allocator, &r->refraction_depth);
 	vkDestroyPipeline(r->device, r->tone_map_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->taa_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->atmosphere_composite_pipeline, NULL);
+	vkDestroyPipeline(r->device, r->dungeon_prism_pipeline, NULL);
+	vkDestroyPipeline(r->device, r->dungeon_glass_pipeline, NULL);
+	vkDestroyPipeline(r->device, r->dungeon_beam_pipeline, NULL);
+	vkDestroyPipeline(r->device, r->dungeon_light_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->dungeon_puddle_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->dungeon_surface_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->dungeon_moss_pipeline, NULL);
@@ -1997,6 +2067,7 @@ static void destroy_swapchain(Renderer *r)
 	vkDestroyRenderPass(r->device, r->taa_render_pass, NULL);
 	vkDestroyRenderPass(r->device, r->composite_render_pass, NULL);
 	vkDestroyRenderPass(r->device, r->scene_render_pass, NULL);
+	vkDestroyRenderPass(r->device, r->glass_render_pass, NULL);
 	for (uint32_t i = 0; i < r->image_count; ++i)
 		vkDestroyImageView(r->device, r->image_views[i], NULL);
 	vkDestroySwapchainKHR(r->device, r->swapchain, NULL);
@@ -2033,6 +2104,10 @@ void renderer_reload_pipeline(Renderer *r)
 	vkDestroyPipeline(r->device, r->tone_map_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->taa_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->atmosphere_composite_pipeline, NULL);
+	vkDestroyPipeline(r->device, r->dungeon_prism_pipeline, NULL);
+	vkDestroyPipeline(r->device, r->dungeon_glass_pipeline, NULL);
+	vkDestroyPipeline(r->device, r->dungeon_beam_pipeline, NULL);
+	vkDestroyPipeline(r->device, r->dungeon_light_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->dungeon_puddle_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->dungeon_surface_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->dungeon_moss_pipeline, NULL);
@@ -2282,6 +2357,78 @@ static void bind_draw(Renderer *r, VkCommandBuffer command, const RendererDraw *
 	mesh_draw(command, mesh);
 }
 
+/* Freeze the completed background before glass samples it. The source images
+ * return to the layouts expected by the compatible LOAD render pass. Copies
+ * have their own storage, so no attachment is sampled while being written. */
+static void snapshot_refraction(Renderer *r, VkCommandBuffer command)
+{
+	Texture *source[2] = {&r->hdr_color, &r->depth};
+	Texture *copy[2] = {&r->refraction_color, &r->refraction_depth};
+	VkImageMemoryBarrier before[4];
+	for (unsigned i = 0; i < 2; ++i)
+	{
+		VkImageLayout layout = i ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
+								 : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		VkImageAspectFlags aspect = source[i]->aspect;
+		if (i && (source[i]->format == VK_FORMAT_D32_SFLOAT_S8_UINT ||
+				  source[i]->format == VK_FORMAT_D24_UNORM_S8_UINT))
+			aspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
+		before[i * 2] =
+			(VkImageMemoryBarrier){.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+								   .srcAccessMask = i ? VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
+													  : VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+								   .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+								   .oldLayout = layout,
+								   .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+								   .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+								   .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+								   .image = source[i]->image,
+								   .subresourceRange = {aspect, 0, 1, 0, 1}};
+		before[i * 2 + 1] = (VkImageMemoryBarrier){
+			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+			.srcAccessMask =
+				copy[i]->layout == VK_IMAGE_LAYOUT_UNDEFINED ? 0 : VK_ACCESS_SHADER_READ_BIT,
+			.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+			.oldLayout = copy[i]->layout,
+			.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.image = copy[i]->image,
+			.subresourceRange = {aspect, 0, 1, 0, 1}};
+	}
+	vkCmdPipelineBarrier(
+		command,
+		VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+			VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+		VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 4, before);
+	for (unsigned i = 0; i < 2; ++i)
+	{
+		VkImageCopy region = {.srcSubresource = {source[i]->aspect, 0, 0, 1},
+							  .dstSubresource = {copy[i]->aspect, 0, 0, 1},
+							  .extent = {r->swapchain_extent.width, r->swapchain_extent.height, 1}};
+		vkCmdCopyImage(command, source[i]->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+					   copy[i]->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+		VkImageMemoryBarrier *src = &before[i * 2], *dst = &before[i * 2 + 1];
+		src->newLayout = src->oldLayout;
+		src->oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+		src->srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+		src->dstAccessMask =
+			i ? VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+					VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
+			  : VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+		dst->oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+		dst->newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		dst->srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		dst->dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+		copy[i]->layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+	}
+	vkCmdPipelineBarrier(
+		command, VK_PIPELINE_STAGE_TRANSFER_BIT,
+		VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+			VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+		0, 0, NULL, 0, NULL, 4, before);
+}
+
 static void atmosphere_image_barrier(VkCommandBuffer command, Texture *texture,
 									 VkImageLayout old_layout, VkPipelineStageFlags source_stage,
 									 VkAccessFlags source_access,
@@ -2462,8 +2609,14 @@ static void record_commands(Renderer *r, uint32_t image_index, const FrameUnifor
 	vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, r->pipeline_layout, 2, 1,
 							&r->atmosphere_set, 0, NULL);
 	VkPipeline bound_pipeline = VK_NULL_HANDLE;
+	bool have_glass = false;
 	for (uint32_t i = 0; i < draw_count; ++i)
 	{
+		if (draws[i].pipeline == RENDERER_PIPELINE_DUNGEON_GLASS)
+		{
+			have_glass = true;
+			continue;
+		}
 		VkPipeline wanted;
 		switch (draws[i].pipeline)
 		{
@@ -2472,6 +2625,15 @@ static void record_commands(Renderer *r, uint32_t image_index, const FrameUnifor
 			break;
 		case RENDERER_PIPELINE_DUNGEON_SURFACE:
 			wanted = r->dungeon_surface_pipeline;
+			break;
+		case RENDERER_PIPELINE_DUNGEON_PRISM:
+			wanted = r->dungeon_prism_pipeline;
+			break;
+		case RENDERER_PIPELINE_DUNGEON_LIGHT:
+			wanted = r->dungeon_light_pipeline;
+			break;
+		case RENDERER_PIPELINE_DUNGEON_BEAM:
+			wanted = r->dungeon_beam_pipeline;
 			break;
 		case RENDERER_PIPELINE_DUNGEON_PUDDLE:
 			wanted = r->dungeon_puddle_pipeline;
@@ -2488,6 +2650,26 @@ static void record_commands(Renderer *r, uint32_t image_index, const FrameUnifor
 		bind_draw(r, command, &draws[i], &draws[i].push);
 	}
 	vkCmdEndRenderPass(command);
+
+	if (have_glass)
+	{
+		snapshot_refraction(r, command);
+		scene.renderPass = r->glass_render_pass;
+		scene.clearValueCount = 0;
+		scene.pClearValues = NULL;
+		vkCmdBeginRenderPass(command, &scene, VK_SUBPASS_CONTENTS_INLINE);
+		set_viewport_scissor(command, r->swapchain_extent);
+		vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, r->dungeon_glass_pipeline);
+		for (uint32_t i = 0; i < draw_count; ++i)
+		{
+			if (draws[i].pipeline != RENDERER_PIPELINE_DUNGEON_GLASS)
+				continue;
+			RendererDraw glass = draws[i];
+			glass.material_set = r->refraction_set;
+			bind_draw(r, command, &glass, &glass.push);
+		}
+		vkCmdEndRenderPass(command);
+	}
 
 #ifdef DEBUG_SHADER_DUMP
 	/* Make the fragment-shader writes visible to a host read after the fence. */

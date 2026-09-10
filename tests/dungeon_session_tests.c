@@ -298,8 +298,74 @@ static void every_lock_gets_its_own_answer(void)
 	assert(collisions * 8u < trials);
 }
 
+static void prism_opens_only_after_the_beam_reaches_the_key(void)
+{
+	DungeonLevel level = {0};
+	uint32_t door = 0;
+	assert(compile_level_with_lock(DUNGEON_LOCK_PRISM, &level, &door));
+	DungeonSession session = {0};
+	assert(dungeon_session_create(&session, &level));
+	assert(dungeon_session_interact(&session, level.doors[door].center));
+	assert(session.phase == DUNGEON_PHASE_PRISM);
+	DungeonPrismPuzzle *p = &session.doors[door].prism;
+	unsigned orientation = p->prisms[0].orientation;
+	dungeon_session_prism_confirm(&session);
+	dungeon_session_prism_direction(&session, DUNGEON_PRISM_WEST);
+	dungeon_session_cancel(&session);
+	dungeon_session_update(&session, .2f);
+	assert(p->prisms[0].orientation == (orientation + 359) % 360);
+	assert(!session.doors[door].open);
+	assert(dungeon_session_interact(&session, level.doors[door].center));
+	assert(!p->rotating);
+	// Navigate the off-grid graph and turn using the same session API as keys.
+	for (unsigned target = 0; target < p->count && !p->solved; ++target)
+	{
+		for (unsigned tries = 0; p->selected != target && tries < 20; ++tries)
+		{
+			unsigned queue[5], first[5] = {0}, head = 0, tail = 0;
+			bool seen[5] = {false};
+			queue[tail++] = p->selected;
+			seen[p->selected] = true;
+			while (head < tail && !seen[target])
+			{
+				unsigned from = queue[head++];
+				for (unsigned d = 0; d < 4; ++d)
+				{
+					unsigned to = dungeon_prism_neighbor(p, from, d);
+					if (seen[to])
+						continue;
+					seen[to] = true;
+					queue[tail++] = to;
+					first[to] = from == p->selected ? d : first[from];
+				}
+			}
+			assert(seen[target]);
+			dungeon_session_prism_direction(&session, first[target]);
+		}
+		assert(p->selected == target);
+		dungeon_session_prism_confirm(&session);
+		for (unsigned turn = 0;
+			 turn < 360 && !p->solved && p->prisms[target].orientation != p->solution[target];
+			 ++turn)
+		{
+			dungeon_session_prism_direction(&session, DUNGEON_PRISM_EAST);
+			dungeon_session_update(&session, .03f);
+		}
+		if (!p->solved)
+			dungeon_session_prism_confirm(&session);
+	}
+	assert(p->solved && dungeon_prism_trace(p).hit_key);
+	assert(!session.doors[door].open); // visible success hold
+	dungeon_session_update(&session, .5f);
+	assert(session.doors[door].open && session.phase == DUNGEON_PHASE_EXPLORING);
+	assert(!collider_present(&session, level.doors[door].blocker));
+	dungeon_session_destroy(&session);
+	dungeon_level_destroy(&level);
+}
+
 int main(void)
 {
+	prism_opens_only_after_the_beam_reaches_the_key();
 	a_shut_door_blocks_and_a_picked_one_does_not();
 	the_safe_drives_a_pin_on_confirm_and_resets_on_a_wrong_one();
 	locks_are_encountered_one_at_a_time();

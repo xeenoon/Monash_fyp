@@ -28,7 +28,8 @@ typedef struct
 	bool clear_shader_dump; /* C pressed (dump-enabled builds) */
 	bool toggle_auto_exposure; /* E pressed */
 	/* Dungeon lock picking. All edge-triggered: one press is one pin step, one
-	 * safe pin pressed, or one attempt -- holding a key must not walk a lock.
+	 * safe pin pressed, or one attempt. Optical rotation additionally reads
+	 * held arrow/WASD state to repeat one-degree turns.
 	 * The directions fire on the arrows AND on WASD, as the source game does;
 	 * outside a lock they are simply ignored, so they cost the free-fly and
 	 * exploring paths nothing. `interact` shares E with the auto-exposure

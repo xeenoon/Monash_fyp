@@ -11,16 +11,13 @@
 
 #include <stdbool.h>
 
-/* Static batches, one torch's primitives per light, and per doorway either a
- * row of pin bars in their bores or the safe's face with its row of pins.
- * Doors and lock hardware are per-instance draws because they move. */
-/* Per door, whichever lock it carries: the tumbler's casing, housing, and per
- * pin a bore, a pin and -- for the one lock being picked -- its spring coils
- * and the pick; or the safe's casing, face plate and four face pins. The
- * tumbler is the larger of the two, so its count is the budget. */
+/* Static batches, torch primitives and moving door hardware. Reserve enough
+ * per-door draws for the tumbler/safe hardware or the optical board, crystals,
+ * glyphs and the branching tracer's bounded beam segment array. */
 #define DUNGEON_LOCK_SPRING_COILS 7u
 #define DUNGEON_MAX_LOCK_PIECES                                                                    \
-	(2u + DUNGEON_LOCK_MAX_PINS * (3u + DUNGEON_LOCK_SPRING_COILS) + DUNGEON_SAFE_PIN_COUNT)
+	(8u + 2u * DUNGEON_PRISM_MAX + DUNGEON_PRISM_MAX_SEGMENTS +                                    \
+	 DUNGEON_LOCK_MAX_PINS * (3u + DUNGEON_LOCK_SPRING_COILS) + DUNGEON_SAFE_PIN_COUNT)
 #define DUNGEON_MAX_DRAWS                                                                          \
 	(DUNGEON_MESH_BATCH_COUNT + 4u * DUNGEON_MAX_LIGHTS + 1u +                                      \
 	 DUNGEON_MAX_DOORS * (1u + DUNGEON_MAX_LOCK_PIECES))

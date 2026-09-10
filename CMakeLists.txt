@@ -74,7 +74,7 @@ endif()
 # are picked up automatically via the per-shader depfile below, so editing an
 # include rebuilds every dependent shader.
 foreach(SHADER cube.vert cube.frag terrain.vert terrain.frag mesh.vert mesh.frag
-               dungeon_surface.frag dungeon_moss.frag dungeon_puddle.frag shadow.vert
+               dungeon_surface.frag dungeon_moss.frag dungeon_puddle.frag dungeon_prism.frag dungeon_glass.frag dungeon_light.frag shadow.vert
                fullscreen.vert tonemap.frag atmosphere_composite.frag
                temporal_resolve.frag luminance_histogram.comp exposure.comp
                atmosphere_transmittance.comp
@@ -336,6 +336,7 @@ add_library(dungeon_level STATIC
     src/dungeon_lighting.c
     src/dungeon_shadow.c
     src/dungeon_lock.c
+    src/dungeon_prism.c
     src/dungeon_lock_layout.c
     src/dungeon_session.c)
 target_include_directories(dungeon_level PUBLIC src)
@@ -381,6 +382,10 @@ if(BUILD_TESTING)
     add_executable(dungeon_cave_tests tests/dungeon_cave_tests.c)
     target_link_libraries(dungeon_cave_tests PRIVATE dungeon_level m)
     add_test(NAME dungeon_cave_generation COMMAND dungeon_cave_tests)
+
+    add_executable(dungeon_prism_tests tests/dungeon_prism_tests.c)
+    target_link_libraries(dungeon_prism_tests PRIVATE dungeon_level m)
+    add_test(NAME dungeon_prism_puzzle COMMAND dungeon_prism_tests)
 
     add_executable(dungeon_lock_tests tests/dungeon_lock_tests.c)
     target_link_libraries(dungeon_lock_tests PRIVATE dungeon_level m)

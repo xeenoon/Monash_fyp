@@ -1,6 +1,7 @@
 #include "dungeon_mesh.h"
 
 #include "dungeon_lock_layout.h"
+#include "dungeon_prism.h"
 
 #include <math.h>
 #include <stdarg.h>
@@ -872,6 +873,149 @@ static bool build_door_hardware(const DungeonLevel *level, DungeonMeshData *out,
 	return true;
 }
 
+static bool build_lens_mesh(DungeonMeshData *out, DungeonOpticKind kind)
+{
+	Builder lens = {0};
+	DungeonMeshBatchKind mesh =
+		kind == DUNGEON_OPTIC_CONVEX ? DUNGEON_MESH_CONVEX_LENS : DUNGEON_MESH_CONCAVE_LENS;
+	const unsigned slices = 48;
+	if (!builder_create(&lens, &out->batches[mesh], (slices * 4 + 2) * 4, (slices * 4 + 2) * 6, 1))
+		return false;
+	float uv[4][2] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}}, tangent[4] = {1, 0, 0, 1};
+	for (unsigned i = 0; i < slices; ++i)
+	{
+		float y0 = -DUNGEON_OPTIC_APERTURE + 2 * DUNGEON_OPTIC_APERTURE * i / slices;
+		float y1 = -DUNGEON_OPTIC_APERTURE + 2 * DUNGEON_OPTIC_APERTURE * (i + 1) / slices;
+		float w0 = dungeon_lens_half_width(kind, y0), w1 = dungeon_lens_half_width(kind, y1);
+		for (unsigned cap = 0; cap < 2; ++cap)
+		{
+			float z = cap ? .046f : 0;
+			float face[4][3] = {{-w0, y0, z}, {w0, y0, z}, {w1, y1, z}, {-w1, y1, z}};
+			float n[3] = {0, 0, cap ? 1.f : -1.f};
+			if (!append_quad(&lens, face, n, tangent, uv))
+				return false;
+		}
+		for (int side = -1; side <= 1; side += 2)
+		{
+			float face[4][3] = {{side * w0, y0, 0},
+								{side * w1, y1, 0},
+								{side * w1, y1, .046f},
+								{side * w0, y0, .046f}};
+			float slope = (w1 - w0) / (y1 - y0), inv = 1.f / sqrtf(1 + slope * slope);
+			float n[3] = {side * inv, -slope * inv, 0}, t[4] = {side * slope * inv, inv, 0, 1};
+			if (!append_quad(&lens, face, n, t, uv))
+				return false;
+		}
+	}
+	for (int side = -1; side <= 1; side += 2)
+	{
+		float y = side * DUNGEON_OPTIC_APERTURE, w = dungeon_lens_half_width(kind, y);
+		float face[4][3] = {{-w, y, 0}, {w, y, 0}, {w, y, .046f}, {-w, y, .046f}},
+			  n[3] = {0, side, 0};
+		if (!append_quad(&lens, face, n, tangent, uv))
+			return false;
+	}
+	return true;
+}
+
+/* Flat unit quad shared by the optical board, beam ribbons and glyphs. Crystal
+ * dimensions match dungeon_prism.frag's analytic planes (metres). */
+static bool build_prism_hardware(DungeonMeshData *out)
+{
+	if (!build_lens_mesh(out, DUNGEON_OPTIC_CONVEX) || !build_lens_mesh(out, DUNGEON_OPTIC_CONCAVE))
+		return false;
+	Builder board = {0}, quad = {0}, crystal = {0};
+	if (!builder_create(&board, &out->batches[DUNGEON_MESH_PRISM_BOARD], 5 * 24 * 4, 5 * 24 * 6, 1))
+		return false;
+	// Five separate, irregular planks. Their gaps and chipped ends are real
+	// silhouettes, with side faces, rather than a rectangular UI panel.
+	for (unsigned row = 0; row < 5; ++row)
+	{
+		float low = -.5f + row * .2f + .003f, high = low + .194f;
+		float left = -.5f + (row % 3) * .009f, right = .5f - (row % 2) * .014f;
+		float polygon[8][2] = {{left + .017f, low},	  {right - .013f, low + .002f},
+							   {right, low + .035f},  {right - .006f, high - .014f},
+							   {right - .025f, high}, {left + .01f, high - .002f},
+							   {left, high - .03f},	  {left + .006f, low + .021f}};
+		float uv[4][2] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+		float tangent[4] = {1, 0, 0, 1};
+		for (unsigned i = 0; i < 8; ++i)
+		{
+			unsigned j = (i + 1) % 8;
+			float face[4][3] = {{0, (low + high) * .5f, 0},
+								{polygon[i][0], polygon[i][1], 0},
+								{polygon[j][0], polygon[j][1], 0},
+								{polygon[j][0], polygon[j][1], 0}};
+			float n[3] = {0, 0, 1};
+			if (!append_quad(&board, face, n, tangent, uv))
+				return false;
+			float dx = polygon[j][0] - polygon[i][0], dy = polygon[j][1] - polygon[i][1];
+			float len = hypotf(dx, dy);
+			n[0] = dy / len;
+			n[1] = -dx / len;
+			n[2] = 0;
+			float side[4][3] = {{polygon[i][0], polygon[i][1], 0},
+								{polygon[j][0], polygon[j][1], 0},
+								{polygon[j][0], polygon[j][1], -.028f},
+								{polygon[i][0], polygon[i][1], -.028f}};
+			float edge_tangent[4] = {dx / len, dy / len, 0, 1};
+			if (!append_quad(&board, side, n, edge_tangent, uv))
+				return false;
+		}
+	}
+	if (!builder_create(&quad, &out->batches[DUNGEON_MESH_PRISM_QUAD], 4, 6, 1) ||
+		!builder_create(&crystal, &out->batches[DUNGEON_MESH_PRISM], 32, 48, 1))
+		return false;
+	float q[4][3] = {{-.5f, -.5f, 0}, {.5f, -.5f, 0}, {.5f, .5f, 0}, {-.5f, .5f, 0}};
+	float uv[4][2] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+	float n[3] = {0, 0, 1}, t[4] = {1, 0, 0, 1};
+	if (!append_quad(&quad, q, n, t, uv))
+		return false;
+	const float r = .038f, h = .046f, b = .004f;
+	float outer[3][2] = {{-r, r}, {r, r}, {r, -r}};
+	float inner[3][2] = {
+		{1.41421356f * b - r + b, r - b}, {r - b, r - b}, {r - b, 1.41421356f * b - r + b}};
+	for (unsigned cap = 0; cap < 2; ++cap)
+	{
+		float v[4][3];
+		for (unsigned j = 0; j < 4; ++j)
+		{
+			unsigned k = j < 3 ? j : 2;
+			v[j][0] = cap ? inner[k][0] : outer[k][0];
+			v[j][1] = cap ? inner[k][1] : outer[k][1];
+			v[j][2] = cap ? h : 0;
+		}
+		float normal[3] = {0, 0, cap ? 1 : -1};
+		/* Triangle encoded as a quad with a degenerate second triangle. */
+		if (!append_quad(&crystal, v, normal, t, uv))
+			return false;
+	}
+	for (unsigned i = 0; i < 3; ++i)
+	{
+		unsigned j = (i + 1) % 3;
+		float dx = outer[j][0] - outer[i][0], dy = outer[j][1] - outer[i][1];
+		float length = hypotf(dx, dy);
+		float normal[3] = {-dy / length, dx / length, 0};
+		float tangent[4] = {dx / length, dy / length, 0, 1};
+		float side[4][3] = {{outer[i][0], outer[i][1], 0},
+							{outer[j][0], outer[j][1], 0},
+							{outer[j][0], outer[j][1], h - b},
+							{outer[i][0], outer[i][1], h - b}};
+		if (!append_quad(&crystal, side, normal, tangent, uv))
+			return false;
+		float bevel[4][3] = {{outer[i][0], outer[i][1], h - b},
+							 {outer[j][0], outer[j][1], h - b},
+							 {inner[j][0], inner[j][1], h},
+							 {inner[i][0], inner[i][1], h}};
+		normal[0] *= .70710678f;
+		normal[1] *= .70710678f;
+		normal[2] = .70710678f;
+		if (!append_quad(&crystal, bevel, normal, tangent, uv))
+			return false;
+	}
+	return true;
+}
+
 bool dungeon_mesh_build(const DungeonLevel *level,
 						DungeonMeshData *out,
 						DungeonLevelError *error)
@@ -946,6 +1090,8 @@ bool dungeon_mesh_build(const DungeonLevel *level,
 			goto capacity_error;
 
 	if (!build_moss(level, out))
+		goto capacity_error;
+	if (level->door_count && !build_prism_hardware(out))
 		goto capacity_error;
 	if (level->door_count && !build_door_hardware(level, out, error))
 		return false;

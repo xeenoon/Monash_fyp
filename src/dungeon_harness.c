@@ -31,6 +31,8 @@ struct DungeonHarness
 	uint32_t checks_run, checks_failed;
 	/* sweep_pins state: driving the selection back and forth while watching the
 	 * pick's clearance frame by frame. */
+	bool driving_prisms;
+	uint32_t prism_frames;
 	bool sweeping;
 	uint32_t sweep_frames, sweep_violations;
 	int sweep_direction;
@@ -142,6 +144,8 @@ static const char *phase_name(DungeonPhase phase)
 	{
 	case DUNGEON_PHASE_PIN_TUMBLER: return "pin";
 	case DUNGEON_PHASE_SAFE_PINS: return "safe";
+	case DUNGEON_PHASE_PRISM:
+		return "prism";
 	default: return "exploring";
 	}
 }
@@ -192,6 +196,17 @@ static void run_expect(DungeonHarness *harness, DungeonScene *scene, const Dunge
 		return;
 	}
 	const DungeonSession *session = &scene->session;
+	if (!strcmp(what, "prism_selected") || !strcmp(what, "prism_rotating") ||
+		!strcmp(what, "prism_solved"))
+	{
+		bool active = session->phase == DUNGEON_PHASE_PRISM;
+		const DungeonPrismPuzzle *p = &session->doors[session->focused_door].prism;
+		bool ok = !strcmp(what, "prism_selected")	? p->selected == (uint32_t)atoi(rest)
+				  : !strcmp(what, "prism_rotating") ? p->rotating == (atoi(rest) != 0)
+													: p->solved;
+		check(harness, active && ok, "%s %s", what, rest);
+		return;
+	}
 	if (!strcmp(what, "phase"))
 	{
 		const char *actual = phase_name(session->phase);
@@ -615,6 +630,14 @@ static uint32_t run_command(DungeonHarness *harness, DungeonScene *scene,
 		run_expect(harness, scene, camera, rest);
 		return 0;
 	}
+	if (!strcmp(verb, "drive_prisms"))
+	{
+		check(harness, scene->session.phase == DUNGEON_PHASE_PRISM,
+			  "drive_prisms: prism lock focused");
+		harness->driving_prisms = scene->session.phase == DUNGEON_PHASE_PRISM;
+		harness->prism_frames = 0;
+		return 1;
+	}
 	if (!strcmp(verb, "quit"))
 	{
 		harness->finished = true;
@@ -653,17 +676,113 @@ static void harness_apply_movement(DungeonHarness *harness, const DungeonScene *
 	input->move_right = dx * right.x + dz * right.z;
 }
 
+/* Solve through actual per-frame Input flags; no state or session mutations.
+ * BFS follows the same navigation graph available to the player. */
+static bool drive_prism_input(DungeonHarness *h, const DungeonSession *s, Input *input)
+{
+	if (!h->driving_prisms)
+		return false;
+	if (s->phase != DUNGEON_PHASE_PRISM || ++h->prism_frames > 4000)
+	{
+		check(h, false, "drive_prisms: phase changed or input budget exceeded");
+		h->driving_prisms = false;
+		return false;
+	}
+	const DungeonPrismPuzzle *p = &s->doors[s->focused_door].prism;
+	if (p->solved)
+	{
+		check(h, true, "drive_prisms: key reached through keyboard input in %u frames",
+			  h->prism_frames);
+		h->driving_prisms = false;
+		return false;
+	}
+	if (p->turn_remaining > 0)
+		return true;
+	unsigned target = 0;
+	while (target < p->count && p->prisms[target].orientation == p->solution[target])
+		++target;
+	if (target == p->count)
+	{
+		check(h, false, "drive_prisms: witness failed to solve");
+		h->driving_prisms = false;
+		return false;
+	}
+	if (p->selected == target)
+	{
+		if (!p->rotating)
+			input->puzzle_confirm = true;
+		else
+		{
+			unsigned clockwise = (p->solution[target] + 360 - p->prisms[target].orientation) % 360;
+			if (clockwise <= 180)
+				input->puzzle_right = true;
+			else
+				input->puzzle_left = true;
+		}
+	}
+	else if (p->rotating)
+		input->puzzle_confirm = true;
+	else
+	{
+		unsigned queue[DUNGEON_PRISM_MAX], first[DUNGEON_PRISM_MAX] = {0};
+		bool seen[DUNGEON_PRISM_MAX] = {false};
+		unsigned head = 0, tail = 0;
+		queue[tail++] = p->selected;
+		seen[p->selected] = true;
+		while (head < tail && !seen[target])
+		{
+			unsigned from = queue[head++];
+			for (unsigned d = 0; d < 4; ++d)
+			{
+				unsigned to = dungeon_prism_neighbor(p, from, d);
+				if (seen[to])
+					continue;
+				seen[to] = true;
+				queue[tail++] = to;
+				first[to] = from == p->selected ? d : first[from];
+			}
+		}
+		if (!seen[target])
+		{
+			check(h, false, "drive_prisms: unreachable prism");
+			h->driving_prisms = false;
+			return false;
+		}
+		switch (first[target])
+		{
+		case DUNGEON_PRISM_NORTH:
+			input->puzzle_up = true;
+			break;
+		case DUNGEON_PRISM_EAST:
+			input->puzzle_right = true;
+			break;
+		case DUNGEON_PRISM_SOUTH:
+			input->puzzle_down = true;
+			break;
+		default:
+			input->puzzle_left = true;
+			break;
+		}
+	}
+	return true;
+}
+
 bool dungeon_harness_pre_frame(DungeonHarness *harness, DungeonScene *scene,
 							   DungeonCamera *camera, Input *input)
 {
 	if (!harness || !scene || !input)
 		return true;
+	// A script owns its input; live keyboard events must not corrupt checks.
+	input->puzzle_left = input->puzzle_right = input->puzzle_up = input->puzzle_down = false;
+	input->puzzle_confirm = input->puzzle_cancel = input->interact = false;
 	input->move_forward = 0.0f;
 	input->move_right = 0.0f;
 	input->orbit_yaw = 0.0f;
 	input->orbit_pitch = 0.0f;
 	if (harness->pending_capture[0])
 		return true; /* hold the world still until the capture is actually taken */
+	if (drive_prism_input(harness, &scene->session, input))
+		return true;
 	if (harness->sweeping)
 	{
 		DungeonSession *session = &scene->session;
