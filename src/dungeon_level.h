@@ -62,3 +62,6 @@ bool dungeon_level_compile_field(DungeonField *field, DungeonPoint spawn, Dungeo
 								 float wall_height, DungeonLevel *out, DungeonLevelError *error);
 
 void dungeon_level_destroy(DungeonLevel *level);
+
+/* Print dungeon layout in human-readable text format: spawn, exit, doors with types, puddles. */
+void dungeon_level_print(const DungeonLevel *level);

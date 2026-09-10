@@ -77,10 +77,9 @@ bool dungeon_session_create(DungeonSession *session, const DungeonLevel *level)
 		if (dungeon_field_bfs_direction(&level->field, 0.5f, level->spawn, door->center,
 										&approach_direction))
 		{
-			/* approach_direction points FROM spawn TOWARD door. Negate it to get the
-			 * direction the player is coming FROM (like the original spawn-to-door check). */
-			float from_spawn = -(approach_direction.x * normal_x + approach_direction.z * normal_z);
-			state->hardware_side = from_spawn < 0.0f ? -1.0f : 1.0f;
+			/* Check which side approach comes from: positive dot means we approach from positive side. */
+			float approach_side = approach_direction.x * normal_x + approach_direction.z * normal_z;
+			state->hardware_side = approach_side > 0.0f ? -1.0f : 1.0f;
 		}
 		else
 		{

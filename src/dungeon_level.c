@@ -175,3 +175,31 @@ void dungeon_level_destroy(DungeonLevel *level)
 	free(level->doors);
 	*level = (DungeonLevel){0};
 }
+
+void dungeon_level_print(const DungeonLevel *level)
+{
+	if (!level)
+		return;
+	printf("=== DUNGEON LAYOUT ===\n");
+	printf("Floor Y: %.2f, Wall Height: %.2f\n", level->floor_y, level->wall_height);
+	printf("Spawn: (%.2f, %.2f)\n", level->spawn.x, level->spawn.z);
+	printf("Exit: (%.2f, %.2f)\n", level->exit.x, level->exit.z);
+	printf("\nPuddles: %u\n", level->puddle_count);
+	for (uint32_t i = 0; i < level->puddle_count; ++i)
+	{
+		printf("  %u. (%.2f, %.2f) radius=%.2f\n", i, level->puddles[i].center.x,
+			   level->puddles[i].center.z, level->puddles[i].radius);
+	}
+	printf("\nDoors: %u\n", level->door_count);
+	const char *lock_names[] = {"NONE", "PIN_TUMBLER", "SAFE_PINS", "PRISM"};
+	for (uint32_t i = 0; i < level->door_count; ++i)
+	{
+		const DungeonDoorway *door = &level->doors[i];
+		float yaw_deg = door->yaw * 180.0f / 3.14159265f;
+		const char *lock_name =
+			door->lock < 4 ? lock_names[door->lock] : "UNKNOWN";
+		printf("  %u. (%.2f, %.2f) yaw=%.1f° half_width=%.2f lock=%s seed=%u\n", i,
+			   door->center.x, door->center.z, yaw_deg, door->half_width, lock_name, door->seed);
+	}
+	printf("======================\n");
+}

@@ -432,6 +432,11 @@ static uint32_t run_command(DungeonHarness *harness, DungeonScene *scene,
 				(double)scene->player.position.z);
 		return 0;
 	}
+	if (!strcmp(verb, "dump_layout"))
+	{
+		dungeon_level_print(&scene->level);
+		return 0;
+	}
 	if (!strcmp(verb, "set_yaw"))
 	{
 		/* Point the camera somewhere deliberately wrong, so that a later
