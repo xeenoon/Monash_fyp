@@ -95,6 +95,30 @@
           "md5": "3bfd52479c62985ff0626bbf510109ef"
         }
       }
+    },
+    {
+      "role": "cloth",
+      "id": "hessian_380",
+      "page": "https://polyhaven.com/a/hessian_380",
+      "width_m": 0.35,
+      "files": {
+        "albedo": {
+          "channel": "Diffuse",
+          "extension": "jpg",
+          "md5": "46f362631d102c66cac0979ecc3bb2a7"
+        },
+        "normal": {
+          "channel": "nor_gl",
+          "extension": "png",
+          "md5": "f90d04e6c5f54305bd99ed7608104b20"
+        },
+        "orm": {
+          "channel": "arm",
+          "extension": "png",
+          "md5": "d9bb90f0e46793465e282684cfa82afd"
+        }
+      },
+      "resolution": "1k"
     }
   ],
   "local_materials": [
