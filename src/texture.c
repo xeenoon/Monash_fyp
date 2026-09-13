@@ -331,6 +331,22 @@ Texture texture_create_environment_cube(VkDevice device, GpuAllocator *allocator
 	return texture_create(device, allocator, &desc);
 }
 
+VkImageView texture_create_2d_mip_view(VkDevice device, const Texture *t, uint32_t mip)
+{
+	VkImageViewCreateInfo info = {.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+								  .image = t->image,
+								  .viewType = VK_IMAGE_VIEW_TYPE_2D,
+								  .format = t->format,
+								  .subresourceRange = {.aspectMask = t->aspect,
+													   .baseMipLevel = mip,
+													   .levelCount = 1,
+													   .baseArrayLayer = 0,
+													   .layerCount = 1}};
+	VkImageView view;
+	VK_CHECK(vkCreateImageView(device, &info, NULL, &view));
+	return view;
+}
+
 VkImageView texture_create_storage_mip_view(VkDevice device, const Texture *t, uint32_t mip)
 {
 	VkImageViewCreateInfo view = {.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,

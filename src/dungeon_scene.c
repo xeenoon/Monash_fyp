@@ -3,6 +3,7 @@
 #include "dungeon_cave.h"
 #include "dungeon_collision.h"
 #include "dungeon_grid.h"
+#include "dungeon_lab.h"
 #include "dungeon_lock_layout.h"
 
 #include <float.h>
@@ -13,6 +14,15 @@
 #ifndef DUNGEON_TEXTURE_DIR
 #define DUNGEON_TEXTURE_DIR "textures/dungeon/runtime"
 #endif
+
+/* Vertices and indices one moss tuft contributes, matching append_moss_tuft in
+ * dungeon_mesh.c. Only the torch lab needs them, to truncate the batch. */
+#define DUNGEON_MOSS_TUFT_VERTICES 180u
+#define DUNGEON_MOSS_TUFT_INDICES 270u
+
+/* Physical width the hessian material covers, from textures/dungeon/manifest.json.
+ * The wrap's UVs are in metres divided by this, so the weave is life-sized. */
+#define DUNGEON_CLOTH_WIDTH_M 0.35f
 
 #ifndef DUNGEON_TORCH_PATH
 #define DUNGEON_TORCH_PATH "assets/dungeons/torch/walltorch.gltf"
@@ -138,6 +148,324 @@ static LocalToWorldTransform player_torch_transform(const DungeonScene *scene)
 	return transform;
 }
 
+/* The burning end of the carried torch, in world space. The carried point
+ * light and the carried flame billboard both hang off this, so they can never
+ * drift apart. */
+static WorldPosition player_torch_head(const DungeonScene *scene)
+{
+	LocalToWorldTransform carried = player_torch_transform(scene);
+	/* Local Y 1.5223 is the top of the source mesh's bowl, not a round number
+	 * near it: seating the anchor five centimetres proud of the bowl, as an
+	 * earlier value did, leaves a visible gap under the carried flame -- the
+	 * one torch the camera ever gets close to. */
+	return coordinate_local_to_world(&carried, (TileLocalPosition){0.0f, 1.5223f, -0.13f});
+}
+
+/* The carried torch is the one fixture with no entry in scene->lights, so it
+ * needs a flicker phase of its own. Any value the golden-ratio sequence in
+ * dungeon_lighting_build does not produce will do. */
+#define PLAYER_TORCH_PHASE 4.13f
+
+/* Flame billboard size, and how far its bottom edge hangs BELOW the torch
+ * head, in metres. The drop is not a fudge to hide a seam: the flame wraps
+ * down around the fuel, so the quad has to extend past it. It must equal
+ * FLAME_BASE * FLAME_HEIGHT_M from dungeon_flame.frag (0.26 * 0.44), or the
+ * shader's fuel line and the actual top of the head stop coinciding. */
+#define FLAME_WIDTH_M 0.22f
+#define FLAME_HEIGHT_M 0.44f
+#define FLAME_BASE_DROP_M 0.114f
+/* How far above the fuel the point light sits. A flame's luminous centroid is
+ * partway up the plume, not at the wick, and it matters for more than realism:
+ * an emitter level with the torch head lights it at grazing incidence, so the
+ * head renders black under its own fire. The flame billboard stays anchored to
+ * the fuel -- only the light rises. */
+#define FLAME_LIGHT_RISE_M 0.10f
+
+/* Radiance of the white-hot core: far above anything a lit surface reaches,
+ * so it blows out under tone mapping the way a real flame does on a camera,
+ * and so it clears the bloom threshold and gets its halo from the real bloom
+ * pyramid rather than from anything painted on the billboard. */
+#define FLAME_CORE_RADIANCE 90.0f
+
+/* How far the quad's up axis is allowed to tip back toward a camera looking
+ * down on it. 0 is a strictly Y-locked billboard, 1 is fully camera-facing.
+ *
+ * A flame is vertical, so Y-locked is the honest choice -- and at eye level it
+ * is what the formula below produces, exactly, because a level view direction
+ * is already perpendicular to world up. But this game's camera sits up to 82
+ * degrees above the floor, and a strictly Y-locked quad seen from there is
+ * eight degrees off edge-on: the first build of this rendered every torch as
+ * a three-pixel smudge. Tipping most of the way splits the difference. */
+#define FLAME_CAMERA_TILT 0.75
+
+/* Billboard the flame quad: local +Y is the (tipped) up axis, +X spans the
+ * width across the view, +Z is the quad normal. */
+static LocalToWorldTransform flame_billboard(WorldPosition anchor, WorldPosition camera)
+{
+	double to_camera[3] = {camera.x - anchor.x, camera.y - anchor.y, camera.z - anchor.z};
+	double length = sqrt(to_camera[0] * to_camera[0] + to_camera[1] * to_camera[1] +
+						 to_camera[2] * to_camera[2]);
+	if (length < 1e-6)
+	{
+		to_camera[0] = 0.0;
+		to_camera[1] = 0.0;
+		to_camera[2] = 1.0;
+		length = 1.0;
+	}
+	for (int axis = 0; axis < 3; ++axis)
+		to_camera[axis] /= length;
+	/* Remove part of the view direction from world up. The removed amount is
+	 * proportional to how far the camera is above the flame, so this is a
+	 * no-op for a level view and tips furthest for a top-down one. */
+	double elevation = to_camera[1] * FLAME_CAMERA_TILT;
+	double up[3] = {-to_camera[0] * elevation, 1.0 - to_camera[1] * elevation,
+					-to_camera[2] * elevation};
+	double up_length = sqrt(up[0] * up[0] + up[1] * up[1] + up[2] * up[2]);
+	if (up_length < 1e-6)
+	{
+		/* Only reachable looking straight down the flame's own axis, where no
+		 * orientation is better than any other. */
+		up[0] = 1.0;
+		up[1] = 0.0;
+		up[2] = 0.0;
+		up_length = 1.0;
+	}
+	for (int axis = 0; axis < 3; ++axis)
+		up[axis] /= up_length;
+	/* right = up x to_camera, and then normal = right x up, so the three come
+	 * out right-handed with +Z pointing back at the camera. Reversing either
+	 * cross mirrors the quad and the flame leans the wrong way. */
+	double right[3] = {up[1] * to_camera[2] - up[2] * to_camera[1],
+					   up[2] * to_camera[0] - up[0] * to_camera[2],
+					   up[0] * to_camera[1] - up[1] * to_camera[0]};
+	double right_length =
+		sqrt(right[0] * right[0] + right[1] * right[1] + right[2] * right[2]);
+	if (right_length < 1e-6)
+	{
+		right[0] = 1.0;
+		right[1] = 0.0;
+		right[2] = 0.0;
+		right_length = 1.0;
+	}
+	for (int axis = 0; axis < 3; ++axis)
+		right[axis] /= right_length;
+	double normal[3] = {right[1] * up[2] - right[2] * up[1], right[2] * up[0] - right[0] * up[2],
+						right[0] * up[1] - right[1] * up[0]};
+	LocalToWorldTransform transform = {0};
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		transform.rotation[0][axis] = right[axis] * FLAME_WIDTH_M;
+		transform.rotation[1][axis] = up[axis] * FLAME_HEIGHT_M;
+		transform.rotation[2][axis] = normal[axis];
+	}
+	/* The quad is centred, so lift it half its height along its own up axis to
+	 * seat the bottom edge just inside the torch bowl. */
+	transform.translation = (WorldPosition){
+		anchor.x + up[0] * (FLAME_HEIGHT_M * 0.5 - FLAME_BASE_DROP_M),
+		anchor.y + up[1] * (FLAME_HEIGHT_M * 0.5 - FLAME_BASE_DROP_M),
+		anchor.z + up[2] * (FLAME_HEIGHT_M * 0.5 - FLAME_BASE_DROP_M)};
+	return transform;
+}
+
+/* The standing torch (lab scene 2) is two pieces of generated geometry: a
+ * tapered shaft, and the rag binding at its head.
+ *
+ * The binding is a stack of flat tori -- rings whose cross-section is an
+ * ellipse flattened against the shaft, which is what a strip of cloth wound
+ * round a stick actually looks like. Each band is tilted and offset slightly
+ * so the wrap reads as hand-wound rather than machined. It is opaque geometry
+ * that writes depth, so the flame (depth-tested, depth-write off) is occluded
+ * where it passes behind the cloth instead of glowing through it.
+ *
+ * Generated rather than authored for the same reason flame_quad is: it is
+ * scaffolding for looking at a flame, not level geometry. */
+#define LAB_POLE_SIDES 8u
+#define LAB_POLE_RINGS 4u
+#define LAB_WRAP_MAJOR 20u
+#define LAB_WRAP_MINOR 8u
+static Vertex lab_pole_vertices[LAB_POLE_SIDES * LAB_POLE_RINGS];
+static uint32_t lab_pole_indices[LAB_POLE_SIDES * (LAB_POLE_RINGS - 1u) * 6u];
+static Vertex lab_wrap_vertices[DUNGEON_LAB_WRAP_BANDS * LAB_WRAP_MAJOR * LAB_WRAP_MINOR];
+static uint32_t lab_wrap_indices[DUNGEON_LAB_WRAP_BANDS * LAB_WRAP_MAJOR * LAB_WRAP_MINOR * 6u];
+
+static void build_lab_pole(float floor_y)
+{
+	/* Radius and height at each ring: a shaft that narrows with height. The
+	 * socket flare that used to sit on top is gone -- the rag binding is what
+	 * holds the fuel now, and the flare only ever read as a jagged collar. */
+	const float ring_height[LAB_POLE_RINGS] = {0.0f, 0.45f, 0.86f, 1.0f};
+	const float ring_radius[LAB_POLE_RINGS] = {1.30f, 1.05f, 0.92f, 0.88f};
+	for (uint32_t ring = 0; ring < LAB_POLE_RINGS; ++ring)
+		for (uint32_t side = 0; side < LAB_POLE_SIDES; ++side)
+		{
+			float angle = (float)side / (float)LAB_POLE_SIDES * 6.2831853f;
+			/* Jitter the radius: a perfect prism gives a perfect vertical
+			 * specular strip down the shaft, the "studio strip light" look
+			 * that makes CG geometry obvious. Rough-hewn wood has none. */
+			float jitter = sinf((float)(ring * 7u + side * 13u) * 1.7f) * 0.5f + 0.5f;
+			float radius = DUNGEON_LAB_POLE_RADIUS_M * ring_radius[ring] * (0.90f + 0.20f * jitter);
+			Vertex *v = &lab_pole_vertices[ring * LAB_POLE_SIDES + side];
+			*v = (Vertex){0};
+			v->position[0] = cosf(angle) * radius;
+			v->position[1] = floor_y + DUNGEON_LAB_POLE_HEIGHT_M * ring_height[ring];
+			v->position[2] = sinf(angle) * radius;
+			v->normal[0] = cosf(angle);
+			v->normal[2] = sinf(angle);
+			/* Two turns of grain around the shaft and a repeat every 30 cm.
+			 * Mapping the 2.4 m wood material at its true physical scale onto
+			 * a seven-centimetre pole samples a postage stamp of it, which is
+			 * why the shaft came out looking like leopard print. */
+			v->texcoord[0] = (float)side / (float)LAB_POLE_SIDES * 2.0f;
+			v->texcoord[1] = ring_height[ring] * DUNGEON_LAB_POLE_HEIGHT_M / 0.30f;
+			v->tangent[0] = -sinf(angle);
+			v->tangent[2] = cosf(angle);
+			v->tangent[3] = 1.0f;
+		}
+	uint32_t index = 0;
+	for (uint32_t ring = 0; ring + 1u < LAB_POLE_RINGS; ++ring)
+		for (uint32_t side = 0; side < LAB_POLE_SIDES; ++side)
+		{
+			uint32_t next = (side + 1u) % LAB_POLE_SIDES;
+			uint32_t a = ring * LAB_POLE_SIDES + side, b = ring * LAB_POLE_SIDES + next;
+			uint32_t c = (ring + 1u) * LAB_POLE_SIDES + side;
+			uint32_t d = (ring + 1u) * LAB_POLE_SIDES + next;
+			lab_pole_indices[index++] = a;
+			lab_pole_indices[index++] = c;
+			lab_pole_indices[index++] = d;
+			lab_pole_indices[index++] = a;
+			lab_pole_indices[index++] = d;
+			lab_pole_indices[index++] = b;
+		}
+}
+
+/* One flat torus per band, wound up the head. `cloth_width_m` is the physical
+ * width the material covers, so the weave comes out life-sized. */
+static void build_lab_wrap(float floor_y, float cloth_width_m)
+{
+	const float top = floor_y + DUNGEON_LAB_POLE_HEIGHT_M;
+	const float shaft_radius = DUNGEON_LAB_POLE_RADIUS_M * 0.90f;
+	uint32_t vertex = 0, index = 0;
+	for (uint32_t band = 0; band < DUNGEON_LAB_WRAP_BANDS; ++band)
+	{
+		float along = (float)band / (float)(DUNGEON_LAB_WRAP_BANDS - 1u);
+		float centre_y = top - DUNGEON_LAB_WRAP_HEIGHT_M * along;
+		/* Hand-wound: each turn sits a little differently. */
+		float wobble = sinf((float)band * 2.3f) * 0.5f + 0.5f;
+		/* Bands must OVERLAP. At a half-height under the band spacing they
+		 * separate into a stack of rings with gaps between them, which reads
+		 * as tyres on an axle rather than as cloth wound round a stick. */
+		float spacing = DUNGEON_LAB_WRAP_HEIGHT_M / (float)(DUNGEON_LAB_WRAP_BANDS - 1u);
+		/* Just over half the spacing: the turns touch and read as continuous
+		 * wound cloth, but each one's rolled upper edge still shows. Push it
+		 * to a full overlap and the visible surface becomes the outer equator
+		 * alone, whose normals face horizontally -- so under a light sitting
+		 * directly above the head the whole wrap goes black. */
+		float half_height = spacing * (0.55f + 0.13f * wobble);
+		float thickness = 0.0035f + 0.0018f * wobble;   /* out from the shaft */
+		float tilt = (sinf((float)band * 1.7f)) * 0.055f; /* radians, off level */
+		/* The bundle is fattest at the head and tapers back to the shaft, so
+		 * the wrap is a torch head rather than a sleeve. */
+		float bulge = 0.008f * (1.0f - along) * (1.0f - along);
+		float major_radius = shaft_radius + thickness * 0.6f + bulge;
+		uint32_t base = vertex;
+		for (uint32_t major = 0; major < LAB_WRAP_MAJOR; ++major)
+		{
+			float phi = (float)major / (float)LAB_WRAP_MAJOR * 6.2831853f;
+			float cos_phi = cosf(phi), sin_phi = sinf(phi);
+			for (uint32_t minor = 0; minor < LAB_WRAP_MINOR; ++minor)
+			{
+				float theta = (float)minor / (float)LAB_WRAP_MINOR * 6.2831853f;
+				/* Flattened cross-section: tall along the shaft, shallow out
+				 * of it. A circular tube would read as rope, not cloth. */
+				float out = thickness * cosf(theta);
+				float up = half_height * sinf(theta);
+				float radius = major_radius + out;
+				Vertex *v = &lab_wrap_vertices[vertex++];
+				*v = (Vertex){0};
+				v->position[0] = cos_phi * radius;
+				v->position[1] = centre_y + up + cos_phi * tilt * major_radius;
+				v->position[2] = sin_phi * radius;
+				/* Normal of the flattened ellipse, carried back out to world. */
+				float normal_out = cosf(theta) * half_height;
+				float normal_up = sinf(theta) * thickness;
+				float length = sqrtf(normal_out * normal_out + normal_up * normal_up);
+				if (length < 1e-6f)
+					length = 1.0f;
+				v->normal[0] = cos_phi * normal_out / length;
+				v->normal[1] = normal_up / length;
+				v->normal[2] = sin_phi * normal_out / length;
+				v->texcoord[0] = phi * major_radius / cloth_width_m;
+				v->texcoord[1] = (centre_y + up) / cloth_width_m;
+				v->tangent[0] = -sin_phi;
+				v->tangent[2] = cos_phi;
+				v->tangent[3] = 1.0f;
+			}
+		}
+		for (uint32_t major = 0; major < LAB_WRAP_MAJOR; ++major)
+			for (uint32_t minor = 0; minor < LAB_WRAP_MINOR; ++minor)
+			{
+				uint32_t next_major = (major + 1u) % LAB_WRAP_MAJOR;
+				uint32_t next_minor = (minor + 1u) % LAB_WRAP_MINOR;
+				uint32_t a = base + major * LAB_WRAP_MINOR + minor;
+				uint32_t b = base + next_major * LAB_WRAP_MINOR + minor;
+				uint32_t c = base + major * LAB_WRAP_MINOR + next_minor;
+				uint32_t d = base + next_major * LAB_WRAP_MINOR + next_minor;
+				lab_wrap_indices[index++] = a;
+				lab_wrap_indices[index++] = c;
+				lab_wrap_indices[index++] = d;
+				lab_wrap_indices[index++] = a;
+				lab_wrap_indices[index++] = d;
+				lab_wrap_indices[index++] = b;
+			}
+	}
+}
+
+/* The flame billboard's geometry: a unit quad in local XY, centred on the
+ * origin, with uv (0,0) at the bottom-left -- dungeon_flame.frag reads uv.y as
+ * height up the plume, so the winding and the uv origin both matter. */
+static const Vertex FLAME_QUAD_VERTICES[4] = {
+	{{-0.5f, -0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}, 0.0f, {1.0f, 0.0f, 0.0f, 1.0f}},
+	{{0.5f, -0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f}, 0.0f, {1.0f, 0.0f, 0.0f, 1.0f}},
+	{{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}, 0.0f, {1.0f, 0.0f, 0.0f, 1.0f}},
+	{{-0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}, 0.0f, {1.0f, 0.0f, 0.0f, 1.0f}},
+};
+static const uint32_t FLAME_QUAD_INDICES[6] = {0, 1, 2, 0, 2, 3};
+
+/* One fire. `tint` multiplies the shader's own temperature ramp, so a warm
+ * torch passes something near neutral and a coloured fixture (the exit's blue)
+ * burns in its own colour without the ramp being rewritten. */
+static void append_flame_draw(DungeonScene *scene, WorldPosition anchor, const float tint[3],
+							  float phase, DungeonFlicker flicker, WorldPosition camera,
+							  RendererDraw *out, uint32_t *count, uint32_t capacity)
+{
+	if (!scene->flame_quad_uploaded || *count >= capacity)
+		return;
+	/* The fire's vertical sway moves the billboard itself, for the reason
+	 * dungeon_flame.frag gives at its `float y` -- shifting it inside the quad
+	 * clips the root flat. Lateral sway stays in the shader, where it leans
+	 * the plume about a root that does not move. */
+	anchor.y += flicker.sway_y;
+	LocalToWorldTransform transform = flame_billboard(anchor, camera);
+	scene->flame_quad.local_to_world = transform;
+	out[(*count)++] = (RendererDraw){
+		.mesh = &scene->flame_quad,
+		.material_set = scene->flame_quad.material_set,
+		.push =
+			{
+				.local_to_camera_relative =
+					coordinate_local_to_camera_relative(&transform, camera),
+				.geometry = {{tint[0], tint[1], tint[2], flicker.intensity_scale}},
+				/* The same phase dungeon_light_flicker() was given: the shader
+				 * folds it into its own clock and its ember seeds, so the drawn
+				 * flame and the light it casts move as one fire. */
+				.elevation_uv = {{scene->time, phase, FLAME_WIDTH_M, FLAME_HEIGHT_M}},
+				.material = {{flicker.sway_x / FLAME_HEIGHT_M, 0.0f, FLAME_CORE_RADIANCE, 0.0f}},
+				.debug = {{0.0f, 1.0f, 0.0f, 0.0f}},
+			},
+		.static_mesh = true,
+		.pipeline = RENDERER_PIPELINE_DUNGEON_FLAME};
+}
+
 static DungeonPoint segment_closest_point(DungeonPoint point, DungeonSegment segment)
 {
 	float dx = segment.b.x - segment.a.x, dz = segment.b.z - segment.a.z;
@@ -171,13 +499,46 @@ static bool mount_torch(const DungeonLevel *level, const DungeonShadow *shadow, 
 	}
 	if (best_distance2 == FLT_MAX)
 		return false;
-	/* Collision contours only choose a direction. Seat the flame against
-	 * the rendered wall at flame height, including the wall's bulge. */
-	float origin[3]={light->position.x,level->floor_y+1.58f,light->position.z};
-	float direction[3]={-inward.x,0,-inward.z}, hit_normal[3];
-	float distance=sqrtf(best_distance2)+2.0f;
-	if (!dungeon_shadow_trace(shadow,origin,direction,&distance,hit_normal)) return false;
-	mount=(DungeonPoint){origin[0]+direction[0]*distance,origin[2]+direction[2]*distance};
+	/* Collision contours only choose a direction. Seat the fixture against the
+	 * RENDERED wall at flame height, bulge, masonry and all.
+	 *
+	 * Several rays, not one. The wall's visible surface is individual bevelled
+	 * stones with mortar joints between them, and a single thin ray that
+	 * happens to thread a joint reports the backing eight centimetres further
+	 * back -- which seats the whole torch inside the stones, with only the tip
+	 * of its head poking out. A flat back plate rests on the PROUDEST stone
+	 * under it, so sample the plate's own footprint and keep the nearest hit.
+	 * The offsets are in the wall plane: lateral (perpendicular to the mount
+	 * direction, in XZ) and vertical. */
+	const float plate_half_width = 0.05f; /* the source mesh spans X +-0.048 */
+	const float plate_half_height = 0.05f;
+	DungeonPoint lateral = {-inward.z, inward.x};
+	float direction[3] = {-inward.x, 0.0f, -inward.z};
+	float reach = sqrtf(best_distance2) + 2.0f;
+	float nearest = reach;
+	bool any_hit = false;
+	for (int sample = 0; sample < 5; ++sample)
+	{
+		/* Centre, then the four edge midpoints of the plate's footprint. */
+		static const float offsets[5][2] = {
+			{0.0f, 0.0f}, {-1.0f, 0.0f}, {1.0f, 0.0f}, {0.0f, -1.0f}, {0.0f, 1.0f}};
+		float side = offsets[sample][0] * plate_half_width;
+		float rise = offsets[sample][1] * plate_half_height;
+		float origin[3] = {light->position.x + lateral.x * side, level->floor_y + 1.58f + rise,
+						   light->position.z + lateral.z * side};
+		float distance = reach, hit_normal[3];
+		if (!dungeon_shadow_trace(shadow, origin, direction, &distance, hit_normal))
+			continue;
+		any_hit = true;
+		if (distance < nearest)
+			nearest = distance;
+	}
+	if (!any_hit)
+		return false;
+	/* Rebuild the contact point on the mount axis itself, so a hit found by an
+	 * off-axis sample still seats the fixture square to the wall. */
+	mount = (DungeonPoint){light->position.x + direction[0] * nearest,
+						   light->position.z + direction[2] * nearest};
 	/* Moving back along the verified clear ray keeps the head outside. */
 	/* The source torch projects along local -Z. Keep its back plate just clear
 	   of the wall and put the point light at the head of the mesh. */
@@ -635,8 +996,14 @@ bool dungeon_scene_create(Renderer *renderer, DungeonScene *out, DungeonLevelErr
 		return false;
 	*out = (DungeonScene){0};
 	const char *map_override = getenv("DUNGEON_MAP");
+	out->lab = getenv("DUNGEON_LAB") ? (DungeonLabScene)atoi(getenv("DUNGEON_LAB"))
+									 : DUNGEON_LAB_NONE;
+	if (out->lab > DUNGEON_LAB_CARRIED)
+		out->lab = DUNGEON_LAB_WALL;
 	bool compiled;
-	if (map_override)
+	if (out->lab)
+		compiled = dungeon_lab_compile(&out->level, error);
+	else if (map_override)
 		compiled = dungeon_grid_compile_file(map_override, 2.0f, &out->level, error);
 	else
 	{
@@ -652,6 +1019,68 @@ bool dungeon_scene_create(Renderer *renderer, DungeonScene *out, DungeonLevelErr
 		dungeon_scene_destroy(renderer, out);
 		return false;
 	}
+	if (out->lab)
+	{
+		/* One clump, not a carpet. The scatter's reservoir fills its budget in
+		 * triangle order before it starts replacing, so the first tufts it
+		 * emitted are a contiguous patch of floor rather than a thinned-out
+		 * spread -- truncating the batch keeps that patch and drops the rest.
+		 * Done here rather than by teaching dungeon_mesh.c a budget: the
+		 * shipping scatter is one of the things this scene exists to look at,
+		 * and it should not gain a debug-only parameter. */
+		const uint32_t lab_tufts = 40u;
+		DungeonMeshBatch *moss = &out->geometry.batches[DUNGEON_MESH_MOSS];
+		if (moss->vertex_count > lab_tufts * DUNGEON_MOSS_TUFT_VERTICES)
+		{
+			moss->vertex_count = lab_tufts * DUNGEON_MOSS_TUFT_VERTICES;
+			moss->index_count = lab_tufts * DUNGEON_MOSS_TUFT_INDICES;
+		}
+	}
+	if (out->lab == DUNGEON_LAB_STANDING)
+	{
+		build_lab_pole(out->level.floor_y);
+		out->lab_pole = (Mesh){
+			.local_to_world = coordinate_identity_transform(
+				(WorldPosition){dungeon_lab_torch_position(out->lab).x, 0.0,
+								dungeon_lab_torch_position(out->lab).z}),
+			.vertices = lab_pole_vertices,
+			.vertex_count = (uint32_t)(sizeof(lab_pole_vertices) / sizeof(*lab_pole_vertices)),
+			.indices = lab_pole_indices,
+			.index_count = (uint32_t)(sizeof(lab_pole_indices) / sizeof(*lab_pole_indices)),
+			/* The exit's medieval-wood set is the only wood checked in, and a
+			 * torch pole is exactly what it suits. */
+			.texture_path = DUNGEON_TEXTURE_DIR "/exit_albedo.jpg",
+			.orm_path = DUNGEON_TEXTURE_DIR "/exit_orm.png",
+			.normal_path = DUNGEON_TEXTURE_DIR "/exit_normal.png",
+		};
+		mesh_upload(renderer, &out->lab_pole);
+		out->lab_pole_uploaded = true;
+
+		build_lab_wrap(out->level.floor_y, DUNGEON_CLOTH_WIDTH_M);
+		out->lab_wrap = (Mesh){
+			.local_to_world = out->lab_pole.local_to_world,
+			.vertices = lab_wrap_vertices,
+			.vertex_count = (uint32_t)(sizeof(lab_wrap_vertices) / sizeof(*lab_wrap_vertices)),
+			.indices = lab_wrap_indices,
+			.index_count = (uint32_t)(sizeof(lab_wrap_indices) / sizeof(*lab_wrap_indices)),
+			.texture_path = DUNGEON_TEXTURE_DIR "/cloth_albedo.jpg",
+			.orm_path = DUNGEON_TEXTURE_DIR "/cloth_orm.png",
+			.normal_path = DUNGEON_TEXTURE_DIR "/cloth_normal.png",
+		};
+		mesh_upload(renderer, &out->lab_wrap);
+		out->lab_wrap_uploaded = true;
+	}
+	/* dungeon_flame.frag samples no textures, so the quad needs no material
+	 * of its own; mesh_upload's fallback set satisfies the shared layout. */
+	out->flame_quad = (Mesh){
+		.local_to_world = coordinate_identity_transform((WorldPosition){0}),
+		.vertices = FLAME_QUAD_VERTICES,
+		.vertex_count = 4u,
+		.indices = FLAME_QUAD_INDICES,
+		.index_count = 6u,
+	};
+	mesh_upload(renderer, &out->flame_quad);
+	out->flame_quad_uploaded = true;
 	texture_load(renderer->device, renderer->allocator, renderer->upload, &out->moss_albedo,
 		DUNGEON_TEXTURE_DIR "/moss.jpeg", renderer->max_anisotropy);
 	for (uint32_t i = 0; i < DUNGEON_MESH_BATCH_COUNT; ++i)
@@ -704,7 +1133,31 @@ bool dungeon_scene_create(Renderer *renderer, DungeonScene *out, DungeonLevelErr
 		if (error) snprintf(error->message,sizeof(error->message),"could not build wall shadows");
 		dungeon_scene_destroy(renderer,out); return false;
 	}
-	out->light_count = dungeon_lighting_build(&out->level, out->lights, DUNGEON_MAX_LIGHTS - 2u);
+	if (out->lab)
+	{
+		/* One fire, and nothing else lit: the exit beacon dungeon_lighting_build
+		 * always adds is a second light source, and two of them make it
+		 * impossible to attribute anything on screen to the torch. Scene 3's
+		 * fire is the one the player carries, so it places no fixture at all
+		 * and leaves the light to dungeon_scene_write_lights. */
+		if (out->lab == DUNGEON_LAB_CARRIED)
+			out->light_count = 0u;
+		else
+		{
+			out->lights[0] = (DungeonLight){
+				.position = dungeon_lab_torch_position(out->lab),
+				.height = out->lab == DUNGEON_LAB_STANDING
+							  ? out->level.floor_y + DUNGEON_LAB_POLE_HEIGHT_M + 0.01f
+							  : 1.58f,
+				.radius = 6.5f,
+				.color = {1.0f, 0.38f, 0.12f},
+				.intensity = 12.0f,
+				.flame_tint = {1.0f, 1.0f, 1.0f}};
+			out->light_count = 1u;
+		}
+	}
+	else
+		out->light_count = dungeon_lighting_build(&out->level, out->lights, DUNGEON_MAX_LIGHTS - 2u);
 	GltfLoadError torch_error = {0};
 	if (gltf_scene_create(renderer, DUNGEON_TORCH_PATH,
 					  &(GltfLoadOptions){.placement =
@@ -718,9 +1171,25 @@ bool dungeon_scene_create(Renderer *renderer, DungeonScene *out, DungeonLevelErr
 		return false;
 	}
 	for (uint32_t i = 0; i < out->light_count; ++i)
-		if (mount_torch(&out->level, &out->wall_shadow, &out->lights[i],
-						&out->torch_transforms[out->torch_count]))
+		if (out->lab == DUNGEON_LAB_STANDING)
+		{
+			/* Nothing to mount against: the fixture stands on its own pole in
+			 * the middle of the room, so the flame keeps the position the lab
+			 * chose and there is no wall-bracket mesh. */
+			fprintf(stdout, "Torch %u: standing flame at (%.2f, %.2f, %.2f)\n", i,
+					(double)out->lights[i].position.x, (double)out->lights[i].height,
+					(double)out->lights[i].position.z);
+		}
+		else if (mount_torch(&out->level, &out->wall_shadow, &out->lights[i],
+							 &out->torch_transforms[out->torch_count]))
+		{
+			/* Where each fire actually ended up, so a harness script can aim a
+			 * camera at one without anybody reading it off a picture. */
+			fprintf(stdout, "Torch %u: flame at (%.2f, %.2f, %.2f)\n", out->torch_count,
+					(double)out->lights[i].position.x, (double)out->lights[i].height,
+					(double)out->lights[i].position.z);
 			++out->torch_count;
+		}
 		else {
 			/* A fixture without a verified wall mount must not leave an
 			 * invisible point light at its original candidate position. */
@@ -738,6 +1207,33 @@ bool dungeon_scene_create(Renderer *renderer, DungeonScene *out, DungeonLevelErr
 	return true;
 }
 
+/* Every fire in the level, carried torch included. Appended after the shadow
+ * prefix on purpose: a billboard of hot gas has no silhouette worth casting,
+ * and putting one in the depth-only pass would stamp a black rectangle on the
+ * wall behind every torch. */
+static void append_flame_draws(DungeonScene *scene, WorldPosition camera_position,
+							   RendererDraw *out, uint32_t *count, uint32_t capacity)
+{
+	if (!scene->lab || scene->lab == DUNGEON_LAB_CARRIED)
+		append_flame_draw(scene, player_torch_head(scene), (const float[3]){1.0f, 1.0f, 1.0f},
+						  PLAYER_TORCH_PHASE,
+						  dungeon_light_flicker(PLAYER_TORCH_PHASE, scene->time), camera_position,
+						  out, count, capacity);
+	for (uint32_t i = 0; i < scene->light_count; ++i)
+	{
+		/* Zero intensity is how a fixture that found no wall to mount on is
+		 * recorded (see dungeon_scene_create). It has no torch mesh, so it
+		 * must not have a flame hanging in mid-air either. */
+		if (scene->lights[i].intensity <= 0.0f)
+			continue;
+		WorldPosition anchor = {scene->lights[i].position.x, scene->lights[i].height,
+								scene->lights[i].position.z};
+		append_flame_draw(scene, anchor, scene->lights[i].flame_tint, scene->lights[i].phase,
+						  dungeon_light_flicker(scene->lights[i].phase, scene->time),
+						  camera_position, out, count, capacity);
+	}
+}
+
 uint32_t dungeon_scene_draws(DungeonScene *scene, WorldPosition camera_position,
 							 RendererDraw *out, uint32_t capacity, uint32_t *out_shadow_draw_count)
 {
@@ -751,6 +1247,8 @@ uint32_t dungeon_scene_draws(DungeonScene *scene, WorldPosition camera_position,
 	{
 		if (i == DUNGEON_MESH_PUDDLE || !scene->uploaded[i])
 			continue; /* puddles are appended last, below, and excluded from shadows */
+		if (scene->lab && scene->lab != DUNGEON_LAB_CARRIED && i == DUNGEON_MESH_PLAYER)
+			continue; /* scenes 1 and 2 are about the fixture, not who holds one */
 		if (i >= DUNGEON_MESH_DOOR)
 			continue; /* unit meshes: drawn per instance by append_door_draws */
 		out[draw_count++] = (RendererDraw){.mesh = &scene->meshes[i],
@@ -766,9 +1264,31 @@ uint32_t dungeon_scene_draws(DungeonScene *scene, WorldPosition camera_position,
 		/* Opaque surfaces use alpha to carry floor height in mesh coordinates. */
 		out[draw_count - 1].push.geometry.w = scene->level.floor_y;
 	}
+	if (scene->lab_pole_uploaded && draw_count < capacity)
+	{
+		out[draw_count++] = (RendererDraw){
+			.mesh = &scene->lab_pole,
+			.material_set = scene->lab_pole.material_set,
+			.push = dungeon_push(&scene->lab_pole, camera_position),
+			.static_mesh = true};
+		out[draw_count - 1].push.geometry.w = scene->level.floor_y;
+	}
+	if (scene->lab_wrap_uploaded && draw_count < capacity)
+	{
+		out[draw_count++] = (RendererDraw){
+			.mesh = &scene->lab_wrap,
+			.material_set = scene->lab_wrap.material_set,
+			.push = dungeon_push(&scene->lab_wrap, camera_position),
+			.static_mesh = true};
+		/* Sooty, and not shiny: hessian that has been burning is matte. */
+		out[draw_count - 1].push.geometry = (vec4s){{0.52f, 0.42f, 0.33f, scene->level.floor_y}};
+		out[draw_count - 1].push.elevation_uv.x = 0.92f; /* roughness factor */
+	}
 	/* Reserve the carried torch before optional wall fixtures. */
 	LocalToWorldTransform carried = player_torch_transform(scene);
-	for (uint32_t i = 0; i < scene->torch.primitive_count && draw_count < capacity; ++i)
+	bool carried_torch = !scene->lab || scene->lab == DUNGEON_LAB_CARRIED;
+	for (uint32_t i = 0; i < scene->torch.primitive_count && draw_count < capacity && carried_torch;
+		 ++i)
 	{
 		GltfPrimitive *primitive = &scene->torch.primitives[i];
 		GltfMaterial *material = &scene->torch.materials[primitive->material_index];
@@ -795,6 +1315,7 @@ uint32_t dungeon_scene_draws(DungeonScene *scene, WorldPosition camera_position,
 	append_door_draws(scene, camera_position, out, &draw_count, capacity);
 	if (out_shadow_draw_count)
 		*out_shadow_draw_count = draw_count; /* a flat coplanar disc casts nothing worth shadowing */
+	append_flame_draws(scene, camera_position, out, &draw_count, capacity);
 	if (scene->uploaded[DUNGEON_MESH_PUDDLE] && draw_count < capacity)
 		out[draw_count++] = (RendererDraw){
 			.mesh = &scene->meshes[DUNGEON_MESH_PUDDLE],
@@ -842,6 +1363,9 @@ bool dungeon_scene_update(DungeonScene *scene, float move_forward, float move_ri
 {
 	if (!scene)
 		return false;
+	/* Advanced before the early return below, so torches keep burning while a
+	 * lock is being picked. */
+	scene->time += dt;
 	dungeon_session_update(&scene->session, dt);
 	update_pick(scene, dt);
 	if (scene->session.phase != DUNGEON_PHASE_EXPLORING)
@@ -871,21 +1395,58 @@ uint32_t dungeon_scene_write_lights(const DungeonScene *scene, WorldPosition cam
 {
 	if (!scene || !positions || !colors || capacity == 0)
 		return 0;
-	/* Slot zero is always the player light, even if the light budget is full. */
-	LocalToWorldTransform carried = player_torch_transform(scene);
-	WorldPosition head = coordinate_local_to_world(&carried, (TileLocalPosition){0, 1.56f, -0.13f});
+	/* Every torch here is flickered by the same dungeon_light_flicker() call
+	 * the flame billboard in append_flame_draws() used, at the same
+	 * scene->time. That is the whole point of computing it on the CPU: the
+	 * room brightens on exactly the frame the fire the player is looking at
+	 * flares, and the sway walks the lit patch on the wall with the plume. */
+	/* Slot zero is always the player light, even if the light budget is full --
+	 * except in the lab, where the one wall torch has to be the only thing
+	 * lighting anything, and it takes slot zero instead. */
+	if (scene->lab && scene->lab != DUNGEON_LAB_CARRIED)
+	{
+		uint32_t lab_count = scene->light_count < capacity ? scene->light_count : capacity;
+		for (uint32_t i = 0; i < lab_count; ++i)
+		{
+			DungeonFlicker flicker = dungeon_light_flicker(scene->lights[i].phase, scene->time);
+			WorldPosition world = {scene->lights[i].position.x + flicker.sway_x,
+								   scene->lights[i].height + flicker.sway_y,
+								   scene->lights[i].position.z};
+			world.y += FLAME_LIGHT_RISE_M;
+			CameraRelativePosition to_light = coordinate_camera_relative(world, camera_position);
+			positions[i] =
+				(vec4s){{to_light.x, to_light.y, to_light.z, scene->lights[i].radius}};
+			float rgb[3];
+			dungeon_light_warmth_color(scene->lights[i].color, flicker.warmth, rgb);
+			colors[i] = (vec4s){
+				{rgb[0], rgb[1], rgb[2], scene->lights[i].intensity * flicker.intensity_scale}};
+		}
+		return lab_count;
+	}
+	WorldPosition head = player_torch_head(scene);
+	DungeonFlicker carried_flicker = dungeon_light_flicker(PLAYER_TORCH_PHASE, scene->time);
+	head.x += carried_flicker.sway_x;
+	head.y += carried_flicker.sway_y + FLAME_LIGHT_RISE_M;
 	CameraRelativePosition relative = coordinate_camera_relative(head, camera_position);
 	positions[0] = (vec4s){{relative.x, relative.y, relative.z, 7.5f}};
-	colors[0] = (vec4s){{1.0f, 0.76f, 0.48f, 32.0f}};
+	static const float carried_color[3] = {1.0f, 0.76f, 0.48f};
+	float carried_rgb[3];
+	dungeon_light_warmth_color(carried_color, carried_flicker.warmth, carried_rgb);
+	colors[0] = (vec4s){{carried_rgb[0], carried_rgb[1], carried_rgb[2],
+						 16.0f * carried_flicker.intensity_scale}};
 	uint32_t count = scene->light_count < capacity - 1u ? scene->light_count : capacity - 1u;
 	for (uint32_t i = 0; i < count; ++i)
 	{
-		WorldPosition world = {scene->lights[i].position.x, scene->lights[i].height,
+		DungeonFlicker flicker = dungeon_light_flicker(scene->lights[i].phase, scene->time);
+		WorldPosition world = {scene->lights[i].position.x + flicker.sway_x,
+							   scene->lights[i].height + flicker.sway_y + FLAME_LIGHT_RISE_M,
 							   scene->lights[i].position.z};
 		CameraRelativePosition relative = coordinate_camera_relative(world, camera_position);
 		positions[i + 1u] = (vec4s){{relative.x, relative.y, relative.z, scene->lights[i].radius}};
-		colors[i + 1u] = (vec4s){{scene->lights[i].color[0], scene->lights[i].color[1],
-							 scene->lights[i].color[2], scene->lights[i].intensity}};
+		float rgb[3];
+		dungeon_light_warmth_color(scene->lights[i].color, flicker.warmth, rgb);
+		colors[i + 1u] = (vec4s){
+			{rgb[0], rgb[1], rgb[2], scene->lights[i].intensity * flicker.intensity_scale}};
 	}
 	uint32_t written = count + 1u;
 	/* The other reserved slot: a small warm light over the lock being picked,
@@ -959,6 +1520,12 @@ void dungeon_scene_destroy(Renderer *renderer, DungeonScene *scene)
 	if (renderer)
 	{
 		gltf_scene_destroy(renderer, &scene->torch);
+		if (scene->flame_quad_uploaded)
+			mesh_destroy(renderer, &scene->flame_quad);
+		if (scene->lab_pole_uploaded)
+			mesh_destroy(renderer, &scene->lab_pole);
+		if (scene->lab_wrap_uploaded)
+			mesh_destroy(renderer, &scene->lab_wrap);
 		for (uint32_t i = 0; i < DUNGEON_MESH_BATCH_COUNT; ++i)
 			if (scene->uploaded[i])
 				mesh_destroy(renderer, &scene->meshes[i]);

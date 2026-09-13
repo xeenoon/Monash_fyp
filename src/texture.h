@@ -132,6 +132,12 @@ Texture texture_create_environment_cube(VkDevice device, GpuAllocator *allocator
    owns and destroys the returned view (not tracked by the Texture). */
 VkImageView texture_create_storage_mip_view(VkDevice device, const Texture *t, uint32_t mip);
 
+/* A single mip level of a 2D texture as a VK_IMAGE_VIEW_TYPE_2D view, usable
+   as a compute storage-image target. The Texture's own view spans the whole
+   chain, which is what a sampler wants and what a storage binding cannot use.
+   Caller owns and destroys the returned view (not tracked by the Texture). */
+VkImageView texture_create_2d_mip_view(VkDevice device, const Texture *t, uint32_t mip);
+
 /* A VK_IMAGE_VIEW_TYPE_CUBE view restricted to [base_mip, base_mip+mip_count).
    Used to sample a specific mip range (e.g. only the freshly-written mip 0)
    while other mips of the same image are still being written. Caller owns and

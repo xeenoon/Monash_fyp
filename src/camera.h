@@ -13,6 +13,12 @@ typedef struct
 	/* Seconds shift has been held while moving; ramps sprint speed. Reset on
 	   release. Zero-initialized by the designated initializers in main. */
 	float sprint_charge;
+	/* Multiplies every movement speed below. The defaults are sized for a
+	   16 km terrain map, where 60 m/s is a slow pan; in an eight-metre room
+	   the same speed crosses the whole space in a tenth of a second. Zero or
+	   negative reads as 1.0, so every existing zero-initialized Camera keeps
+	   the terrain speeds. */
+	float speed_scale;
 } Camera;
 
 vec3s camera_forward(const Camera *cam);

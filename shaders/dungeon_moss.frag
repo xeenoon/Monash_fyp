@@ -151,9 +151,8 @@ void main() {
         vec3 to_light = position_radius.xyz - camera_relative_position;
         float distance2 = dot(to_light, to_light);
         float distance_to_light = sqrt(max(distance2, 1e-8));
-        float normalized_distance = distance_to_light / max(position_radius.w, 1e-4);
-        float attenuation_window = max(1.0 - pow(normalized_distance, 4.0), 0.0);
-        float attenuation = attenuation_window * attenuation_window / max(distance2, 0.01);
+        float attenuation = local_light_attenuation(distance_to_light, position_radius.w,
+                                                    frame.light_shape.x);
         if (attenuation > 0.0)
             attenuation *= point_light_visibility(camera_relative_position, normal,
                 position_radius.xyz, light_index, vec3(attenuation));

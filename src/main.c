@@ -11,6 +11,7 @@
 #include "dungeon_scene.h"
 #include "dungeon_camera.h"
 #include "dungeon_harness.h"
+#include "dungeon_lab.h"
 #include "gltf_scene.h"
 #include "input.h"
 #include "material_stability_demo.h"
@@ -167,11 +168,36 @@ int main(int argc, char *argv[])
 	bool use_terrain = !scene || strcmp(scene, "terrain") == 0;
 	bool use_quarry = scene && strcmp(scene, "quarry") == 0;
 	bool use_phase_d_demo = scene && strcmp(scene, "phase_d_demo") == 0;
-	bool use_dungeon = scene && strcmp(scene, "dungeon") == 0;
+	/* The torch lab is the dungeon in every respect that matters -- same
+	 * meshes, materials, lights, flames and post chain -- so it sets
+	 * use_dungeon and differs only in its level frontend and its camera.
+	 * Three demo scenes: torch_lab1 is a torch on a wall, torch_lab2 one
+	 * standing in open air on a pole, torch_lab3 the one the player carries.
+	 * Plain `torch_lab` is scene 1. */
+	DungeonLabScene lab_scene = DUNGEON_LAB_NONE;
+	if (scene && strncmp(scene, "torch_lab", 9) == 0)
+	{
+		const char *suffix = scene + 9;
+		lab_scene = *suffix ? (DungeonLabScene)atoi(suffix) : DUNGEON_LAB_WALL;
+		if (lab_scene < DUNGEON_LAB_WALL || lab_scene > DUNGEON_LAB_CARRIED)
+		{
+			fprintf(stderr, "Torch lab scenes are torch_lab1, torch_lab2, torch_lab3.\n");
+			return EXIT_FAILURE;
+		}
+		char selector[8];
+		snprintf(selector, sizeof(selector), "%d", (int)lab_scene);
+		setenv("DUNGEON_LAB", selector, 1);
+	}
+	bool use_torch_lab = lab_scene != DUNGEON_LAB_NONE;
+	bool use_dungeon = use_torch_lab || (scene && strcmp(scene, "dungeon") == 0);
 #ifdef DEBUG_SHADER_DUMP
-	const char *scene_name = use_terrain ? "terrain"
-		: (use_dungeon ? "dungeon"
-					   : (use_phase_d_demo ? "phase_d_demo" : (use_quarry ? "quarry" : "gltf")));
+	const char *scene_name =
+		use_terrain ? "terrain"
+		: use_torch_lab ? "torch_lab"
+		: use_dungeon ? "dungeon"
+		: use_phase_d_demo ? "phase_d_demo"
+		: use_quarry ? "quarry"
+							 : "gltf";
 #endif
 	const char *gltf_path = NULL;
 	/* The large benchmark is intentionally not in git. Terrain is the normal
@@ -198,7 +224,8 @@ int main(int argc, char *argv[])
 	else if (!use_terrain && !use_quarry && !use_phase_d_demo && !use_dungeon)
 	{
 		fprintf(stderr,
-				"Supported scene selectors: terrain, dungeon, coastal_cliff, quarry, phase_d_demo, or gltf.\n");
+				"Supported scene selectors: terrain, dungeon, torch_lab1/2/3, coastal_cliff, "
+				"quarry, phase_d_demo, or gltf.\n");
 		return EXIT_FAILURE;
 	}
 	if (!SDL_Init(SDL_INIT_VIDEO))
@@ -372,6 +399,54 @@ int main(int argc, char *argv[])
 		dungeon_camera_init(&dungeon_camera, dungeon.level.spawn);
 		camera = dungeon_camera.camera;
 	}
+	if (use_torch_lab)
+	{
+		/* Eye height, a few metres back from whatever is burning, looking at
+		 * it. WASD + mouse (Ctrl captures) from there. TERRAIN_LAB_POS/_YAW/
+		 * _PITCH override it, so a particular view can be returned to exactly. */
+		DungeonPoint subject = lab_scene == DUNGEON_LAB_CARRIED
+								   ? dungeon.level.spawn
+								   : dungeon_lab_torch_position(lab_scene);
+		/* Stand back from the subject along +Z and look at it, except for the
+		 * carried torch: the player spawns in the southern half, so backing
+		 * further that way would put the camera inside the south wall. Look
+		 * north at them instead. */
+		if (lab_scene == DUNGEON_LAB_CARRIED)
+		{
+			camera.position = (WorldPosition){subject.x, 1.45, subject.z - 2.6};
+			camera.yaw = 90.0f; /* toward +Z, back at the player */
+			camera.pitch = -10.0f;
+		}
+		else
+		{
+			double back = lab_scene == DUNGEON_LAB_WALL ? 4.2 : 3.0;
+			camera.position = (WorldPosition){subject.x, 1.7, subject.z + back};
+			camera.yaw = 270.0f;  /* toward -Z, i.e. at the north wall */
+			camera.pitch = -8.0f; /* the fixture, the puddle near it, and some floor */
+		}
+		/* 60 m/s crosses this room in a tenth of a second. Scale to a walk,
+		 * about 2.7 m/s, with sprint reaching a brisk few metres a second --
+		 * enough to get to the far wall, slow enough to stop at the flame. */
+		camera.speed_scale = 0.045f;
+		if (getenv("TERRAIN_LAB_SPEED"))
+			camera.speed_scale = (float)atof(getenv("TERRAIN_LAB_SPEED"));
+		if (getenv("TERRAIN_LAB_POS"))
+		{
+			double sx = 0, sy = 0, sz = 0;
+			if (sscanf(getenv("TERRAIN_LAB_POS"), "%lf %lf %lf", &sx, &sy, &sz) == 3)
+				camera.position = (WorldPosition){sx, sy, sz};
+		}
+		if (getenv("TERRAIN_LAB_YAW"))
+			camera.yaw = (float)atof(getenv("TERRAIN_LAB_YAW"));
+		if (getenv("TERRAIN_LAB_PITCH"))
+			camera.pitch = (float)atof(getenv("TERRAIN_LAB_PITCH"));
+		static const char *const lab_names[] = {"", "torch on a wall",
+												"torch standing on a pole",
+												"torch carried by the player"};
+		printf("Torch lab scene %d (%s): WASD + mouse to fly (Ctrl captures the mouse), "
+			   "shift to sprint.\n",
+			   (int)lab_scene, lab_names[lab_scene]);
+	}
 
 	/* Runtime override of the start camera in absolute WORLD coordinates -- the
 	   exact triple printed as "camera pos=" in a shader dump. Unlike
@@ -405,6 +480,10 @@ int main(int argc, char *argv[])
 	Input input = {.mouse_captured = !use_dungeon};
 	/* Automated visual comparisons need to survive window focus and pointer
 	   motion without drifting away from the replayed dump camera. */
+	const char *capture_path = getenv("TERRAIN_CAPTURE");
+	uint32_t capture_frame_index = 90u, captured_frames = 0u;
+	if (getenv("TERRAIN_CAPTURE_FRAME"))
+		capture_frame_index = (uint32_t)strtoul(getenv("TERRAIN_CAPTURE_FRAME"), NULL, 10);
 	bool freeze_camera = getenv("TERRAIN_FREEZE_CAMERA") &&
 		atoi(getenv("TERRAIN_FREEZE_CAMERA")) != 0;
 	uint64_t start_ticks = SDL_GetTicksNS();
@@ -614,10 +693,15 @@ int main(int argc, char *argv[])
 			history_valid = false;
 		}
 
-		if (!freeze_camera && !use_dungeon && input.mouse_captured)
-			camera_update(&camera, input.move_forward, input.move_right, input.look_dx, input.look_dy,
-						  input.sprint, dt);
-		if (use_dungeon)
+		if (!freeze_camera && (!use_dungeon || use_torch_lab) && input.mouse_captured)
+			camera_update(&camera, input.move_forward, input.move_right, input.look_dx,
+						  input.look_dy, input.sprint, dt);
+		/* The lab still steps the scene -- that is what advances scene->time,
+		 * and a frozen flame is not worth flying around -- but it keeps the
+		 * free camera rather than handing over to the orbit rig. */
+		if (use_torch_lab)
+			dungeon_scene_update(&dungeon, 0.0f, 0.0f, camera.yaw, dt);
+		else if (use_dungeon)
 		{
 			DungeonSession *session = &dungeon.session;
 			bool picking = session->phase != DUNGEON_PHASE_EXPLORING;
@@ -1061,6 +1145,19 @@ int main(int argc, char *argv[])
 		previous_camera_yaw = camera.yaw;
 		previous_camera_pitch = camera.pitch;
 		history_valid = true;
+
+		/* TERRAIN_CAPTURE=<path.png> writes one frame and exits. The dungeon
+		 * harness has had `capture` all along, but only for the dungeon; a
+		 * renderer-wide change (bloom, tone mapping, exposure) has to be
+		 * checkable against the outdoor scenes too, and the alternative is
+		 * photographing someone's desktop. TERRAIN_CAPTURE_FRAME picks which
+		 * frame, so auto-exposure has time to settle first. */
+		if (capture_path && ++captured_frames >= capture_frame_index)
+		{
+			if (!renderer_capture_swapchain(&renderer, capture_path))
+				fprintf(stderr, "TERRAIN_CAPTURE: could not write %s\n", capture_path);
+			running = false;
+		}
 	}
 
 	renderer_wait_idle(&renderer);

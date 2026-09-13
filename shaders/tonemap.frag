@@ -7,6 +7,7 @@
 layout(location = 0) in vec2 texcoord;
 layout(location = 0) out vec4 out_color;
 layout(set = 1, binding = 5) uniform sampler2D resolved_hdr;
+layout(set = 1, binding = 7) uniform sampler2D bloom_pyramid;
 layout(std430, set = 1, binding = 6) readonly buffer ExposureState {
     float exposure;
     float average_luminance;
@@ -55,9 +56,22 @@ vec3 srgb_to_linear(vec3 value) {
     return mix(low, high, greaterThan(value, vec3(0.04045)));
 }
 
+/* Rec. 709 luma of the bloom this pixel received, for the dump's f19. */
+float bloom_luminance_dump(vec3 color) {
+    return dot(color, vec3(0.2126, 0.7152, 0.0722));
+}
+
 /* See SHADER_DUMP_LEGEND["tonemap"] in renderer.c for the f0..f19 layout. */
 void main() {
     vec3 resolved = texture(resolved_hdr, texcoord).rgb;
+    /* The bloom pyramid holds only the frame's above-threshold energy, so it
+       is ADDED to the scene rather than blended with it: this is light that
+       spread, not a wash over the top. Added before exposure because it was
+       gathered in scene radiance, and the tone mapper is what decides how
+       much of it survives -- which is why a bright flame's halo blows out and
+       a dim one's stays a glow, with no extra logic here. */
+    vec3 bloom = textureLod(bloom_pyramid, texcoord, 0.0).rgb * frame.bloom_parameters.z;
+    resolved += bloom;
     bool debug_view = frame.debug_view > 0.5;
     vec3 display_linear = debug_view
         ? clamp(resolved, 0.0, 1.0)
@@ -75,5 +89,5 @@ void main() {
                 vec4(resolved, exposure_state.average_luminance),
                 vec4(display_linear, debug_view ? 1.0 : 0.0),
                 vec4(encoded, 0.0),
-                vec4(out_color.rgb, 0.0));
+                vec4(out_color.rgb, bloom_luminance_dump(bloom)));
 }

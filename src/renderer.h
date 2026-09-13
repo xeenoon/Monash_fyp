@@ -21,6 +21,12 @@
 #define ENV_CUBE_MIPS 8u
 #define MAX_POINT_LIGHTS 16u
 
+/* Levels in the bloom pyramid, mip 0 at half the swapchain's resolution. Six
+   puts the coarsest level around 1/64th of the frame, which is about where a
+   glow stops widening usefully and starts lighting the whole screen. Clamped
+   down at run time on a small window, where 1/64th would be a single texel. */
+#define BLOOM_MIPS 6u
+
 typedef enum { SHADOW_FILTER_HARD = 0, SHADOW_FILTER_PCF = 1, SHADOW_FILTER_PCSS = 2 } ShadowFilterMode;
 typedef struct {
 	ShadowFilterMode filter_mode;
@@ -82,6 +88,16 @@ typedef struct
 	vec4s point_light_color_intensity[MAX_POINT_LIGHTS];
 	vec4s point_light_options; /* light count, IBL scales, diagnostic light index */
 	vec4s point_shadow_origin; /* camera world XYZ, BVH node count */
+	/* Bloom: x threshold (exposed units), y soft-knee width, z intensity the
+	   tone mapper adds the pyramid back at, w reserved. */
+	vec4s bloom_parameters;
+	/* Shape of the local lights: x is their source radius in metres, yzw
+	   reserved. One value for every point light rather than one each -- the
+	   vec4 pair describing a light is full, and every local light in the
+	   dungeon is a flame of about the same size. See
+	   local_light_attenuation() in pbr_common.glsl for why a point light
+	   cannot be used near a wall. */
+	vec4s light_shape;
 } FrameUniforms;
 
 typedef struct
@@ -138,6 +154,7 @@ typedef enum
 	RENDERER_PIPELINE_DUNGEON_MOSS,	   /* opaque leaf geometry, two-sided foliage lighting */
 	RENDERER_PIPELINE_DUNGEON_SURFACE, /* mesh.frag + textured moss */
 	RENDERER_PIPELINE_DUNGEON_PUDDLE,  /* alpha-blended, depth-write off */
+	RENDERER_PIPELINE_DUNGEON_FLAME,   /* additive torch fire; depth-tested, no writes */
 } RendererPipelineKind;
 
 typedef struct
@@ -186,6 +203,21 @@ typedef struct Renderer
 	Texture hdr_color;
 	Texture motion;
 	Texture composite_color;
+	/* Half-resolution mip pyramid holding the above-threshold energy of the
+	   frame, blurred wider at every level. See bloom_dispatch() in renderer.c;
+	   the tone mapper adds mip 0 back. `bloom_levels` is BLOOM_MIPS or fewer
+	   on a small window. */
+	Texture bloom;
+	uint32_t bloom_levels;
+	/* Threshold and knee are in EXPOSED units (see bloom_common.glsl);
+	   intensity is how much of the finished pyramid the tone mapper adds
+	   back. Overridable with TERRAIN_BLOOM_THRESHOLD / _KNEE / _INTENSITY. */
+	float bloom_threshold, bloom_knee, bloom_intensity;
+	/* Source radius of every local light, metres. TERRAIN_LIGHT_SOURCE_RADIUS. */
+	float light_source_radius;
+	VkImageView bloom_storage_views[BLOOM_MIPS]; /* one mip each, for compute writes */
+	VkDescriptorSet bloom_set[BLOOM_MIPS];		 /* source = the pyramid itself */
+	VkDescriptorSet bloom_prefilter_set;		 /* source = composite_color */
 	Texture taa_history[2];
 	Texture taa_history_depth[2];
 	VkFramebuffer scene_framebuffer;
@@ -200,6 +232,7 @@ typedef struct Renderer
 	VkDescriptorSetLayout display_set_layout;	 /* tone-map set 1 */
 	VkDescriptorSetLayout temporal_set_layout;	 /* TAA/exposure set 1 */
 	VkDescriptorSetLayout atmosphere_set_layout; /* graphics set 2 / compute set 1 */
+	VkDescriptorSetLayout bloom_set_layout;		 /* bloom compute set 0 */
 	VkDescriptorPool descriptor_pool;
 	GpuBuffer frame_ubo[MAX_FRAMES_IN_FLIGHT];
 	GpuBuffer point_shadow_buffer;
@@ -237,6 +270,7 @@ typedef struct Renderer
 	VkPipelineLayout display_pipeline_layout;
 	VkPipelineLayout temporal_pipeline_layout;
 	VkPipelineLayout atmosphere_pipeline_layout;
+	VkPipelineLayout bloom_pipeline_layout;
 	VkPipeline terrain_pipeline;
 	VkPipeline mesh_pipeline; /* UV-mapped PBR static-mesh and dungeon pipeline */
 	VkPipeline dungeon_prism_pipeline;
@@ -246,6 +280,8 @@ typedef struct Renderer
 	VkPipeline dungeon_moss_pipeline;
 	VkPipeline dungeon_surface_pipeline; /* mesh.vert + dungeon_surface.frag (moss) */
 	VkPipeline dungeon_puddle_pipeline;  /* mesh.vert + dungeon_puddle.frag (alpha-blended) */
+	VkPipeline dungeon_flame_pipeline;   /* mesh.vert + dungeon_flame.frag (additive) */
+	VkPipeline bloom_downsample_pipeline, bloom_upsample_pipeline;
 	VkPipeline tone_map_pipeline;
 	VkPipeline atmosphere_composite_pipeline;
 	VkPipeline taa_pipeline;

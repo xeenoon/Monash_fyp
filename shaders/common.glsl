@@ -44,6 +44,8 @@ layout(set = 0, binding = 0) uniform FrameUniforms {
     vec4  point_light_color_intensity[16];
     vec4  point_light_options;      /* count, diffuse IBL scale, specular IBL scale, diagnostic light index */
     vec4  point_shadow_origin; /* camera world XYZ, BVH node count */
+    vec4  bloom_parameters;    /* threshold, knee, intensity, reserved */
+    vec4  light_shape;         /* local-light source radius m, reserved */
 } frame;
 
 layout(set = 0, binding = 1) uniform sampler2DArrayShadow shadow_map;

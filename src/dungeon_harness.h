@@ -24,6 +24,8 @@
  *   teleport_door <n> [far]       put them in reach of door n, on the side its
  *                                 lock hardware is on (or the far side)
  *   set_yaw <degrees>             aim the camera somewhere deliberately wrong
+ *   set_pitch <degrees>           orbit to a pitch (clamped to -35..-82), to check
+ *                                 a view at an angle a player can actually reach
  *   facing_of <n>                 print the yaw that would face door n
  *   wait <seconds>                let the loop run
  *   press <key>                   one frame of interact/left/right/up/down/

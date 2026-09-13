@@ -72,6 +72,7 @@ void camera_update(Camera *cam, float move_forward, float move_right, float look
 			if (speed > sprint_max_speed)
 				speed = sprint_max_speed;
 		}
+		speed *= cam->speed_scale > 0.0f ? cam->speed_scale : 1.0f;
 		vec3s step = glms_vec3_scale(glms_vec3_normalize(movement), speed * dt);
 		cam->position.x += (double)step.x;
 		cam->position.y += (double)step.y;

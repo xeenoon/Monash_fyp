@@ -446,6 +446,26 @@ static uint32_t run_command(DungeonHarness *harness, DungeonScene *scene,
 		camera->explore_yaw = camera->camera.yaw;
 		return 0;
 	}
+	if (!strcmp(verb, "set_pitch"))
+	{
+		/* The other half of aiming. dungeon_camera_orbit derives height and
+		 * trailing distance from pitch at a fixed orbit radius, so go through
+		 * it rather than writing the pitch field directly -- setting pitch on
+		 * its own leaves the follow code framing a different place than the
+		 * view is pointing. Orbiting is clamped, so a request outside the
+		 * playable range lands at the limit; `report` prints where it got to. */
+		float target = (float)atof(rest);
+		for (int step = 0; step < 4000; ++step)
+		{
+			float error_degrees = target - camera->camera.pitch;
+			if (fabsf(error_degrees) < 0.05f)
+				break;
+			dungeon_camera_orbit(camera, 0.0f, error_degrees > 0.0f ? 1.0f : -1.0f, 0.002f);
+		}
+		camera->explore_height = camera->height;
+		camera->explore_trailing = camera->trailing_distance;
+		return 0;
+	}
 	if (!strcmp(verb, "facing_of"))
 	{
 		uint32_t index = (uint32_t)atoi(rest);

@@ -1,0 +1,64 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "bloom_common.glsl"
+
+/* One level of the bloom downsample chain.
+ *
+ * The filter is the 13-tap kernel from Jorge Jimenez's "Next Generation Post
+ * Processing in Call of Duty: Advanced Warfare": four 2x2 boxes at the corners
+ * plus a centre box, weighted 0.125/0.125/0.125/0.125/0.5. A plain bilinear
+ * halving instead produces the pulsing, blocky bloom that gives cheap
+ * implementations away, because each level then aliases the one above it.
+ *
+ * The first level (prefilter) additionally isolates what is allowed to bloom
+ * and applies a Karis average. Both matter here for the same reason: a torch
+ * flame is a handful of very bright pixels, and a handful of very bright
+ * pixels is exactly the input that makes an unweighted downsample flicker. */
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+/* Karis: weight each of the five boxes by 1/(1+luma) before averaging, so one
+ * firefly cannot dominate the level it lands in. Only worth it on the
+ * prefilter level -- past that the input is already an average. */
+vec3 karis_box(vec3 a, vec3 b, vec3 c, vec3 d) {
+    vec3 box = (a + b + c + d) * 0.25;
+    return box / (1.0 + bloom_luminance(box));
+}
+
+void main() {
+    ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(bloom_destination);
+    if (texel.x >= size.x || texel.y >= size.y)
+        return;
+    vec2 uv = (vec2(texel) + 0.5) / vec2(size);
+    float lod = bloom_source_lod;
+    /* Step in SOURCE texels, not destination ones: the kernel's outer taps sit
+       two source texels out, which is one destination texel. */
+    vec2 step = 1.0 / vec2(textureSize(bloom_source, int(lod)));
+
+#define TAP(dx, dy) textureLod(bloom_source, uv + vec2(dx, dy) * step, lod).rgb
+    vec3 a = TAP(-2.0,  2.0), b = TAP( 0.0,  2.0), c = TAP( 2.0,  2.0);
+    vec3 d = TAP(-2.0,  0.0), e = TAP( 0.0,  0.0), f = TAP( 2.0,  0.0);
+    vec3 g = TAP(-2.0, -2.0), h = TAP( 0.0, -2.0), i = TAP( 2.0, -2.0);
+    vec3 j = TAP(-1.0,  1.0), k = TAP( 1.0,  1.0);
+    vec3 l = TAP(-1.0, -1.0), m = TAP( 1.0, -1.0);
+#undef TAP
+
+    vec3 result;
+    if (bloom_is_prefilter) {
+        /* Karis-averaged boxes, then the threshold, in that order: thresholding
+           first would let a single surviving firefly through at full weight. */
+        result = karis_box(j, k, l, m) * 0.5 +
+                 karis_box(a, b, d, e) * 0.125 +
+                 karis_box(b, c, e, f) * 0.125 +
+                 karis_box(d, e, g, h) * 0.125 +
+                 karis_box(e, f, h, i) * 0.125;
+        result = bloom_prefilter(result);
+    } else {
+        result = (j + k + l + m) * 0.125 +
+                 (a + c + g + i) * 0.03125 +
+                 (b + d + f + h) * 0.0625 +
+                 e * 0.125;
+    }
+    imageStore(bloom_destination, texel, vec4(result, 1.0));
+}

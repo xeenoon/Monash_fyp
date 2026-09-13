@@ -1,0 +1,36 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "bloom_common.glsl"
+
+/* One level of the bloom upsample chain: blur the coarser mip with a 3x3 tent
+ * and add it into the finer one, which already holds that level's downsampled
+ * result. Walking back up the pyramid adding as you go is what turns a stack
+ * of box-filtered mips into one wide, smooth falloff -- sampling the mips
+ * independently and summing them instead gives the banded "onion ring" halo.
+ *
+ * The tent radius is in SOURCE texels and stays constant across levels, so the
+ * blur widens in world terms exactly as fast as the pyramid coarsens. That is
+ * the property that makes the final falloff scale-free: a torch flame twelve
+ * pixels across and one two hundred pixels across get the same shaped glow. */
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+void main() {
+    ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(bloom_destination);
+    if (texel.x >= size.x || texel.y >= size.y)
+        return;
+    vec2 uv = (vec2(texel) + 0.5) / vec2(size);
+    float lod = bloom_source_lod;
+    vec2 step = bloom_radius / vec2(textureSize(bloom_source, int(lod)));
+
+#define TAP(dx, dy) textureLod(bloom_source, uv + vec2(dx, dy) * step, lod).rgb
+    vec3 tent = TAP(-1.0,  1.0) * 1.0 + TAP( 0.0,  1.0) * 2.0 + TAP( 1.0,  1.0) * 1.0 +
+                TAP(-1.0,  0.0) * 2.0 + TAP( 0.0,  0.0) * 4.0 + TAP( 1.0,  0.0) * 2.0 +
+                TAP(-1.0, -1.0) * 1.0 + TAP( 0.0, -1.0) * 2.0 + TAP( 1.0, -1.0) * 1.0;
+    tent *= 1.0 / 16.0;
+#undef TAP
+
+    vec3 existing = imageLoad(bloom_destination, texel).rgb;
+    imageStore(bloom_destination, texel, vec4(existing + tent * bloom_weight, 1.0));
+}

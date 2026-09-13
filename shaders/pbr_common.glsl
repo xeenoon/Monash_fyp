@@ -155,4 +155,27 @@ UeDefaultLit ue_default_lit_bxdf(vec3 diffuse_color, vec3 F0,
     return lighting;
 }
 
+/* Distance attenuation for a local light that is not a point.
+ *
+ * The windowed inverse square is the standard one: a smooth cutoff at the
+ * light's radius, because a hard `if (distance < radius)` leaves a visible
+ * edge on the floor. What is added here is a SOURCE RADIUS.
+ *
+ * A torch flame is roughly a 15 cm blob, and a wall-mounted one sits about
+ * 17 cm off the wall behind it. Treated as a point, the inverse square then
+ * makes that wall 2.5x brighter than the flame itself -- measurably, not as
+ * an impression -- so the fire reads as a dark smudge in front of a hot spot,
+ * which is the exact opposite of what fire looks like. Softening the near
+ * field with 1/(d + r)^2 fixes it where it is wrong and leaves the rest of
+ * the room alone: at 17 cm a 12 cm source drops the surface to a third of the
+ * point-light value, while at three metres it is still 92% of it.
+ *
+ * `source_radius` of 0 reproduces the old point behaviour exactly. */
+float local_light_attenuation(float distance_to_light, float light_radius, float source_radius) {
+    float normalized_distance = distance_to_light / max(light_radius, 1e-4);
+    float window = max(1.0 - pow(normalized_distance, 4.0), 0.0);
+    float softened = distance_to_light + max(source_radius, 0.0);
+    return window * window / max(softened * softened, 0.01);
+}
+
 #endif

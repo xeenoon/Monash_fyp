@@ -35,6 +35,21 @@ typedef struct
 _Static_assert(sizeof(DumpRecord) == SHADER_DUMP_RECORD_FLOATS * 4u,
 			   "DumpRecord must match std430 DumpRecord in shader_dump.glsl");
 
+/* A float knob with a default. Used for the post-processing parameters that
+   are worth being able to sweep from a shell without a rebuild. */
+static float environment_float(const char *name, float fallback)
+{
+	const char *value = getenv(name);
+	return value && *value ? (float)atof(value) : fallback;
+}
+
+/* Mirrors the BloomData push block in bloom_common.glsl. */
+typedef struct
+{
+	float filter_parameters[4]; /* source mip, prefilter flag, threshold, knee */
+	float blend_parameters[4];  /* upsample radius, coarse-level weight, reserved */
+} BloomPushConstants;
+
 /* Kept in sync with the DUMP_SHADER_* constants in shaders/shader_dump.glsl. */
 #define DUMP_SHADER_TERRAIN 0u
 #define DUMP_SHADER_MESH 1u
@@ -47,6 +62,7 @@ _Static_assert(sizeof(DumpRecord) == SHADER_DUMP_RECORD_FLOATS * 4u,
 #define DUMP_SHADER_DUNGEON_SURFACE 8u
 #define DUMP_SHADER_DUNGEON_PUDDLE 9u
 #define DUMP_SHADER_POINT_SHADOW 10u
+#define DUMP_SHADER_DUNGEON_FLAME 11u
 
 static const char *shader_dump_name(uint32_t shader_id)
 {
@@ -74,6 +90,8 @@ static const char *shader_dump_name(uint32_t shader_id)
 		return "dungeon_puddle";
 	case DUMP_SHADER_POINT_SHADOW:
 		return "point_shadow";
+	case DUMP_SHADER_DUNGEON_FLAME:
+		return "dungeon_flame";
 	default:
 		return "unknown";
 	}
@@ -146,7 +164,10 @@ _Static_assert(offsetof(FrameUniforms, point_light_options) == 1680,
 			   "FrameUniforms point-light options offset");
 _Static_assert(offsetof(FrameUniforms, point_shadow_origin) == 1696,
 			   "FrameUniforms point-light blocker offset");
-_Static_assert(sizeof(FrameUniforms) == 1712, "FrameUniforms std140 size");
+_Static_assert(offsetof(FrameUniforms, bloom_parameters) == 1712,
+			   "FrameUniforms bloom parameters offset");
+_Static_assert(offsetof(FrameUniforms, light_shape) == 1728, "FrameUniforms light shape offset");
+_Static_assert(sizeof(FrameUniforms) == 1744, "FrameUniforms std140 size");
 _Static_assert(sizeof(DrawPushConstants) == 128, "terrain push constant size");
 _Static_assert(offsetof(TemporalExposure, histogram) == 16,
 			   "TemporalExposure std430 histogram offset");
@@ -481,17 +502,20 @@ static void create_descriptors(Renderer *r)
 		.pBindings = display_bindings};
 	VK_CHECK(vkCreateDescriptorSetLayout(r->device, &display_layout, NULL, &r->display_set_layout));
 
-	VkDescriptorSetLayoutBinding temporal_bindings[7];
-	for (uint32_t i = 0; i < 7; ++i)
+	/* 0-5 sampled scene/history, 6 the exposure buffer, 7 the finished bloom
+	   pyramid's mip 0 -- the tone mapper is the only reader of that last one,
+	   and it already binds this set. */
+	VkDescriptorSetLayoutBinding temporal_bindings[8];
+	for (uint32_t i = 0; i < 8; ++i)
 		temporal_bindings[i] = (VkDescriptorSetLayoutBinding){
 			.binding = i,
 			.descriptorCount = 1,
-			.descriptorType = i < 6 ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
-									: VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+			.descriptorType = i == 6 ? VK_DESCRIPTOR_TYPE_STORAGE_BUFFER
+									 : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 			.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT};
 	VkDescriptorSetLayoutCreateInfo temporal_layout = {
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-		.bindingCount = 7,
+		.bindingCount = 8,
 		.pBindings = temporal_bindings};
 	VK_CHECK(
 		vkCreateDescriptorSetLayout(r->device, &temporal_layout, NULL, &r->temporal_set_layout));
@@ -511,25 +535,52 @@ static void create_descriptors(Renderer *r)
 	VK_CHECK(vkCreateDescriptorSetLayout(r->device, &atmosphere_layout, NULL,
 										 &r->atmosphere_set_layout));
 
+	/* Bloom compute binds nothing but this: the level it reads, the level it
+	   writes, and the exposure its threshold is expressed against. Keeping the
+	   frame set out of the layout is what lets one pipeline run over every mip
+	   with a single set each. */
+	VkDescriptorSetLayoutBinding bloom_bindings[3] = {
+		{.binding = 0,
+		 .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+		 .descriptorCount = 1,
+		 .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT},
+		{.binding = 1,
+		 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+		 .descriptorCount = 1,
+		 .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT},
+		{.binding = 2,
+		 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+		 .descriptorCount = 1,
+		 .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT},
+	};
+	VkDescriptorSetLayoutCreateInfo bloom_layout = {
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+		.bindingCount = 3,
+		.pBindings = bloom_bindings};
+	VK_CHECK(vkCreateDescriptorSetLayout(r->device, &bloom_layout, NULL, &r->bloom_set_layout));
+
 	/* +ENV_CUBE_MIPS combined-image-sampler/storage-image/set slots below are
 	   the one-shot B2 prefilter descriptor sets (one per output cube mip: b0
 	   samples the equirect or cube mip 0, b1 is that mip's storage view). */
 	VkDescriptorPoolSize pool_sizes[4] = {
 		{.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
 		 .descriptorCount = MAX_FRAMES_IN_FLIGHT * 2u /* frame UBO + environment UBO */},
+		/* The +(BLOOM_MIPS + 1) terms are the bloom pyramid's per-level sets:
+		   one per mip, plus the prefilter set that reads composite_color. */
 		{.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-		 .descriptorCount =
-			 MAX_TEXTURE_SETS * 6u + MAX_FRAMES_IN_FLIGHT * 2u + 26u + ENV_CUBE_MIPS},
-		{.type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = 5u + ENV_CUBE_MIPS},
+		 .descriptorCount = MAX_TEXTURE_SETS * 6u + MAX_FRAMES_IN_FLIGHT * 2u + 26u +
+							ENV_CUBE_MIPS + BLOOM_MIPS + 1u + 2u},
+		{.type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+		 .descriptorCount = 5u + ENV_CUBE_MIPS + BLOOM_MIPS + 1u},
 		{.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-		 .descriptorCount = MAX_FRAMES_IN_FLIGHT * 2u + 2u}};
+		 .descriptorCount = MAX_FRAMES_IN_FLIGHT * 2u + 2u + BLOOM_MIPS + 1u}};
 	uint32_t pool_size_count = 4;
 	VkDescriptorPoolCreateInfo pool = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
 									   .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
 									   .poolSizeCount = pool_size_count,
 									   .pPoolSizes = pool_sizes,
 									   .maxSets = MAX_FRAMES_IN_FLIGHT + MAX_TEXTURE_SETS + 5u +
-												  ENV_CUBE_MIPS};
+												  ENV_CUBE_MIPS + BLOOM_MIPS + 1u};
 	VK_CHECK(vkCreateDescriptorPool(r->device, &pool, NULL, &r->descriptor_pool));
 
 	/* One persistently-mapped UBO + set per frame in flight. */
@@ -1154,6 +1205,21 @@ static void create_pipeline_layout(Renderer *r)
 											   .pSetLayouts = compute_layouts};
 	VK_CHECK(
 		vkCreatePipelineLayout(r->device, &compute_info, NULL, &r->atmosphere_pipeline_layout));
+
+	/* Bloom compute is deliberately a set of one: see bloom_common.glsl. Its
+	   push constants carry the level's filter and blend parameters, so one
+	   pipeline covers every mip. */
+	VkPushConstantRange bloom_push = {.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+									  .offset = 0,
+									  .size = sizeof(BloomPushConstants)};
+	VkPipelineLayoutCreateInfo bloom_layout_info = {
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+		.setLayoutCount = 1,
+		.pSetLayouts = &r->bloom_set_layout,
+		.pushConstantRangeCount = 1,
+		.pPushConstantRanges = &bloom_push};
+	VK_CHECK(vkCreatePipelineLayout(r->device, &bloom_layout_info, NULL,
+									&r->bloom_pipeline_layout));
 }
 
 static VkPipeline create_compute_pipeline(Renderer *r, const char *shader_name)
@@ -1173,6 +1239,32 @@ static VkPipeline create_compute_pipeline(Renderer *r, const char *shader_name)
 	VK_CHECK(vkCreateComputePipelines(r->device, VK_NULL_HANDLE, 1, &info, NULL, &pipeline));
 	vkDestroyShaderModule(r->device, module, NULL);
 	return pipeline;
+}
+
+/* Bloom uses its own single-set layout, so it cannot go through
+   create_compute_pipeline (which hard-codes the atmosphere layout). */
+static VkPipeline create_bloom_pipeline(Renderer *r, const char *shader_name)
+{
+	char path[1024];
+	snprintf(path, sizeof(path), "%s/%s.spv", SHADER_DIR, shader_name);
+	VkShaderModule module = create_shader_module(r, path);
+	VkComputePipelineCreateInfo info = {
+		.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+		.stage = {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+				  .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+				  .module = module,
+				  .pName = "main"},
+		.layout = r->bloom_pipeline_layout};
+	VkPipeline pipeline;
+	VK_CHECK(vkCreateComputePipelines(r->device, VK_NULL_HANDLE, 1, &info, NULL, &pipeline));
+	vkDestroyShaderModule(r->device, module, NULL);
+	return pipeline;
+}
+
+static void create_bloom_pipelines(Renderer *r)
+{
+	r->bloom_downsample_pipeline = create_bloom_pipeline(r, "bloom_downsample.comp");
+	r->bloom_upsample_pipeline = create_bloom_pipeline(r, "bloom_upsample.comp");
 }
 
 static void create_atmosphere_pipelines(Renderer *r)
@@ -1442,6 +1534,110 @@ static void environment_prefilter(Renderer *r)
 	texture_destroy(r->device, r->allocator, &r->environment_equirect);
 }
 
+/* --- Bloom -------------------------------------------------------------
+
+   A half-resolution mip pyramid holding the frame's above-threshold energy,
+   blurred wider at every level, added back by the tone mapper. This is what
+   makes an emissive surface read as a LIGHT rather than as a bright polygon:
+   a torch flame twelve pixels across otherwise has nowhere to put the energy
+   that a real lens would spread across the surrounding frame.
+
+   The whole pyramid stays in VK_IMAGE_LAYOUT_GENERAL for its entire life. It
+   is legal to sample a GENERAL image, and the alternative -- transitioning
+   each mip between GENERAL and SHADER_READ_ONLY as the chain walks down and
+   back up -- is a dozen per-mip barriers to get subtly wrong for no measured
+   gain over the plain memory barriers used here. */
+static void create_bloom_resources(Renderer *r)
+{
+	uint32_t width = r->swapchain_extent.width / 2u;
+	uint32_t height = r->swapchain_extent.height / 2u;
+	if (width < 1u) width = 1u;
+	if (height < 1u) height = 1u;
+	/* One level per halving that still has texels to halve. A tiny window
+	   gets a shorter pyramid rather than 1x1 levels that only alias. */
+	r->bloom_levels = 1u;
+	while (r->bloom_levels < BLOOM_MIPS && (width >> r->bloom_levels) >= 2u &&
+		   (height >> r->bloom_levels) >= 2u)
+		++r->bloom_levels;
+	TextureDesc desc = {.format = VK_FORMAT_R16G16B16A16_SFLOAT,
+						.width = width,
+						.height = height,
+						.mip_levels = r->bloom_levels,
+						.aspect = VK_IMAGE_ASPECT_COLOR_BIT,
+						.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+						.filter = VK_FILTER_LINEAR,
+						.address_mode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+						.create_sampler = true};
+	r->bloom = texture_create(r->device, r->allocator, &desc);
+
+	VkDescriptorBufferInfo exposure_info = {
+		.buffer = r->exposure_buffer.buffer, .offset = 0, .range = sizeof(TemporalExposure)};
+	VkDescriptorSetAllocateInfo alloc = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+										 .descriptorPool = r->descriptor_pool,
+										 .descriptorSetCount = 1,
+										 .pSetLayouts = &r->bloom_set_layout};
+	/* One set per level, plus the prefilter set whose source is the scene
+	   rather than the pyramid. Every set writes exactly one mip. */
+	for (uint32_t level = 0; level <= r->bloom_levels; ++level)
+	{
+		bool prefilter = level == r->bloom_levels;
+		uint32_t mip = prefilter ? 0u : level;
+		VkDescriptorSet *destination = prefilter ? &r->bloom_prefilter_set : &r->bloom_set[level];
+		VK_CHECK(vkAllocateDescriptorSets(r->device, &alloc, destination));
+		if (!prefilter)
+			r->bloom_storage_views[level] =
+				texture_create_2d_mip_view(r->device, &r->bloom, level);
+		const Texture *source = prefilter ? &r->composite_color : &r->bloom;
+		VkDescriptorImageInfo source_image = {
+			.sampler = source->sampler,
+			.imageView = source->view,
+			.imageLayout = prefilter ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+									 : VK_IMAGE_LAYOUT_GENERAL};
+		VkDescriptorImageInfo storage_image = {.imageView = r->bloom_storage_views[mip],
+											   .imageLayout = VK_IMAGE_LAYOUT_GENERAL};
+		VkWriteDescriptorSet writes[3] = {
+			{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			 .dstSet = *destination,
+			 .dstBinding = 0,
+			 .descriptorCount = 1,
+			 .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			 .pImageInfo = &source_image},
+			{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			 .dstSet = *destination,
+			 .dstBinding = 1,
+			 .descriptorCount = 1,
+			 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+			 .pImageInfo = &storage_image},
+			{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			 .dstSet = *destination,
+			 .dstBinding = 2,
+			 .descriptorCount = 1,
+			 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+			 .pBufferInfo = &exposure_info},
+		};
+		vkUpdateDescriptorSets(r->device, 3, writes, 0, NULL);
+	}
+}
+
+static void destroy_bloom_resources(Renderer *r)
+{
+	for (uint32_t level = 0; level < r->bloom_levels; ++level)
+	{
+		vkDestroyImageView(r->device, r->bloom_storage_views[level], NULL);
+		r->bloom_storage_views[level] = VK_NULL_HANDLE;
+	}
+	/* The sets come from a FREE_DESCRIPTOR_SET pool and the pool itself
+	   outlives the swapchain, so they have to be returned by hand. */
+	VkDescriptorSet sets[BLOOM_MIPS + 1u];
+	uint32_t count = 0;
+	for (uint32_t level = 0; level < r->bloom_levels; ++level)
+		sets[count++] = r->bloom_set[level];
+	sets[count++] = r->bloom_prefilter_set;
+	vkFreeDescriptorSets(r->device, r->descriptor_pool, count, sets);
+	texture_destroy(r->device, r->allocator, &r->bloom);
+	r->bloom_levels = 0;
+}
+
 /* Terrain and imported static meshes share every graphics-pipeline state except
    their shaders, so both are built from this one description. */
 /* alpha_blend selects the puddle variant: attachment 0 (colour) blends
@@ -1505,9 +1701,11 @@ static void create_scene_pipeline_ex(Renderer *r, const char *vert_name, const c
 	{
 		blend_attachments[0].blendEnable = VK_TRUE;
 		blend_attachments[0].srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-		blend_attachments[0].dstColorBlendFactor = !strcmp(frag_name, "dungeon_light.frag")
-													   ? VK_BLEND_FACTOR_ONE
-													   : VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+		/* Emitters add to what is behind them; puddles composite over it. */
+		bool additive = !strcmp(frag_name, "dungeon_light.frag") ||
+						!strcmp(frag_name, "dungeon_flame.frag");
+		blend_attachments[0].dstColorBlendFactor =
+			additive ? VK_BLEND_FACTOR_ONE : VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
 		blend_attachments[0].colorBlendOp = VK_BLEND_OP_ADD;
 		blend_attachments[0].srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
 		blend_attachments[0].dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
@@ -1563,6 +1761,8 @@ static void create_terrain_pipeline(Renderer *r)
 	create_scene_pipeline(r, "mesh.vert", "dungeon_surface.frag", &r->dungeon_surface_pipeline);
 	create_scene_pipeline(r, "mesh.vert", "dungeon_moss.frag", &r->dungeon_moss_pipeline);
 	create_scene_pipeline_ex(r, "mesh.vert", "dungeon_puddle.frag", &r->dungeon_puddle_pipeline,
+							true);
+	create_scene_pipeline_ex(r, "mesh.vert", "dungeon_flame.frag", &r->dungeon_flame_pipeline,
 							true);
 }
 
@@ -1711,6 +1911,7 @@ static void create_post_pipelines(Renderer *r)
 		r, "atmosphere_composite.frag", r->composite_render_pass, r->display_pipeline_layout, 1);
 	r->taa_pipeline = create_fullscreen_pipeline(r, "temporal_resolve.frag", r->taa_render_pass,
 												 r->temporal_pipeline_layout, 2);
+	create_bloom_pipelines(r);
 	r->tone_map_pipeline = create_fullscreen_pipeline(r, "tonemap.frag", r->display_render_pass,
 													  r->temporal_pipeline_layout, 1);
 }
@@ -1892,6 +2093,8 @@ static void create_swapchain(Renderer *r)
 	};
 	vkUpdateDescriptorSets(r->device, 2, display_writes, 0, NULL);
 
+	create_bloom_resources(r);
+
 	VkDescriptorSetAllocateInfo temporal_alloc = {
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
 		.descriptorPool = r->descriptor_pool,
@@ -1904,37 +2107,44 @@ static void create_swapchain(Renderer *r)
 		VK_CHECK(
 			vkAllocateDescriptorSets(r->device, &temporal_alloc, &r->temporal_set[destination]));
 		uint32_t previous = destination ^ 1u;
-		Texture *sampled_textures[6] = {&r->composite_color,
+		Texture *sampled_textures[7] = {&r->composite_color,
 										&r->depth,
 										&r->motion,
 										&r->taa_history[previous],
 										&r->taa_history_depth[previous],
-										&r->taa_history[destination]};
-		VkDescriptorImageInfo temporal_images[6];
-		VkWriteDescriptorSet temporal_writes[7];
-		for (uint32_t binding = 0; binding < 6; ++binding)
+										&r->taa_history[destination],
+										&r->bloom};
+		VkDescriptorImageInfo temporal_images[7];
+		VkWriteDescriptorSet temporal_writes[8];
+		for (uint32_t binding = 0; binding < 7; ++binding)
 		{
-			temporal_images[binding] = (VkDescriptorImageInfo){
-				.sampler = sampled_textures[binding]->sampler,
-				.imageView = sampled_textures[binding]->view,
-				.imageLayout = binding == 1 ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
-											: VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+			/* The pyramid stays in GENERAL for the whole chain (see
+			   bloom_dispatch), so its sampled binding must say so too. */
+			VkImageLayout layout = binding == 1 ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
+								   : binding == 6 ? VK_IMAGE_LAYOUT_GENERAL
+												  : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			temporal_images[binding] =
+				(VkDescriptorImageInfo){.sampler = sampled_textures[binding]->sampler,
+										.imageView = sampled_textures[binding]->view,
+										.imageLayout = layout};
+			/* Binding 6 is the exposure buffer, so the bloom image (index 6
+			   in the array above) is written to binding 7. */
 			temporal_writes[binding] =
 				(VkWriteDescriptorSet){.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 									   .dstSet = r->temporal_set[destination],
-									   .dstBinding = binding,
+									   .dstBinding = binding == 6 ? 7u : binding,
 									   .descriptorCount = 1,
 									   .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 									   .pImageInfo = &temporal_images[binding]};
 		}
-		temporal_writes[6] =
+		temporal_writes[7] =
 			(VkWriteDescriptorSet){.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 								   .dstSet = r->temporal_set[destination],
 								   .dstBinding = 6,
 								   .descriptorCount = 1,
 								   .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 								   .pBufferInfo = &exposure_info};
-		vkUpdateDescriptorSets(r->device, 7, temporal_writes, 0, NULL);
+		vkUpdateDescriptorSets(r->device, 8, temporal_writes, 0, NULL);
 	}
 
 	VkImageView scene_attachments[] = {r->hdr_color.view, r->motion.view, r->depth.view};
@@ -2021,6 +2231,97 @@ static void create_swapchain(Renderer *r)
 	r->temporal_history_valid = false;
 }
 
+/* Builds the bloom pyramid for this frame: prefilter + halve down the chain,
+   then tent-blur back up adding each coarser level into the finer one. Runs
+   after the exposure compute, because the prefilter threshold is expressed in
+   exposed units and wants THIS frame's exposure, not the previous one's. */
+static void bloom_dispatch(Renderer *r, VkCommandBuffer command)
+{
+	if (!r->bloom_levels)
+		return;
+	/* The pyramid lives in GENERAL. Transitioning it once, on the first use
+	   after (re)creation, is the only layout work the whole feature needs. */
+	VkImageMemoryBarrier to_general = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+		.srcAccessMask = 0,
+		.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+		.oldLayout = r->bloom.layout,
+		.newLayout = VK_IMAGE_LAYOUT_GENERAL,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.image = r->bloom.image,
+		.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, r->bloom_levels, 0, 1}};
+	if (r->bloom.layout != VK_IMAGE_LAYOUT_GENERAL)
+	{
+		vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+							 VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, NULL, 0, NULL, 1,
+							 &to_general);
+		r->bloom.layout = VK_IMAGE_LAYOUT_GENERAL;
+	}
+
+	/* Between levels: the write of mip N has to be visible to the read of
+	   mip N by the next dispatch. Both are shader accesses on the same image,
+	   in the same layout, so one memory barrier covers it. */
+	VkMemoryBarrier between_levels = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+									  .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+									  .dstAccessMask = VK_ACCESS_SHADER_READ_BIT};
+
+	uint32_t width = r->bloom.extent.width, height = r->bloom.extent.height;
+	vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_COMPUTE, r->bloom_downsample_pipeline);
+	for (uint32_t level = 0; level < r->bloom_levels; ++level)
+	{
+		bool prefilter = level == 0;
+		BloomPushConstants push = {
+			/* Level 0 reads composite_color's only mip; the rest read the mip
+			   above them in this same pyramid. */
+			.filter_parameters = {prefilter ? 0.0f : (float)(level - 1u), prefilter ? 1.0f : 0.0f,
+								  r->bloom_threshold, r->bloom_knee},
+			.blend_parameters = {0.0f, 0.0f, 0.0f, 0.0f}};
+		vkCmdPushConstants(command, r->bloom_pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
+						   sizeof(push), &push);
+		vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_COMPUTE, r->bloom_pipeline_layout,
+								0, 1, prefilter ? &r->bloom_prefilter_set : &r->bloom_set[level],
+								0, NULL);
+		uint32_t level_width = width >> level, level_height = height >> level;
+		if (!level_width) level_width = 1u;
+		if (!level_height) level_height = 1u;
+		vkCmdDispatch(command, (level_width + 7u) / 8u, (level_height + 7u) / 8u, 1);
+		vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+							 VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &between_levels, 0, NULL,
+							 0, NULL);
+	}
+
+	vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_COMPUTE, r->bloom_upsample_pipeline);
+	for (uint32_t level = r->bloom_levels - 1u; level-- > 0;)
+	{
+		BloomPushConstants push = {
+			.filter_parameters = {(float)(level + 1u), 0.0f, 0.0f, 0.0f},
+			/* A radius of one source texel is the plain tent; widening it
+			   trades a smoother falloff for the risk of sampling past the
+			   coarse level's edge. Weight 1.0 keeps the pyramid's energy. */
+			.blend_parameters = {1.0f, 1.0f, 0.0f, 0.0f}};
+		vkCmdPushConstants(command, r->bloom_pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
+						   sizeof(push), &push);
+		vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_COMPUTE, r->bloom_pipeline_layout,
+								0, 1, &r->bloom_set[level], 0, NULL);
+		uint32_t level_width = width >> level, level_height = height >> level;
+		if (!level_width) level_width = 1u;
+		if (!level_height) level_height = 1u;
+		vkCmdDispatch(command, (level_width + 7u) / 8u, (level_height + 7u) / 8u, 1);
+		vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+							 VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &between_levels, 0, NULL,
+							 0, NULL);
+	}
+
+	/* Mip 0 is about to be sampled by the tone mapper's fragment shader. */
+	VkMemoryBarrier for_tonemap = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+								   .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+								   .dstAccessMask = VK_ACCESS_SHADER_READ_BIT};
+	vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+						 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 1, &for_tonemap, 0, NULL, 0,
+						 NULL);
+}
+
 static void destroy_swapchain(Renderer *r)
 {
 #ifdef DEBUG_SHADER_DUMP
@@ -2045,12 +2346,15 @@ static void destroy_swapchain(Renderer *r)
 		texture_destroy(r->device, r->allocator, &r->taa_history_depth[i]);
 		texture_destroy(r->device, r->allocator, &r->taa_history[i]);
 	}
+	destroy_bloom_resources(r);
 	texture_destroy(r->device, r->allocator, &r->composite_color);
 	texture_destroy(r->device, r->allocator, &r->depth);
 	texture_destroy(r->device, r->allocator, &r->motion);
 	texture_destroy(r->device, r->allocator, &r->hdr_color);
 	texture_destroy(r->device, r->allocator, &r->refraction_color);
 	texture_destroy(r->device, r->allocator, &r->refraction_depth);
+	vkDestroyPipeline(r->device, r->bloom_downsample_pipeline, NULL);
+	vkDestroyPipeline(r->device, r->bloom_upsample_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->tone_map_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->taa_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->atmosphere_composite_pipeline, NULL);
@@ -2059,6 +2363,7 @@ static void destroy_swapchain(Renderer *r)
 	vkDestroyPipeline(r->device, r->dungeon_beam_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->dungeon_light_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->dungeon_puddle_pipeline, NULL);
+	vkDestroyPipeline(r->device, r->dungeon_flame_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->dungeon_surface_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->dungeon_moss_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->mesh_pipeline, NULL);
@@ -2101,6 +2406,8 @@ void renderer_reload_pipeline(Renderer *r)
 	vkDestroyPipeline(r->device, r->shadow_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->exposure_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->luminance_histogram_pipeline, NULL);
+	vkDestroyPipeline(r->device, r->bloom_downsample_pipeline, NULL);
+	vkDestroyPipeline(r->device, r->bloom_upsample_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->tone_map_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->taa_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->atmosphere_composite_pipeline, NULL);
@@ -2109,6 +2416,7 @@ void renderer_reload_pipeline(Renderer *r)
 	vkDestroyPipeline(r->device, r->dungeon_beam_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->dungeon_light_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->dungeon_puddle_pipeline, NULL);
+	vkDestroyPipeline(r->device, r->dungeon_flame_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->dungeon_surface_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->dungeon_moss_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->mesh_pipeline, NULL);
@@ -2181,7 +2489,7 @@ static const char *const SHADER_DUMP_LEGEND[] = {
 	"f4-6=out_color f7=_ f8-10=view_dir f11=distance_km f12-14=scattering f15=near_weight "
 	"f16-18=transmittance f19=w\n",
 	"# legend: tonemap f0-1=texcoord f2=exposure f3=dither f4-6=resolved f7=avg_luminance "
-	"f8-10=display_linear f11=debug_view f12-14=encoded f15=_ f16-18=out_color f19=_\n",
+	"f8-10=display_linear f11=debug_view f12-14=encoded f15=_ f16-18=out_color f19=bloom_luma\n",
 	"# legend: temporal_resolve f0-1=texcoord f2=depth f3=valid f4-5=velocity f6=motion_px "
 	"f7=current_weight f8-10=current f11=_ f12-14=history f15=_ f16-18=resolved f19=_\n",
 	"# legend: environment_ibl f0-2=reflection_direction f3=mip f4-6=raw_cube f7=NoV "
@@ -2196,6 +2504,9 @@ static const char *const SHADER_DUMP_LEGEND[] = {
 	"# legend: dungeon_puddle f0=rim_fade f1=fresnel f2=reflection_hit_distance f3=roughness "
 	"f4-6=base_color f7=alpha f8-10=normal f11=NoV f12-14=reflection_color f15=specular_strength "
 	"f16-18=final_HDR f19=ripple_height\n",
+	"# legend: dungeon_flame f0=density f1=temperature f2=cavity f3=coverage "
+	"f4=on_head f5=ember_coverage f6=flicker f7=local_width f8-10=flame_color "
+	"f11=structure f12-14=tint f15=warped_x f16-18=final_HDR f19=flow_time_tau\n",
 	"# legend: point_shadow f0=light_index f1=blocking_node f2=hit_distance f3=visibility "
 	"f4-6=unshadowed_contribution f7=light_distance f8-10=surface_world f12-14=geometric_normal "
 	"f16-18=light_world\n",
@@ -2638,6 +2949,9 @@ static void record_commands(Renderer *r, uint32_t image_index, const FrameUnifor
 		case RENDERER_PIPELINE_DUNGEON_PUDDLE:
 			wanted = r->dungeon_puddle_pipeline;
 			break;
+		case RENDERER_PIPELINE_DUNGEON_FLAME:
+			wanted = r->dungeon_flame_pipeline;
+			break;
 		default:
 			wanted = draws[i].static_mesh ? r->mesh_pipeline : r->terrain_pipeline;
 			break;
@@ -2753,6 +3067,8 @@ static void record_commands(Renderer *r, uint32_t image_index, const FrameUnifor
 	vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
 						 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, NULL, 1, &exposure_ready, 0,
 						 NULL);
+
+	bloom_dispatch(r, command);
 
 	VkClearValue display_clear = {.color = {{0.0f, 0.0f, 0.0f, 1.0f}}};
 	VkRenderPassBeginInfo display = {.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
@@ -2963,6 +3279,13 @@ void renderer_draw_frame(Renderer *r, const FrameUniforms *frame, const Renderer
 	effective_frame.temporal_parameters.x =
 		frame->temporal_parameters.x > 0.5f && r->temporal_history_valid ? 1.0f : 0.0f;
 
+	/* Bloom is the renderer's own business -- callers describe a scene, not a
+	   post chain -- so its parameters are filled in here rather than being
+	   one more thing every caller has to populate correctly. */
+	effective_frame.bloom_parameters =
+		(vec4s){{r->bloom_threshold, r->bloom_knee, r->bloom_intensity, 0.0f}};
+	effective_frame.light_shape = (vec4s){{r->light_source_radius, 0.0f, 0.0f, 0.0f}};
+
 	effective_frame.temporal_parameters.z = r->swapchain_format == VK_FORMAT_B8G8R8A8_SRGB ||
 													r->swapchain_format == VK_FORMAT_R8G8B8A8_SRGB
 												? 1.0f
@@ -3015,6 +3338,16 @@ void renderer_init(Renderer *r, SDL_Window *window, const RendererConfig *config
 		exit(EXIT_FAILURE);
 	}
 	r->shadow_resolution = r->shadow_quality.resolution;
+	/* Bloom defaults. The threshold sits just under 1.0 in exposed units, so
+	   what blooms is what the tone mapper is about to clip -- emissive
+	   surfaces and specular highlights -- rather than anything merely bright.
+	   The intensity is low because the pyramid holds only that excess energy
+	   and adding it back at full strength would double every highlight. */
+	r->bloom_threshold = environment_float("TERRAIN_BLOOM_THRESHOLD", 0.85f);
+	r->bloom_knee = environment_float("TERRAIN_BLOOM_KNEE", 0.45f);
+	r->bloom_intensity = environment_float("TERRAIN_BLOOM_INTENSITY", 0.55f);
+	/* A torch flame is roughly a 12 cm blob. Zero restores point lights. */
+	r->light_source_radius = environment_float("TERRAIN_LIGHT_SOURCE_RADIUS", 0.12f);
 	if (config && config->environment_path)
 		snprintf(r->environment_path, sizeof(r->environment_path), "%s", config->environment_path);
 	create_instance_and_device(r);

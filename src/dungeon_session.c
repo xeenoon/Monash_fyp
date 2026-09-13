@@ -70,24 +70,11 @@ bool dungeon_session_create(DungeonSession *session, const DungeonLevel *level)
 		dungeon_safe_pins_init(&state->safe, door->seed);
 		dungeon_prism_init(&state->prism, door->seed);
 		/* Put the lock hardware on the side the player approaches from, so the
-		 * first door met is never locked from behind. Use pathfinding to find the
-		 * actual approach direction through the dungeon rather than a straight line. */
+		 * first door met is never locked from behind. */
 		float normal_x = cosf(door->yaw), normal_z = sinf(door->yaw);
-		DungeonPoint approach_direction;
-		if (dungeon_field_bfs_direction(&level->field, 0.5f, level->spawn, door->center,
-										&approach_direction))
-		{
-			/* Check which side approach comes from: positive dot means we approach from positive side. */
-			float approach_side = approach_direction.x * normal_x + approach_direction.z * normal_z;
-			state->hardware_side = approach_side > 0.0f ? -1.0f : 1.0f;
-		}
-		else
-		{
-			/* Fallback to straight-line direction if pathfinding fails. */
-			float to_spawn = (level->spawn.x - door->center.x) * normal_x +
-							 (level->spawn.z - door->center.z) * normal_z;
-			state->hardware_side = to_spawn < 0.0f ? -1.0f : 1.0f;
-		}
+		float to_spawn = (level->spawn.x - door->center.x) * normal_x +
+						 (level->spawn.z - door->center.z) * normal_z;
+		state->hardware_side = to_spawn < 0.0f ? -1.0f : 1.0f;
 	}
 	if (!rebuild_blockers(session))
 	{
