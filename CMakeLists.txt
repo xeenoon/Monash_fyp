@@ -74,9 +74,10 @@ endif()
 # are picked up automatically via the per-shader depfile below, so editing an
 # include rebuilds every dependent shader.
 foreach(SHADER cube.vert cube.frag terrain.vert terrain.frag mesh.vert mesh.frag
-               dungeon_surface.frag dungeon_moss.frag dungeon_puddle.frag dungeon_prism.frag dungeon_glass.frag dungeon_light.frag shadow.vert
+               dungeon_surface.frag dungeon_moss.frag dungeon_puddle.frag dungeon_prism.frag dungeon_glass.frag dungeon_light.frag dungeon_flame.frag shadow.vert
                fullscreen.vert tonemap.frag atmosphere_composite.frag
                temporal_resolve.frag luminance_histogram.comp exposure.comp
+               bloom_downsample.comp bloom_upsample.comp
                atmosphere_transmittance.comp
                atmosphere_multiscattering.comp atmosphere_skyview.comp
                atmosphere_aerial.comp
@@ -330,6 +331,7 @@ add_library(dungeon_level STATIC
     src/dungeon_cave.c
     src/dungeon_contour.c
     src/dungeon_grid.c
+    src/dungeon_lab.c
     src/dungeon_mesh.c
     src/dungeon_collision.c
     src/dungeon_player.c
