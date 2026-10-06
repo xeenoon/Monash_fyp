@@ -28,11 +28,59 @@ typedef struct {
     LocalToWorldTransform placement;
 } GltfLoadOptions;
 
+/* Sentinel for "no node": a primitive from a flattened file, or a root's
+ * parent. */
+#define GLTF_NO_NODE UINT32_MAX
+
+/* A node's local transform, kept as TRS rather than as a matrix because that
+ * is what glTF animates -- a clip drives translation, rotation and scale as
+ * three independent channels, and composing them back into a matrix before
+ * sampling would make layering two clips over one node impossible. */
+typedef struct {
+    float translation[3];
+    float rotation[4]; /* xyzw, glTF's quaternion order */
+    float scale[3];
+} GltfTransform;
+
+typedef enum {
+    GLTF_PATH_TRANSLATION,
+    GLTF_PATH_ROTATION,
+    GLTF_PATH_SCALE
+} GltfPath;
+
+/* One animated node property. `times` is strictly increasing seconds; sampling
+ * outside the range clamps, which is what lets a caller hold a finished clip on
+ * its last pose by parking its time past the end. */
+typedef struct {
+    uint32_t node;
+    GltfPath path;
+    bool step; /* STEP interpolation; LINEAR otherwise (slerp for rotation) */
+    uint32_t key_count;
+    float *times;
+    float *values; /* key_count * (3, or 4 for rotation) */
+} GltfChannel;
+
+typedef struct {
+    char *name;
+    float duration;
+    GltfChannel *channels;
+    uint32_t channel_count;
+} GltfClip;
+
+typedef struct {
+    char *name;
+    uint32_t parent; /* GLTF_NO_NODE at a root */
+    GltfTransform rest;
+} GltfNode;
+
 typedef struct {
     Mesh mesh;
     Vertex *vertices;
     uint32_t *indices;
     uint32_t material_index;
+    /* Which node the geometry hangs off, or GLTF_NO_NODE when the file had no
+     * animation and the hierarchy was flattened into the vertices at load. */
+    uint32_t node;
 } GltfPrimitive;
 
 typedef struct {
@@ -44,6 +92,19 @@ typedef struct {
     Texture base_color, metallic_roughness, normal, occlusion;
 } GltfMaterial;
 
+/* An imported scene is in ONE of two shapes, decided by whether the file has
+ * animation:
+ *
+ *   static  -- every node transform is baked into the vertices at load, nodes
+ *              and clips are empty, and a primitive's node is GLTF_NO_NODE.
+ *              This is what the wall torch and the quarry have always been,
+ *              and it stays byte-for-byte what it was.
+ *   posed   -- vertices stay in their own node's space, the hierarchy is kept,
+ *              and the caller poses it every frame (see gltf_scene_rest_pose).
+ *
+ * Flattening an animated file would be losing exactly the information the
+ * animation addresses, and keeping a hierarchy for a static one would make
+ * every existing caller pay a matrix chain for an identity. */
 typedef struct GltfScene {
     const char *source_path;
     GltfPrimitive *primitives;
@@ -51,6 +112,13 @@ typedef struct GltfScene {
     GltfMaterial *materials;
     uint32_t material_count;
     LocalToWorldTransform placement;
+    GltfNode *nodes;
+    uint32_t node_count;
+    /* Parents before children, so a world-matrix pass is one forward sweep.
+     * glTF does not require the file to be ordered that way. */
+    uint32_t *node_order;
+    GltfClip *clips;
+    uint32_t clip_count;
 } GltfScene;
 
 struct Renderer;
@@ -63,3 +131,30 @@ GltfLoadResult gltf_scene_parse(const char *path, const GltfLoadOptions *options
 GltfLoadResult gltf_scene_upload(struct Renderer *renderer, GltfScene *scene,
                                  GltfLoadError *error);
 void gltf_scene_destroy(struct Renderer *renderer, GltfScene *scene);
+
+/* Lookups by name. Names are what an asset pipeline can promise across a
+ * re-export; node and clip INDICES are not. Both return GLTF_NO_NODE when
+ * there is no such name. */
+uint32_t gltf_scene_find_node(const GltfScene *scene, const char *name);
+uint32_t gltf_scene_find_clip(const GltfScene *scene, const char *name);
+
+/* Posing is deliberately three separate steps rather than one "evaluate"
+ * call:
+ *
+ *   1. gltf_scene_rest_pose fills `pose` with every node's authored transform.
+ *   2. gltf_clip_sample writes ONLY the nodes a clip actually animates, so
+ *      clips over disjoint node sets LAYER by being applied in turn -- a pin
+ *      popping while the pick keeps jiggling is two clips, not a third clip
+ *      authored for the combination. (The exporter strips channels that never
+ *      leave rest, which is what makes the node sets disjoint.)
+ *   3. gltf_scene_world_matrices chains `pose` down the hierarchy.
+ *
+ * Between 2 and 3 the caller owns `pose` and may edit it: that is where game
+ * state that the animation does not cover goes -- which pin the pick is
+ * riding, how far an unset pin has been raised -- without the importer needing
+ * to know that any of those things exist.
+ *
+ * `pose` and `out` are both node_count long. */
+void gltf_scene_rest_pose(const GltfScene *scene, GltfTransform *pose);
+void gltf_clip_sample(const GltfScene *scene, uint32_t clip, float time, GltfTransform *pose);
+void gltf_scene_world_matrices(const GltfScene *scene, const GltfTransform *pose, mat4s *out);

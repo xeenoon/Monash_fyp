@@ -28,6 +28,11 @@
 #define DUNGEON_TORCH_PATH "assets/dungeons/torch/walltorch.gltf"
 #endif
 
+#ifndef DUNGEON_PADLOCK_PATH
+#define DUNGEON_PADLOCK_PATH "assets/dungeons/padlock/runtime/padlock.gltf"
+#endif
+
+
 static const char *const ALBEDO_PATHS[DUNGEON_MESH_BATCH_COUNT] = {
 	DUNGEON_TEXTURE_DIR "/floor_albedo.jpg",
 	DUNGEON_TEXTURE_DIR "/wall_albedo.jpg",
@@ -88,6 +93,13 @@ static const char *const NORMAL_PATHS[DUNGEON_MESH_BATCH_COUNT] = {
 	[DUNGEON_MESH_LOCK_PICK] = DUNGEON_TEXTURE_DIR "/lock_normal.png",
 };
 
+/* Defined with the rest of the padlock, below the lock frame they need. */
+static void pose_padlock(DungeonScene *scene, uint32_t door);
+static LocalToWorldTransform padlock_placement(const DungeonScene *scene, uint32_t door);
+static void lock_frame(const DungeonLevel *level, const DungeonSession *session, uint32_t index,
+					   DungeonPoint *out_origin, DungeonPoint *out_across,
+					   DungeonPoint *out_normal);
+
 static DrawPushConstants dungeon_push(const Mesh *mesh, WorldPosition camera_position)
 {
 	return (DrawPushConstants){
@@ -145,14 +157,69 @@ static LocalToWorldTransform player_torch_transform(const DungeonScene *scene)
 		scene->player.position.x, scene->level.floor_y + 0.73 - 1.14289 * scale,
 		scene->player.position.z + 0.06251 * scale});
 	for (int i = 0; i < 3; ++i) transform.rotation[i][i] = scale;
+
+	/* While working the pin tumbler, the player brings the torch up beside the
+	 * lock instead of leaving it behind at their walking position. Put the
+	 * flame just outside the right edge of the mechanism and slightly proud of
+	 * the door: it stays in frame, and its real point light has a clear oblique
+	 * path into the cutaway. The model, billboard and light all consume this
+	 * same transform, so this is a moved torch rather than a hidden task light.
+	 *
+	 * The standoff along the door normal has a hard ceiling that is not
+	 * obvious from here: the focus camera trails DUNGEON_CAMERA_FOCUS_TRAILING
+	 * (1.0 m) back from the lock, so a standoff of s leaves the flame 1 - s
+	 * ahead of it, and CAMERA_NEAR_PLANE is 0.5. At 0.55 the flame sat 0.45 m
+	 * out and was clipped away in its entirety -- while its light went on
+	 * arriving, so the mechanism stayed lit by a fire that was not on screen.
+	 * 0.40 leaves 0.6 m, clear of the plane with room for the billboard's own
+	 * lean. `expect flame_framed` in the lockpick script is what holds it. */
+	if (scene->session.phase == DUNGEON_PHASE_PIN_TUMBLER &&
+		scene->session.focused_door < scene->session.door_count)
+	{
+		DungeonPoint origin, across, normal;
+		lock_frame(&scene->level, &scene->session, scene->session.focused_door,
+				   &origin, &across, &normal);
+		WorldPosition desired_head = {
+			origin.x + (double)across.x * 0.20 + (double)normal.x * 0.40,
+			(double)DUNGEON_LOCK_CENTRE_Y_M - 0.02,
+			origin.z + (double)across.z * 0.20 + (double)normal.z * 0.40};
+		WorldPosition current_head = coordinate_local_to_world(
+			&transform, (TileLocalPosition){0.0f, 1.5223f, -0.13f});
+		transform.translation.x += desired_head.x - current_head.x;
+		transform.translation.y += desired_head.y - current_head.y;
+		transform.translation.z += desired_head.z - current_head.z;
+	}
 	return transform;
 }
 
 /* The burning end of the carried torch, in world space. The carried point
  * light and the carried flame billboard both hang off this, so they can never
  * drift apart. */
+/* Whether the fire is the one in the character's raised hand. The pin
+ * tumbler is the exception: its close-up needs the carried torch brought in
+ * beside the mechanism (see player_torch_transform), so that one lock keeps
+ * the separate torch even when a character is drawn. */
+static bool character_torch(const DungeonScene *scene)
+{
+	return scene->character && scene->character->loaded &&
+		   scene->session.phase != DUNGEON_PHASE_PIN_TUMBLER;
+}
+
+static LocalToWorldTransform character_transform(const DungeonScene *scene)
+{
+	return game_character_transform(
+		scene->character,
+		(WorldPosition){scene->player.position.x, scene->level.floor_y, scene->player.position.z},
+		scene->player_facing, scene->player_stride, scene->time);
+}
+
 static WorldPosition player_torch_head(const DungeonScene *scene)
 {
+	if (character_torch(scene))
+	{
+		LocalToWorldTransform body = character_transform(scene);
+		return game_character_torch_head(scene->character, &body);
+	}
 	LocalToWorldTransform carried = player_torch_transform(scene);
 	/* Local Y 1.5223 is the top of the source mesh's bowl, not a round number
 	 * near it: seating the anchor five centimetres proud of the bowl, as an
@@ -265,6 +332,33 @@ static LocalToWorldTransform flame_billboard(WorldPosition anchor, WorldPosition
 		anchor.y + up[1] * (FLAME_HEIGHT_M * 0.5 - FLAME_BASE_DROP_M),
 		anchor.z + up[2] * (FLAME_HEIGHT_M * 0.5 - FLAME_BASE_DROP_M)};
 	return transform;
+}
+
+/* Where the carried flame is drawn and how big it is drawn, so a script can
+ * ask whether the player can actually SEE it -- and whether it is standing in
+ * front of the mechanism it was moved there to light.
+ *
+ * The centre is reported with a world-up lift rather than the billboard's own
+ * tipped up axis: the two differ by the FLAME_CAMERA_TILT the quad takes when
+ * the camera looks down on it, which at the near-level lock framing this is
+ * asked about is a millimetre or two. Half-extents are the quad's, not the
+ * shader's narrower bright core, so a caller asking "does this cover a pin"
+ * gets the conservative answer. */
+void dungeon_scene_player_flame(const DungeonScene *scene, WorldPosition *out_centre,
+								float *out_half_width, float *out_half_height)
+{
+	if (!scene)
+		return;
+	if (out_centre)
+	{
+		WorldPosition head = player_torch_head(scene);
+		head.y += (double)FLAME_HEIGHT_M * 0.5 - (double)FLAME_BASE_DROP_M;
+		*out_centre = head;
+	}
+	if (out_half_width)
+		*out_half_width = FLAME_WIDTH_M * 0.5f;
+	if (out_half_height)
+		*out_half_height = FLAME_HEIGHT_M * 0.5f;
 }
 
 /* The standing torch (lab scene 2) is two pieces of generated geometry: a
@@ -765,6 +859,21 @@ bool dungeon_scene_pin_world(const DungeonScene *scene, uint32_t door_index, uin
 	const DungeonPinTumbler *pins = &scene->session.doors[door_index].pins;
 	if (pin >= pins->pin_count)
 		return false;
+	/* When the door wears the padlock, its pins are where the MODEL puts them.
+	 * Deriving them from the layout constants instead would let the drawn pins
+	 * and the tested pins disagree -- which is exactly the failure the
+	 * harness's pins_left_to_right check exists to catch. */
+	if (scene->padlock_loaded && scene->level.doors[door_index].lock == DUNGEON_LOCK_PIN_TUMBLER &&
+		pin < DUNGEON_PADLOCK_PINS && scene->padlock_model.pin_node[pin] != GLTF_NO_NODE)
+	{
+		pose_padlock((DungeonScene *)scene, door_index);
+		LocalToWorldTransform placement = padlock_placement(scene, door_index);
+		LocalToWorldTransform node =
+			coordinate_compose(&placement,
+							   scene->padlock_world[scene->padlock_model.pin_node[pin]]);
+		*out = node.translation;
+		return true;
+	}
 	DungeonPoint origin, across, normal;
 	lock_frame(&scene->level, &scene->session, door_index, &origin, &across, &normal);
 	*out = lock_point(origin, across, normal, dungeon_lock_layout_bore_lateral(pins, pin),
@@ -958,6 +1067,222 @@ static void append_prism_draws(DungeonScene *scene, uint32_t index, bool overlay
  * would pass through the corridor wall. Its collider is already gone by then
  * -- the session drops it the instant the lock turns -- so the player never
  * waits on the animation. */
+bool dungeon_scene_door_wears_padlock(const DungeonScene *scene, uint32_t door)
+{
+	return scene && scene->padlock_loaded && door < scene->session.door_count &&
+		   scene->level.doors[door].lock == DUNGEON_LOCK_PIN_TUMBLER;
+}
+
+bool dungeon_scene_padlock_pick_on_selection(DungeonScene *scene, uint32_t door)
+{
+	if (!dungeon_scene_door_wears_padlock(scene, door) || !scene->padlock_anim[door].engaged)
+		return false;
+	float offset = 0.0f;
+	if (!dungeon_padlock_model_pick_offset(&scene->padlock_model, &scene->padlock_anim[door],
+										   &scene->session.doors[door].pins, scene->padlock_pose,
+										   scene->padlock_world, &offset))
+		return false;
+	return fabsf(offset - (float)scene->session.doors[door].pins.selected) <= 0.05f;
+}
+
+/* Where the pick's node sits in the world, with the lock posed as it would be
+ * drawn this frame. What "moving the pick shows you which pin you are on" comes
+ * down to is how far this travels between one selection and the next. */
+bool dungeon_scene_padlock_pick_world(DungeonScene *scene, uint32_t door, WorldPosition *out)
+{
+	if (!dungeon_scene_door_wears_padlock(scene, door) || !out ||
+		scene->padlock_model.pick_node == GLTF_NO_NODE)
+		return false;
+	pose_padlock(scene, door);
+	LocalToWorldTransform placement = padlock_placement(scene, door);
+	*out = coordinate_compose(&placement, scene->padlock_world[scene->padlock_model.pick_node])
+			   .translation;
+	return true;
+}
+
+bool dungeon_scene_padlock_pin_travel(DungeonScene *scene, uint32_t door, uint32_t pin,
+									  float *out_metres)
+{
+	if (!dungeon_scene_door_wears_padlock(scene, door) || !out_metres ||
+		pin >= DUNGEON_PADLOCK_PINS || scene->padlock_model.pin_node[pin] == GLTF_NO_NODE)
+		return false;
+	uint32_t node = scene->padlock_model.pin_node[pin];
+	LocalToWorldTransform placement = padlock_placement(scene, door);
+	gltf_scene_rest_pose(&scene->padlock, scene->padlock_pose);
+	gltf_scene_world_matrices(&scene->padlock, scene->padlock_pose, scene->padlock_world);
+	LocalToWorldTransform rest = coordinate_compose(&placement, scene->padlock_world[node]);
+	pose_padlock(scene, door);
+	LocalToWorldTransform posed = coordinate_compose(&placement, scene->padlock_world[node]);
+	double dx = posed.translation.x - rest.translation.x;
+	double dy = posed.translation.y - rest.translation.y;
+	double dz = posed.translation.z - rest.translation.z;
+	*out_metres = (float)sqrt(dx * dx + dy * dy + dz * dz);
+	return true;
+}
+
+/* ----------------------------------------------------------------- padlock
+ *
+ * A pin-tumbler door wears the imported padlock. Everything below is the glue:
+ * dungeon_lock owns the pins, dungeon_padlock owns which clips are running,
+ * dungeon_padlock_pose owns where the parts end up, and this turns the three
+ * into draws.
+ */
+
+static LocalToWorldTransform padlock_placement(const DungeonScene *scene, uint32_t door)
+{
+	DungeonPoint origin, across, normal;
+	lock_frame(&scene->level, &scene->session, door, &origin, &across, &normal);
+	return dungeon_padlock_model_placement(&scene->padlock_model, origin, across, normal);
+}
+
+static void pose_padlock(DungeonScene *scene, uint32_t door)
+{
+	dungeon_padlock_model_pose(&scene->padlock_model, &scene->padlock_anim[door],
+							   &scene->session.doors[door].pins, true, scene->padlock_pose,
+							   scene->padlock_world);
+}
+
+/* Slot layout matches torch_push -- see the comment there; getting roughness
+ * and metallic the wrong way round pins the whole lock to flat plastic. */
+static DrawPushConstants padlock_push(const LocalToWorldTransform *transform,
+									  const GltfMaterial *material, WorldPosition camera,
+									  float tint)
+{
+	/* The source padlock was authored for a bright Blender studio and its baked
+	 * atlas is several stops darker than the generated lock material used by
+	 * the safe. Compensate that asset exposure here rather than increasing the
+	 * room lights and blowing out the door. Values above one are intentional:
+	 * base colour is linear HDR by the time mesh.frag applies this factor. */
+	const float padlock_albedo_gain = 2.4f;
+	return (DrawPushConstants){
+		.local_to_camera_relative = coordinate_local_to_camera_relative(transform, camera),
+		.geometry = {{material->base_color_factor[0] * tint * padlock_albedo_gain,
+					  material->base_color_factor[1] * tint * padlock_albedo_gain,
+					  material->base_color_factor[2] * tint * padlock_albedo_gain,
+					  material->base_color_factor[3]}},
+		.elevation_uv = {{material->roughness_factor, material->normal_scale,
+						  material->occlusion_strength, 0.0f}},
+		.material = {{material->metallic_factor, 1.0f, 1.0f, 1.0f}},
+		/* .y: the lock moves every frame it is being picked, so temporal reuse
+		 * has to reject its history the way the carried torch does. */
+		.debug = {{0.0f, 1.0f, 1.0f, 1.0f}},
+	};
+}
+
+static void append_padlock_draws(DungeonScene *scene, uint32_t door, bool focused,
+								 WorldPosition camera, RendererDraw *out, uint32_t *count,
+								 uint32_t capacity)
+{
+	pose_padlock(scene, door);
+	LocalToWorldTransform placement = padlock_placement(scene, door);
+	float tint = focused ? 1.0f : 0.5f;
+	bool pick_visible = dungeon_padlock_pick_visible(&scene->padlock_anim[door]);
+	for (uint32_t i = 0; i < scene->padlock.primitive_count && *count < capacity; ++i)
+	{
+		GltfPrimitive *primitive = &scene->padlock.primitives[i];
+		if (primitive->node == GLTF_NO_NODE)
+			continue;
+		if (!pick_visible && dungeon_padlock_model_node_is_pick(&scene->padlock_model,
+															   primitive->node))
+			continue;
+		GltfMaterial *material = &scene->padlock.materials[primitive->material_index];
+		LocalToWorldTransform transform =
+			coordinate_compose(&placement, scene->padlock_world[primitive->node]);
+		out[(*count)++] = (RendererDraw){.mesh = &primitive->mesh,
+										 .material_set = material->descriptor_set,
+										 .push = padlock_push(&transform, material, camera, tint),
+										 .static_mesh = true};
+	}
+}
+
+/* Follows the puzzle: engaged while this door is the one being picked, a pop
+ * per pin as it sets, and the opening clip when the lock turns. Every call is
+ * idempotent, so this reads the session's state rather than having to be told
+ * about edges. */
+static void update_padlocks(DungeonScene *scene, float dt)
+{
+	if (!scene->padlock_loaded)
+		return;
+	const DungeonSession *session = &scene->session;
+	for (uint32_t door = 0; door < session->door_count; ++door)
+	{
+		if (scene->level.doors[door].lock != DUNGEON_LOCK_PIN_TUMBLER)
+			continue;
+		const DungeonDoorState *state = &session->doors[door];
+		DungeonPadlockAnim *anim = &scene->padlock_anim[door];
+		for (uint32_t pin = 0; pin < DUNGEON_PADLOCK_PINS && pin < state->pins.pin_count; ++pin)
+			if (dungeon_pin_tumbler_pin_set(&state->pins, pin))
+				dungeon_padlock_pop_pin(anim, pin);
+		dungeon_padlock_show_heights(anim, state->pins.heights, state->pins.pin_count, dt);
+		if (state->pins.solved)
+			dungeon_padlock_unlock(anim);
+		else
+			dungeon_padlock_engage(anim, session->phase == DUNGEON_PHASE_PIN_TUMBLER &&
+											 session->focused_door == door);
+		dungeon_padlock_update(anim, scene->padlock_model.duration, dt);
+	}
+}
+
+/* Loads the runtime padlock. A MISSING asset is not an error: it is baked out
+ * of a 20 MB Blender source by tools/export_padlock_runtime.py and a fresh
+ * checkout does not have it, so the pin-tumbler doors fall back to the
+ * generated cutaway mechanism instead of the game refusing to start. A BROKEN
+ * asset is an error -- silently falling back would hide the export having gone
+ * wrong. */
+static bool load_padlock(Renderer *renderer, DungeonScene *out, DungeonLevelError *error)
+{
+	GltfLoadError padlock_error = {0};
+	GltfLoadResult result = gltf_scene_create(
+		renderer, DUNGEON_PADLOCK_PATH,
+		&(GltfLoadOptions){.use_metallic_roughness_red_as_occlusion = true,
+						   .placement = coordinate_identity_transform((WorldPosition){0})},
+		&out->padlock, &padlock_error);
+	if (result == GLTF_LOAD_IO_ERROR)
+	{
+		fprintf(stdout, "No padlock at %s; pin-tumbler doors use the generated mechanism "
+						"(run tools/export_padlock_runtime.py)\n", DUNGEON_PADLOCK_PATH);
+		return true;
+	}
+	if (result != GLTF_LOAD_OK)
+	{
+		if (error)
+			snprintf(error->message, sizeof(error->message), "could not load the padlock: %.200s",
+					 padlock_error.message);
+		return false;
+	}
+	if (out->padlock.primitive_count > DUNGEON_PADLOCK_MAX_PRIMITIVES)
+	{
+		if (error)
+			snprintf(error->message, sizeof(error->message),
+					 "the padlock has %u primitives, over the %u reserved per door",
+					 out->padlock.primitive_count, DUNGEON_PADLOCK_MAX_PRIMITIVES);
+		return false;
+	}
+	char bind_error[256] = {0};
+	if (!dungeon_padlock_model_bind(&out->padlock_model, &out->padlock, bind_error,
+									sizeof(bind_error)))
+	{
+		if (error)
+			snprintf(error->message, sizeof(error->message), "%.220s", bind_error);
+		return false;
+	}
+	out->padlock_pose = calloc(out->padlock.node_count, sizeof(*out->padlock_pose));
+	out->padlock_world = calloc(out->padlock.node_count, sizeof(*out->padlock_world));
+	if (!out->padlock_pose || !out->padlock_world)
+	{
+		if (error)
+			snprintf(error->message, sizeof(error->message), "out of memory posing the padlock");
+		return false;
+	}
+	fprintf(stdout, "Padlock: %u primitives, %u nodes, %u clips, reach %.3f m, centre %.3f m\n",
+			out->padlock.primitive_count, out->padlock.node_count, out->padlock.clip_count,
+			(double)out->padlock_model.reach, (double)out->padlock_model.centre_height);
+	out->padlock_loaded = true;
+	for (uint32_t door = 0; door < DUNGEON_MAX_DOORS; ++door)
+		dungeon_padlock_reset(&out->padlock_anim[door]);
+	return true;
+}
+
 static void append_door_draws(DungeonScene *scene, WorldPosition camera, RendererDraw *out,
 							  uint32_t *count, uint32_t capacity)
 {
@@ -985,12 +1310,29 @@ static void append_door_draws(DungeonScene *scene, WorldPosition camera, Rendere
 			append_prism_draws(scene, i, false, camera, out, count, capacity);
 		else if (door->lock == DUNGEON_LOCK_SAFE_PINS)
 			append_safe_pins_draws(scene, i, focused, camera, out, count, capacity);
+		else if (scene->padlock_loaded)
+			append_padlock_draws(scene, i, focused, camera, out, count, capacity);
 		else
 			append_pin_tumbler_draws(scene, i, focused, camera, out, count, capacity);
 	}
 }
 
+static bool scene_create(Renderer *renderer, DungeonScene *out, const uint32_t *seed_override,
+						 DungeonLevelError *error);
+
 bool dungeon_scene_create(Renderer *renderer, DungeonScene *out, DungeonLevelError *error)
+{
+	return scene_create(renderer, out, NULL, error);
+}
+
+bool dungeon_scene_create_seeded(Renderer *renderer, DungeonScene *out, uint32_t seed,
+								 DungeonLevelError *error)
+{
+	return scene_create(renderer, out, &seed, error);
+}
+
+static bool scene_create(Renderer *renderer, DungeonScene *out, const uint32_t *seed_override,
+						 DungeonLevelError *error)
 {
 	if (!renderer || !out)
 		return false;
@@ -1011,6 +1353,8 @@ bool dungeon_scene_create(Renderer *renderer, DungeonScene *out, DungeonLevelErr
 		const char *seed_env = getenv("DUNGEON_SEED");
 		if (seed_env)
 			seed = (uint32_t)strtoul(seed_env, NULL, 10);
+		if (seed_override)
+			seed = *seed_override;
 		DungeonCaveParams params = dungeon_cave_default_params(seed);
 		compiled = dungeon_cave_compile(&params, &out->level, error);
 	}
@@ -1124,11 +1468,7 @@ bool dungeon_scene_create(Renderer *renderer, DungeonScene *out, DungeonLevelErr
 		dungeon_scene_destroy(renderer, out);
 		return false;
 	}
-	/* Two slots are held back from the torches: slot zero is the light the
-	 * player carries, and one more is the light over the lock being picked.
-	 * With the camera zoomed onto a door the wall torches behind the player
-	 * contribute almost nothing, and there is no HUD to read pin heights off
-	 * if they fall dark. */
+	/* Slot zero is held back from the fixtures for the light the player carries. */
 	if (!dungeon_scene_prepare_shadows(out, renderer)) {
 		if (error) snprintf(error->message,sizeof(error->message),"could not build wall shadows");
 		dungeon_scene_destroy(renderer,out); return false;
@@ -1157,7 +1497,7 @@ bool dungeon_scene_create(Renderer *renderer, DungeonScene *out, DungeonLevelErr
 		}
 	}
 	else
-		out->light_count = dungeon_lighting_build(&out->level, out->lights, DUNGEON_MAX_LIGHTS - 2u);
+		out->light_count = dungeon_lighting_build(&out->level, out->lights, DUNGEON_MAX_LIGHTS - 1u);
 	GltfLoadError torch_error = {0};
 	if (gltf_scene_create(renderer, DUNGEON_TORCH_PATH,
 					  &(GltfLoadOptions){.placement =
@@ -1167,6 +1507,11 @@ bool dungeon_scene_create(Renderer *renderer, DungeonScene *out, DungeonLevelErr
 		if (error)
 			snprintf(error->message, sizeof(error->message), "could not load dungeon torch: %.220s",
 					 torch_error.message);
+		dungeon_scene_destroy(renderer, out);
+		return false;
+	}
+	if (!load_padlock(renderer, out, error))
+	{
 		dungeon_scene_destroy(renderer, out);
 		return false;
 	}
@@ -1234,6 +1579,38 @@ static void append_flame_draws(DungeonScene *scene, WorldPosition camera_positio
 	}
 }
 
+/* Rotation Ry(yaw) * Rx(pitch) * diag(scale), the unit cube being 0.7 m on a
+ * side with its origin at the centre of its base (see dungeon_mesh.c). */
+static void append_prop_draws(DungeonScene *scene, WorldPosition camera_position,
+							  RendererDraw *out, uint32_t *count, uint32_t capacity)
+{
+	if (!scene->uploaded[DUNGEON_MESH_PLAYER])
+		return;
+	const Mesh *cube = &scene->meshes[DUNGEON_MESH_PLAYER];
+	for (uint32_t i = 0; i < scene->prop_count && *count < capacity; ++i)
+	{
+		const DungeonProp *prop = &scene->props[i];
+		double cy = cos(prop->yaw), sy = sin(prop->yaw);
+		double cp = cos(prop->pitch), sp = sin(prop->pitch);
+		double scale[3] = {prop->size[0] / 0.7, prop->size[1] / 0.7, prop->size[2] / 0.7};
+		/* Columns of Ry * Rx. */
+		double basis[3][3] = {{cy, 0.0, -sy}, {sy * sp, cp, cy * sp}, {sy * cp, -sp, cy * cp}};
+		LocalToWorldTransform transform = {.translation = prop->position};
+		for (int c = 0; c < 3; ++c)
+			for (int r = 0; r < 3; ++r)
+				transform.rotation[c][r] = basis[c][r] * scale[c];
+		DrawPushConstants push = player_push(cube, camera_position);
+		push.local_to_camera_relative =
+			coordinate_local_to_camera_relative(&transform, camera_position);
+		push.geometry = (vec4s){{prop->color[0], prop->color[1], prop->color[2], 1.0f}};
+		push.material.x = prop->metallic;
+		out[(*count)++] = (RendererDraw){.mesh = cube,
+										 .material_set = cube->material_set,
+										 .push = push,
+										 .static_mesh = true};
+	}
+}
+
 uint32_t dungeon_scene_draws(DungeonScene *scene, WorldPosition camera_position,
 							 RendererDraw *out, uint32_t capacity, uint32_t *out_shadow_draw_count)
 {
@@ -1249,6 +1626,13 @@ uint32_t dungeon_scene_draws(DungeonScene *scene, WorldPosition camera_position,
 			continue; /* puddles are appended last, below, and excluded from shadows */
 		if (scene->lab && scene->lab != DUNGEON_LAB_CARRIED && i == DUNGEON_MESH_PLAYER)
 			continue; /* scenes 1 and 2 are about the fixture, not who holds one */
+		if (i == DUNGEON_MESH_PLAYER && scene->character && scene->character->loaded)
+		{
+			LocalToWorldTransform body = character_transform(scene);
+			draw_count += game_character_draws(scene->character, &body, camera_position,
+											   out + draw_count, capacity - draw_count);
+			continue;
+		}
 		if (i >= DUNGEON_MESH_DOOR)
 			continue; /* unit meshes: drawn per instance by append_door_draws */
 		out[draw_count++] = (RendererDraw){.mesh = &scene->meshes[i],
@@ -1263,7 +1647,15 @@ uint32_t dungeon_scene_draws(DungeonScene *scene, WorldPosition camera_position,
 												: RENDERER_PIPELINE_AUTO};
 		/* Opaque surfaces use alpha to carry floor height in mesh coordinates. */
 		out[draw_count - 1].push.geometry.w = scene->level.floor_y;
+		bool tinted = scene->surface_tint[0] + scene->surface_tint[1] + scene->surface_tint[2] > 0.0f;
+		if (tinted && (i == DUNGEON_MESH_WALL || i == DUNGEON_MESH_FLOOR))
+		{
+			out[draw_count - 1].push.geometry.x *= scene->surface_tint[0];
+			out[draw_count - 1].push.geometry.y *= scene->surface_tint[1];
+			out[draw_count - 1].push.geometry.z *= scene->surface_tint[2];
+		}
 	}
+	append_prop_draws(scene, camera_position, out, &draw_count, capacity);
 	if (scene->lab_pole_uploaded && draw_count < capacity)
 	{
 		out[draw_count++] = (RendererDraw){
@@ -1286,7 +1678,7 @@ uint32_t dungeon_scene_draws(DungeonScene *scene, WorldPosition camera_position,
 	}
 	/* Reserve the carried torch before optional wall fixtures. */
 	LocalToWorldTransform carried = player_torch_transform(scene);
-	bool carried_torch = !scene->lab || scene->lab == DUNGEON_LAB_CARRIED;
+	bool carried_torch = (!scene->lab || scene->lab == DUNGEON_LAB_CARRIED) && !character_torch(scene);
 	for (uint32_t i = 0; i < scene->torch.primitive_count && draw_count < capacity && carried_torch;
 		 ++i)
 	{
@@ -1368,6 +1760,7 @@ bool dungeon_scene_update(DungeonScene *scene, float move_forward, float move_ri
 	scene->time += dt;
 	dungeon_session_update(&scene->session, dt);
 	update_pick(scene, dt);
+	update_padlocks(scene, dt);
 	if (scene->session.phase != DUNGEON_PHASE_EXPLORING)
 	{
 		/* Picking: ease into the stance beside the lock instead of taking
@@ -1381,13 +1774,33 @@ bool dungeon_scene_update(DungeonScene *scene, float move_forward, float move_ri
 		scene->player.position =
 			dungeon_collision_move(scene->session.colliders, scene->session.collider_count,
 								   position, step, scene->player.radius);
+		/* Face the lock being worked. */
+		DungeonPoint lock = dungeon_session_focus_point(&scene->session);
+		float want = atan2f(lock.z - scene->player.position.z, lock.x - scene->player.position.x);
+		scene->player_facing += remainderf(want - scene->player_facing, 6.2831853f) *
+								fminf(1.0f, dt * 8.0f);
+		scene->player_stride += (0.0f - scene->player_stride) * fminf(1.0f, dt * 8.0f);
 		return false;
 	}
 	/* Collide against the session's array, not the level's: it carries a
 	 * segment for every door still shut, and loses it the moment one opens. */
-	return dungeon_player_update(&scene->player, &scene->level, scene->session.colliders,
-								 scene->session.collider_count, move_forward, move_right,
-								 camera_yaw_degrees, dt);
+	DungeonPoint before = scene->player.position;
+	bool exit = dungeon_player_update(&scene->player, &scene->level, scene->session.colliders,
+									  scene->session.collider_count, move_forward, move_right,
+									  camera_yaw_degrees, dt);
+	/* Turn toward the way the player is actually travelling (after
+	 * collision), and let the stride follow speed. */
+	float dx = scene->player.position.x - before.x, dz = scene->player.position.z - before.z;
+	float speed = dt > 0.0f ? sqrtf(dx * dx + dz * dz) / dt : 0.0f;
+	if (speed > 0.2f)
+	{
+		float want = atan2f(dz, dx);
+		scene->player_facing += remainderf(want - scene->player_facing, 6.2831853f) *
+								fminf(1.0f, dt * 12.0f);
+	}
+	float stride = fminf(speed / scene->player.speed, 1.0f);
+	scene->player_stride += (stride - scene->player_stride) * fminf(1.0f, dt * 10.0f);
+	return exit;
 }
 
 uint32_t dungeon_scene_write_lights(const DungeonScene *scene, WorldPosition camera_position,
@@ -1433,7 +1846,8 @@ uint32_t dungeon_scene_write_lights(const DungeonScene *scene, WorldPosition cam
 	float carried_rgb[3];
 	dungeon_light_warmth_color(carried_color, carried_flicker.warmth, carried_rgb);
 	colors[0] = (vec4s){{carried_rgb[0], carried_rgb[1], carried_rgb[2],
-						 16.0f * carried_flicker.intensity_scale}};
+						 (scene->session.phase == DUNGEON_PHASE_PIN_TUMBLER ? 6.0f : 16.0f) *
+							 carried_flicker.intensity_scale}};
 	uint32_t count = scene->light_count < capacity - 1u ? scene->light_count : capacity - 1u;
 	for (uint32_t i = 0; i < count; ++i)
 	{
@@ -1448,23 +1862,7 @@ uint32_t dungeon_scene_write_lights(const DungeonScene *scene, WorldPosition cam
 		colors[i + 1u] = (vec4s){
 			{rgb[0], rgb[1], rgb[2], scene->lights[i].intensity * flicker.intensity_scale}};
 	}
-	uint32_t written = count + 1u;
-	/* The other reserved slot: a small warm light over the lock being picked,
-	 * so the pin bars are lit by something the player is not standing behind. */
-	if (scene->session.phase != DUNGEON_PHASE_EXPLORING && written < capacity &&
-		scene->session.focused_door < scene->session.door_count)
-	{
-		DungeonPoint focus = dungeon_session_focus_point(&scene->session);
-		WorldPosition world = {focus.x, scene->level.floor_y + 1.15f, focus.z};
-		CameraRelativePosition to_lock = coordinate_camera_relative(world, camera_position);
-		/* Kept deliberately weak: the focus camera sits about a metre from the
-		 * door, so anything brighter blows the leaf out to flat white and takes
-		 * the lock's own shading with it. */
-		positions[written] = (vec4s){{to_lock.x, to_lock.y, to_lock.z, 2.4f}};
-		colors[written] = (vec4s){{1.0f, 0.89f, 0.72f, 2.0f}};
-		++written;
-	}
-	return written;
+	return count + 1u;
 }
 
 /* Static walls are built once. Closed doors are added on state changes, never
@@ -1517,9 +1915,12 @@ void dungeon_scene_destroy(Renderer *renderer, DungeonScene *scene)
 {
 	if (!scene)
 		return;
+	free(scene->padlock_pose);
+	free(scene->padlock_world);
 	if (renderer)
 	{
 		gltf_scene_destroy(renderer, &scene->torch);
+		gltf_scene_destroy(renderer, &scene->padlock);
 		if (scene->flame_quad_uploaded)
 			mesh_destroy(renderer, &scene->flame_quad);
 		if (scene->lab_pole_uploaded)
@@ -1532,7 +1933,10 @@ void dungeon_scene_destroy(Renderer *renderer, DungeonScene *scene)
 		texture_destroy(renderer->device, renderer->allocator, &scene->moss_albedo);
 	}
 	else
+	{
 		gltf_scene_destroy(NULL, &scene->torch);
+		gltf_scene_destroy(NULL, &scene->padlock);
+	}
 	dungeon_session_destroy(&scene->session);
 	dungeon_shadow_destroy(&scene->wall_shadow);
 	dungeon_shadow_destroy(&scene->shadow);

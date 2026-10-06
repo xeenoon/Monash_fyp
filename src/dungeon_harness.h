@@ -51,10 +51,22 @@
  *   expect aimed <tolerance_deg>  the camera is actually pointing at the lock
  *   expect pins_left_to_right     pin 0 is left of the last pin on screen
  *   expect pick_clear             the pick is not intersecting the mechanism
+ *   expect view_panned <degrees>  the inspection view has been nudged at least
+ *                                 this far off its automatic framing -- WASD
+ *                                 and the mouse write the same offsets
+ *   expect view_centred <degrees> and it is back within this of centre
+ *   expect flame_framed           the carried flame clears the near plane and
+ *                                 lands inside the frame -- the light reaching
+ *                                 the lock does not prove the fire is on screen
+ *   expect flame_clear_of_pins    and it is not standing in front of a pin
  *   expect pins_left_to_right     pin 0 is left of the last pin on screen
  *   expect pin_selected <n>       which pin the keys are currently driving
  *   expect pin_height <n> <value> a pin's slot, so key input is proved not eyeballed
  *   expect pin_locked <n> | pin_free <n>
+ *   expect padlock_pin_moved <n> <metres>  the MODEL's pin has travelled that
+ *                                 far from its rest pose -- the whole animation
+ *                                 chain, reported as a number rather than a
+ *                                 picture somebody has to look at
  *                                 whether a pin has set and stopped responding
  *   expect all_pins_free          no pin is set yet -- every bore needs working
  *   expect safe_progress <n>      safe pins driven so far

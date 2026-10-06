@@ -319,6 +319,68 @@ bool dungeon_field_bfs_farthest(const DungeonField *field, float iso, DungeonPoi
 	return true;
 }
 
+bool dungeon_field_bfs_steps(const DungeonField *field, float iso, DungeonPoint start_world,
+							 DungeonPoint goal_world, uint32_t *out_steps)
+{
+	if (!field || !out_steps)
+		return false;
+	uint32_t start_x, start_z, goal_x, goal_z;
+	nearest_corner(field, start_world, &start_x, &start_z);
+	nearest_corner(field, goal_world, &goal_x, &goal_z);
+	/* Both ends are pulled onto open field first: a door's centre sits in the
+	   middle of its own doorway and a spawn can land a corner inside rock. */
+	if ((dungeon_field_get(field, start_x, start_z) < iso &&
+		 !find_nearest_matching(field, iso, start_x, start_z, true, &start_x, &start_z)) ||
+		(dungeon_field_get(field, goal_x, goal_z) < iso &&
+		 !find_nearest_matching(field, iso, goal_x, goal_z, true, &goal_x, &goal_z)))
+		return false;
+	size_t count = (size_t)field->width * field->height;
+	int32_t *distance = malloc(count * sizeof(*distance));
+	uint32_t *queue = malloc(count * sizeof(*queue));
+	if (!distance || !queue)
+	{
+		free(distance);
+		free(queue);
+		return false;
+	}
+	for (size_t i = 0; i < count; ++i)
+		distance[i] = -1;
+	size_t start_index = (size_t)start_z * field->width + start_x;
+	size_t goal_index = (size_t)goal_z * field->width + goal_x;
+	uint32_t read = 0, write = 0;
+	distance[start_index] = 0;
+	queue[write++] = (uint32_t)start_index;
+	bool found = start_index == goal_index;
+	while (read < write && !found)
+	{
+		uint32_t index = queue[read++];
+		uint32_t x = index % field->width, z = index / field->width;
+		const int dx[4] = {1, -1, 0, 0};
+		const int dz[4] = {0, 0, 1, -1};
+		for (int d = 0; d < 4; ++d)
+		{
+			long nx = (long)x + dx[d], nz = (long)z + dz[d];
+			if (nx < 0 || nz < 0 || nx >= (long)field->width || nz >= (long)field->height)
+				continue;
+			size_t neighbour = (size_t)nz * field->width + (size_t)nx;
+			if (distance[neighbour] >= 0 || field->values[neighbour] < iso)
+				continue;
+			distance[neighbour] = distance[index] + 1;
+			queue[write++] = (uint32_t)neighbour;
+			if (neighbour == goal_index)
+			{
+				found = true;
+				break;
+			}
+		}
+	}
+	if (found)
+		*out_steps = (uint32_t)distance[goal_index];
+	free(distance);
+	free(queue);
+	return found;
+}
+
 bool dungeon_field_bfs_direction(const DungeonField *field, float iso, DungeonPoint start_world,
 								  DungeonPoint goal_world, DungeonPoint *out_initial_direction)
 {

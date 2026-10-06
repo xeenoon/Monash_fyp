@@ -2,7 +2,13 @@
 # it, the puzzle can be solved, and the player then walks through the gate.
 report
 
-# --- Door 0: pin tumbler -------------------------------------------------
+# --- Door 0: the padlock -------------------------------------------------
+# Door 0's lock is a pin tumbler, and a pin-tumbler door wears the imported
+# padlock model (assets/dungeons/padlock). The puzzle is unchanged -- four
+# bores, four heights, all-or-nothing -- so every assertion about pin state
+# below is the same one it always was; what is new is that the lock on screen
+# is an animated model, and the padlock_pin_moved checks are what prove the
+# clips actually reached it.
 facing_of 0
 facing_of 1
 teleport_door 0
@@ -20,9 +26,31 @@ expect phase pin
 expect focus 0.98
 expect facing 3.0
 expect aimed 2.0
-expect pins_left_to_right
+# At the requested 90-degree head-on pose the keyway runs into screen depth;
+# moving the mouse slightly off-axis reveals the pin spacing.
+#
+# Focusing also brings the carried torch up beside the lock, and the two things
+# that has to do -- be visible, and not stand in front of the mechanism it is
+# lighting -- are the ones that fail quietly, because the LIGHT lands correctly
+# either way. The flame was clipped by the near plane once and the picture was
+# the only thing that knew.
+expect flame_framed
+expect flame_clear_of_pins
 report
 capture lockpick_02_facing_pin_tumbler.png
+
+# WASD does not walk while a lock is up -- there is nowhere to walk -- so it
+# nudges the inspection view instead, the same bounded offsets the mouse
+# writes. `walk` drives exactly the move_forward/move_right a held key does, so
+# this is the real binding and not a stand-in for it. Panning and panning back
+# by the same amount has to land on centre again, or the offsets are leaking.
+walk 0 1 0.4
+expect view_panned 8
+# ...and the view keys must not have touched the puzzle on the way past.
+expect pin_height 0 0
+expect pin_selected 0
+walk 0 -1 0.4
+expect view_centred 0.5
 
 # Drive the real input path, and prove by value that the keys moved the pin
 # the selection was on -- not by looking at the picture.
@@ -50,6 +78,13 @@ wait 0.1
 expect pin_height 1 2
 expect pin_locked 1
 expect pick_clear
+# The pin that set has to have MOVED on the model, not just in the puzzle: a
+# set pin plays its own pop clip, layered over the pick's, and this is that
+# clip arriving at the geometry. Rest travel is about 10 mm at the drawn scale,
+# so 2 mm is well clear of nothing-happened and well short of asserting on the
+# animator's timing.
+wait 1.2
+expect padlock_pin_moved 1 0.002
 report
 capture lockpick_03_pins_moved.png
 

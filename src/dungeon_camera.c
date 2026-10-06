@@ -66,10 +66,22 @@ void dungeon_camera_update(DungeonCamera *camera, DungeonPoint target, float dt)
  * down, and from there a lock mounted on a door face is edge-on and invisible
  * -- so focusing drops the camera to about eye height and turns it nearly
  * horizontal, until the door face fills the frame. That is the whole reason
- * this is a framing change rather than just a zoom. */
-#define DUNGEON_CAMERA_FOCUS_HEIGHT 1.55f
-#define DUNGEON_CAMERA_FOCUS_TRAILING 1.45f
-#define DUNGEON_CAMERA_FOCUS_FOV 42.0f
+ * this is a framing change rather than just a zoom.
+ *
+ * It then IS also a zoom, because what has to be legible is millimetres. A pin
+ * moves about 6 mm between one slot and the next -- that is the lock's own
+ * authored travel, not a number chosen here -- and at the old framing (1.45 m
+ * back, 42 degrees) a metre of frame spanned a thousand pixels, which put a
+ * whole key press inside two of them. At 1.0 m and 38 degrees the frame spans
+ * 0.69 m and the same press moves nine pixels. The height drops with it, so
+ * the camera looks ACROSS the mechanism rather than down onto it: pin height is
+ * the thing being read, and a steep angle foreshortens exactly that. */
+#define DUNGEON_CAMERA_FOCUS_HEIGHT 1.20f
+#define DUNGEON_CAMERA_FOCUS_TRAILING 1.00f
+#define DUNGEON_CAMERA_FOCUS_FOV 38.0f
+#define DUNGEON_CAMERA_FOCUS_YAW_LIMIT 24.0f
+#define DUNGEON_CAMERA_FOCUS_PITCH_LIMIT 15.0f
+#define DUNGEON_CAMERA_MOUSE_SENSITIVITY 0.04f
 
 float dungeon_camera_focus_blend(const DungeonCamera *camera)
 {
@@ -117,12 +129,15 @@ void dungeon_camera_focus(DungeonCamera *camera, bool focusing, float facing_yaw
 		camera->trailing_distance = camera->explore_trailing;
 		camera->vertical_fov_degrees = camera->explore_fov;
 		camera->camera.yaw = camera->explore_yaw;
+		camera->focus_yaw_offset = 0.0f;
+		camera->focus_pitch_offset = 0.0f;
 		camera->camera.pitch =
 			-glm_deg(atan2f(camera->height, fmaxf(camera->trailing_distance, 1e-3f)));
 		return;
 	}
 	float t = dungeon_camera_focus_blend(camera);
-	float wanted_yaw = focusing ? facing_yaw_degrees : camera->explore_yaw;
+	float wanted_yaw =
+		focusing ? facing_yaw_degrees + camera->focus_yaw_offset : camera->explore_yaw;
 	camera->camera.yaw =
 		fmodf(camera->camera.yaw + shortest_yaw_delta(camera->camera.yaw, wanted_yaw) * alpha +
 				  360.0f,
@@ -137,8 +152,50 @@ void dungeon_camera_focus(DungeonCamera *camera, bool focusing, float facing_yaw
 	 * angle; the view matrix reads pitch. Leaving pitch behind would aim the
 	 * camera past the door -- and ignoring the target height would aim it at
 	 * the floor under a lock that is a metre up the leaf. */
-	camera->camera.pitch = -glm_deg(atan2f(camera->height - target_height_m * t,
-										   fmaxf(camera->trailing_distance, 1e-3f)));
+	camera->camera.pitch =
+		-glm_deg(atan2f(camera->height - target_height_m * t,
+						 fmaxf(camera->trailing_distance, 1e-3f))) +
+		camera->focus_pitch_offset * t;
+}
+
+void dungeon_camera_focus_look(DungeonCamera *camera, float look_dx, float look_dy)
+{
+	if (!camera || camera->focus <= 0.0f || !isfinite(look_dx) || !isfinite(look_dy))
+		return;
+	float old_yaw = camera->focus_yaw_offset;
+	float old_pitch = camera->focus_pitch_offset;
+	camera->focus_yaw_offset =
+		fminf(DUNGEON_CAMERA_FOCUS_YAW_LIMIT,
+			  fmaxf(-DUNGEON_CAMERA_FOCUS_YAW_LIMIT,
+					camera->focus_yaw_offset + look_dx * DUNGEON_CAMERA_MOUSE_SENSITIVITY));
+	camera->focus_pitch_offset =
+		fminf(DUNGEON_CAMERA_FOCUS_PITCH_LIMIT,
+			  fmaxf(-DUNGEON_CAMERA_FOCUS_PITCH_LIMIT,
+					camera->focus_pitch_offset - look_dy * DUNGEON_CAMERA_MOUSE_SENSITIVITY));
+	/* Apply immediately; dungeon_camera_focus uses the stored offsets on every
+	 * later frame, so its centring ease no longer snaps this movement back. */
+	camera->camera.yaw = fmodf(camera->camera.yaw + camera->focus_yaw_offset - old_yaw + 360.0f,
+							 360.0f);
+	camera->camera.pitch += camera->focus_pitch_offset - old_pitch;
+}
+
+/* How fast the keys sweep the inspection view. The offsets are clamped to
+ * +/-24 degrees of yaw, so this crosses the whole range in about a second and a
+ * half: fast enough to be worth pressing, slow enough that a tap is the small
+ * adjustment it is meant to be. */
+#define DUNGEON_CAMERA_FOCUS_PAN_DEGREES_PER_SECOND 30.0f
+
+void dungeon_camera_focus_pan(DungeonCamera *camera, float pan_right, float pan_up, float dt)
+{
+	if (!camera || dt <= 0.0f || !isfinite(dt))
+		return;
+	if (pan_right == 0.0f && pan_up == 0.0f)
+		return;
+	/* Expressed as the mouse movement that would do the same thing, so there is
+	 * one clamp, one sign convention and one place the limits live. */
+	float pixels = DUNGEON_CAMERA_FOCUS_PAN_DEGREES_PER_SECOND * dt /
+				   DUNGEON_CAMERA_MOUSE_SENSITIVITY;
+	dungeon_camera_focus_look(camera, pan_right * pixels, -pan_up * pixels);
 }
 
 mat4s dungeon_camera_projection(const DungeonCamera *camera, float aspect)

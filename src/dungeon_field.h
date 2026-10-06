@@ -57,6 +57,14 @@ void dungeon_field_keep_largest_component(DungeonField *field, float iso, Dungeo
 bool dungeon_field_bfs_farthest(const DungeonField *field, float iso, DungeonPoint start_world,
 								DungeonPoint *out_farthest);
 
+/* How many 4-connected steps of open field separate `start_world` from
+   `goal_world`: walking distance rather than straight-line distance, so a goal
+   on the other side of a wall is correctly far away. Returns false when the
+   goal cannot be reached at all. Used to order a level's doors by the order a
+   player actually meets them. */
+bool dungeon_field_bfs_steps(const DungeonField *field, float iso, DungeonPoint start_world,
+							 DungeonPoint goal_world, uint32_t *out_steps);
+
 /* Breadth-first search from start_world to goal_world over open corners.
    Returns true if goal is reachable, false otherwise. On success, out_initial_direction
    receives the normalized direction of the first step away from start_world toward goal. */

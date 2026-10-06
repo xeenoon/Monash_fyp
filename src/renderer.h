@@ -14,6 +14,9 @@
 #include <cglm/struct.h>
 
 #define MAX_FRAMES_IN_FLIGHT 1
+/* UI canvas resolution; stretched over the whole window. */
+#define RENDERER_UI_WIDTH 960u
+#define RENDERER_UI_HEIGHT 540u
 
 /* B2 specular IBL cube: mip count for a 128x128 face (128->64->...->1). Mip 0
    is the mirror copy of the equirect; mips 1..ENV_CUBE_MIPS-1 are the GGX
@@ -92,9 +95,8 @@ typedef struct
 	   tone mapper adds the pyramid back at, w reserved. */
 	vec4s bloom_parameters;
 	/* Shape of the local lights: x is their source radius in metres, yzw
-	   reserved. One value for every point light rather than one each -- the
-	   vec4 pair describing a light is full, and every local light in the
-	   dungeon is a flame of about the same size. See
+	   reserved. One source radius for every local light rather than one each
+	   because the vec4 pair describing a light is full. See
 	   local_light_attenuation() in pbr_common.glsl for why a point light
 	   cannot be used near a wall. */
 	vec4s light_shape;
@@ -208,6 +210,12 @@ typedef struct Renderer
 	   the tone mapper adds mip 0 back. `bloom_levels` is BLOOM_MIPS or fewer
 	   on a small window. */
 	Texture bloom;
+	/* Screen-space UI: an RGBA8 canvas the game paints on the CPU each frame
+	   (see ui_draw.h), copied to the GPU before the frame and alpha-blended
+	   over the tone-mapped image. Bound at temporal set binding 8. */
+	Texture ui_overlay;
+	GpuBuffer ui_staging;
+	uint8_t *ui_pixels; /* CPU canvas the game paints */
 	uint32_t bloom_levels;
 	/* Threshold and knee are in EXPOSED units (see bloom_common.glsl);
 	   intensity is how much of the finished pyramid the tone mapper adds
@@ -348,6 +356,10 @@ float renderer_aspect(const Renderer *r);
    file rather than by screenshotting the desktop, and by any other offline
    diagnosis that wants the tone-mapped result rather than a shader dump.
    Blocks on the device; returns false and leaves no file on failure. */
+/* The UI canvas, RENDERER_UI_WIDTH x RENDERER_UI_HEIGHT straight-alpha RGBA8
+   pixels in display (sRGB-encoded) space. Whatever is in it when
+   renderer_draw_frame runs is composited over the frame. Starts cleared. */
+uint8_t *renderer_ui_pixels(Renderer *r);
 bool renderer_capture_swapchain(Renderer *r, const char *path);
 
 void renderer_draw_frame(Renderer *r, const FrameUniforms *frame, const RendererDraw *draws,

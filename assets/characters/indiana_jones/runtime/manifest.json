@@ -1,0 +1,21 @@
+{
+  "source": "assets/characters/indiana_jones/indiana_jones.blend (frame 1, torch raised)",
+  "triangles": 37967,
+  "source_triangles": 379295,
+  "bounds_min": [
+    -0.45279,
+    0.00122,
+    0.65763
+  ],
+  "bounds_max": [
+    0.36475,
+    2.1523,
+    -0.19818
+  ],
+  "torch_head": [
+    -0.32078,
+    2.09883,
+    0.62312
+  ],
+  "front": "Blender -Y, which glTF calls +Z"
+}

@@ -8,11 +8,9 @@
 #include <stdio.h>
 #include <string.h>
 
-/* The source clamps selection (Math.Clamp) but wraps height ((v + d + 4) % 4).
- * That asymmetry is deliberate and both halves are load-bearing: wrapping
- * selection would let a player scroll past the last pin, clamping height would
- * make the lowest and highest pin settings harder to reach than the middle. */
-static void selection_clamps_and_height_wraps(void)
+/* Selection clamps at the row ends. A tumbler only rises, one level per Up
+ * press, until its hidden set point freezes it. */
+static void selection_clamps_and_pins_rise_one_level(void)
 {
 	DungeonPinTumbler lock = {0};
 	dungeon_pin_tumbler_init(&lock, 1234u, 3u);
@@ -27,23 +25,19 @@ static void selection_clamps_and_height_wraps(void)
 
 	dungeon_pin_tumbler_move(&lock, -2);
 	assert(lock.selected == 0u);
-	/* Force pin 0 off its target first: a pin sitting on its target is locked
-	 * in place, so the wrap below would otherwise be testing nothing. */
+	/* Force pin 0 off its target first: a pin sitting on its target is locked. */
 	lock.target[0] = 2u;
 	assert(!dungeon_pin_tumbler_pin_set(&lock, 0u));
 	dungeon_pin_tumbler_adjust(&lock, -1);
-	assert(lock.heights[0] == DUNGEON_LOCK_PIN_STATES - 1u); /* wrapped down from 0 */
+	assert(lock.heights[0] == 0u); /* Down does not jump from bottom to top. */
 	dungeon_pin_tumbler_adjust(&lock, 1);
-	assert(lock.heights[0] == 0u);
-	/* Both wrap directions are covered above. A full cycle is no longer a
-	 * meaningful thing to assert: every cycle passes through the pin's target,
-	 * where it sets and locks -- which a_set_pin_is_locked_in_place covers. */
+	assert(lock.heights[0] == 1u);
 
 	/* Adjusting one pin must not disturb any other. */
 	dungeon_pin_tumbler_move(&lock, 1);
 	lock.target[1] = 3u;
 	dungeon_pin_tumbler_adjust(&lock, 2);
-	assert(lock.heights[0] == 0u && lock.heights[2] == 0u);
+	assert(lock.heights[0] == 1u && lock.heights[1] == 1u && lock.heights[2] == 0u);
 }
 
 /* A pin that reaches its target drops into place and stops responding. This is
@@ -122,6 +116,10 @@ static void pin_targets_are_seeded_never_trivial_and_all_or_nothing(void)
 			assert(lock.target[pin] < DUNGEON_LOCK_PIN_STATES);
 			assert(!dungeon_pin_tumbler_pin_set(&lock, pin));
 		}
+		bool varied = false;
+		for (uint32_t pin = 1; pin < lock.pin_count; ++pin)
+			varied = varied || lock.target[pin] != lock.target[0];
+		assert(varied);
 		assert(!dungeon_pin_tumbler_submit(&lock));
 	}
 
@@ -258,7 +256,7 @@ static void every_safe_can_actually_be_opened(void)
 
 int main(void)
 {
-	selection_clamps_and_height_wraps();
+	selection_clamps_and_pins_rise_one_level();
 	pin_targets_are_seeded_never_trivial_and_all_or_nothing();
 	a_set_pin_is_locked_in_place();
 	the_safe_drives_a_pin_only_when_it_is_next_in_the_order();

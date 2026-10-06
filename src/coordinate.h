@@ -43,6 +43,13 @@ LocalToWorldTransform coordinate_identity_transform(WorldPosition translation);
    faces the camera) without touching their baked vertex data. */
 LocalToWorldTransform coordinate_rotation_y(double radians, WorldPosition translation);
 
+/* Places a posed child under a world placement: `child` is a float matrix in
+   the parent's local metres (a glTF node's world matrix, scale included) and
+   the result is that node in the absolute world frame. The translation is
+   carried in double precision through the composition, which is the whole
+   reason this is not just a mat4 multiply at the call site. */
+LocalToWorldTransform coordinate_compose(const LocalToWorldTransform *parent, mat4s child);
+
 /* The world-space subtraction is deliberately performed before the result is
    narrowed to float. Never replace this with two float casts and a GPU-side
    subtraction: Earth-sized coordinates would lose ground-level precision. */

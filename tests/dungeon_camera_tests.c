@@ -41,6 +41,19 @@ static void focusing_on_a_lock_returns_to_the_exploring_framing(void)
 	/* And it came round to face the lock, the short way. */
 	assert(fabsf(fmodf(camera.camera.yaw - facing + 540.0f, 360.0f) - 180.0f) < 1e-2f);
 
+	/* Mouse-look is retained instead of the focus ease snapping it back. */
+	dungeon_camera_focus_look(&camera, 250.0f, -125.0f);
+	float adjusted_yaw = camera.camera.yaw;
+	float adjusted_pitch = camera.camera.pitch;
+	for (int frame = 0; frame < 120; ++frame)
+		dungeon_camera_focus(&camera, true, facing, lock_height, 1.0f / 60.0f);
+	assert(fabsf(camera.camera.yaw - adjusted_yaw) < 1e-2f);
+	assert(fabsf(camera.camera.pitch - adjusted_pitch) < 1e-2f);
+	/* Large deltas are bounded to a minor inspection adjustment. */
+	dungeon_camera_focus_look(&camera, 100000.0f, 100000.0f);
+	assert(fabsf(camera.focus_yaw_offset) <= 24.0f);
+	assert(fabsf(camera.focus_pitch_offset) <= 15.0f);
+
 	for (int frame = 0; frame < 600; ++frame)
 		dungeon_camera_focus(&camera, false, facing, lock_height, 1.0f / 60.0f);
 	/* Exactly back, not an epsilon short: a residual would become the next
@@ -50,6 +63,45 @@ static void focusing_on_a_lock_returns_to_the_exploring_framing(void)
 	assert(camera.trailing_distance == explore_trailing);
 	assert(camera.vertical_fov_degrees == explore_fov);
 	assert(camera.camera.yaw == explore_yaw);
+	assert(camera.focus_yaw_offset == 0.0f);
+	assert(camera.focus_pitch_offset == 0.0f);
+}
+
+/* The movement keys nudge the inspection view while a lock is up, through the
+ * same clamped offsets the mouse writes -- so the two cannot fight each other
+ * and neither can leave the framing. A held key has no magnitude of its own, so
+ * the pan is a rate per second; what this checks is that the conversion lands
+ * in the same place, facing the same way, and stops at the same limits. */
+static void the_movement_keys_pan_the_same_bounded_view(void)
+{
+	DungeonCamera camera = {0};
+	dungeon_camera_init(&camera, (DungeonPoint){0.0f, 0.0f});
+	for (int frame = 0; frame < 600; ++frame)
+		dungeon_camera_focus(&camera, true, 0.0f, 0.92f, 1.0f / 60.0f);
+	assert(dungeon_camera_focus_blend(&camera) > 0.999f);
+
+	/* Right and up mean what they mean for the mouse. 0.4 s at the pan rate. */
+	dungeon_camera_focus_pan(&camera, 1.0f, 1.0f, 0.4f);
+	assert(fabsf(camera.focus_yaw_offset - 12.0f) < 1e-3f);
+	assert(fabsf(camera.focus_pitch_offset - 12.0f) < 1e-3f);
+
+	/* Back the same distance lands on centre, not near it: a residual left in
+	 * the offsets is a view that drifts a little further with every lock. */
+	dungeon_camera_focus_pan(&camera, -1.0f, -1.0f, 0.4f);
+	assert(fabsf(camera.focus_yaw_offset) < 1e-3f);
+	assert(fabsf(camera.focus_pitch_offset) < 1e-3f);
+
+	/* Held to the stops it gets the mouse's limits and not a degree more. */
+	for (int frame = 0; frame < 600; ++frame)
+		dungeon_camera_focus_pan(&camera, 1.0f, 1.0f, 1.0f / 60.0f);
+	assert(fabsf(camera.focus_yaw_offset - 24.0f) < 1e-3f);
+	assert(fabsf(camera.focus_pitch_offset - 15.0f) < 1e-3f);
+
+	/* No key, or no elapsed time, moves nothing. */
+	float held = camera.focus_yaw_offset;
+	dungeon_camera_focus_pan(&camera, 1.0f, 1.0f, 0.0f);
+	dungeon_camera_focus_pan(&camera, 0.0f, 0.0f, 1.0f);
+	assert(camera.focus_yaw_offset == held);
 }
 
 int main(void)
@@ -87,6 +139,7 @@ int main(void)
 	assert(isfinite(projection.raw[0][0]));
 	assert(projection.raw[2][3] == -1.0f);
 	focusing_on_a_lock_returns_to_the_exploring_framing();
+	the_movement_keys_pan_the_same_bounded_view();
 	puts("dungeon camera tests passed");
 	return 0;
 }

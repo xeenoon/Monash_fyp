@@ -53,15 +53,17 @@ void dungeon_pin_tumbler_init(DungeonPinTumbler *lock, uint32_t seed, uint32_t p
 	*lock = (DungeonPinTumbler){0};
 	lock->pin_count = clamp_count(pin_count, 2u, DUNGEON_LOCK_MAX_PINS);
 	LockRng rng = lock_rng_create(seed, DUNGEON_LOCK_DOMAIN_PINS);
-	/* Every target is at least one step up, so no pin is ever already sitting
-	 * on its target when the lock opens. Pins start at zero and a pin that is
-	 * set is locked in place, so a zero target would hand the player a pin they
-	 * can neither move nor need to -- a dead bore in the middle of the puzzle.
-	 * Drawing from [1, states) rather than re-rolling the whole set until one
-	 * pin is non-zero also makes this exact by construction: the old rule only
-	 * guaranteed that SOME pin needed work. */
+	/* Zero remains the unset starting position; targets use the original three
+	 * set levels. */
 	for (uint32_t pin = 0; pin < lock->pin_count; ++pin)
 		lock->target[pin] = (uint8_t)(1u + lock_rng_index(&rng, DUNGEON_LOCK_PIN_STATES - 1u));
+	/* Avoid the one degenerate result where the whole solved row is level. */
+	bool all_same = true;
+	for (uint32_t pin = 1; pin < lock->pin_count; ++pin)
+		all_same = all_same && lock->target[pin] == lock->target[0];
+	if (all_same && lock->pin_count > 1u)
+		lock->target[lock->pin_count - 1u] =
+			(uint8_t)(1u + lock->target[0] % (DUNGEON_LOCK_PIN_STATES - 1u));
 }
 
 void dungeon_pin_tumbler_move(DungeonPinTumbler *lock, int direction)
@@ -85,16 +87,18 @@ bool dungeon_pin_tumbler_pin_set(const DungeonPinTumbler *lock, uint32_t pin)
 
 void dungeon_pin_tumbler_adjust(DungeonPinTumbler *lock, int direction)
 {
-	if (!lock || lock->selected >= lock->pin_count)
+	if (!lock || lock->selected >= lock->pin_count || direction <= 0)
 		return;
 	/* Set pins are locked in place. Checked before the wrap below, so a pin can
 	 * never be walked off its target and back round. */
 	if (dungeon_pin_tumbler_pin_set(lock, lock->selected))
 		return;
-	int height = (int)lock->heights[lock->selected] + direction;
-	int states = (int)DUNGEON_LOCK_PIN_STATES;
-	height = ((height % states) + states) % states;
-	lock->heights[lock->selected] = (uint8_t)height;
+	/* Up is the only tumbler action: one press raises one visible level. There
+	 * is no downward wrap from level zero to the top, which made every pin look
+	 * as though it had to be rammed fully upward. Since every target is above
+	 * zero, stepping upward must encounter it; the set check above freezes the
+	 * pin there permanently. */
+	lock->heights[lock->selected]++;
 }
 
 bool dungeon_pin_tumbler_submit(DungeonPinTumbler *lock)

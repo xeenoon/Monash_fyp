@@ -39,14 +39,21 @@ void input_poll(Input *in, SDL_Window *window)
 	in->puzzle_left = in->puzzle_right = in->puzzle_up = in->puzzle_down = false;
 	in->puzzle_confirm = false;
 	in->puzzle_cancel = false;
+	in->menu_up = in->menu_down = in->menu_left = in->menu_right = false;
+	in->escape = false;
+	in->restart = false;
+	in->mouse_dx = in->mouse_dy = 0.0f;
+	in->mouse_left_pressed = in->mouse_left_released = false;
+	in->wheel = 0.0f;
+	in->tab = false;
 
 	SDL_Event event;
 	while (SDL_PollEvent(&event))
 	{
 		if (event.type == SDL_EVENT_QUIT)
 			in->quit = true;
-		if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE)
-			in->quit = true;
+		if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_ESCAPE)
+			in->escape = true;
 		if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_F3)
 			in->toggle_quarry_shading = true;
 		if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_F4)
@@ -86,21 +93,37 @@ void input_poll(Input *in, SDL_Window *window)
 			in->interact = true;
 		}
 		/* Lock picking. Edge-triggered on key-down with repeats rejected, so a
-		 * held key cannot walk a pin through every height in one frame. */
+		 * held key cannot walk a pin through every height in one frame.
+		 *
+		 * The arrow keys alone, deliberately: WASD used to be bound here as
+		 * well, which left a player at a lock with no way to look around it
+		 * except the mouse. WASD keeps its held movement meaning instead, and
+		 * the dungeon spends it on nudging the inspection view while a lock is
+		 * up (see dungeon_camera_focus_pan). */
 		if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat)
 			switch (event.key.key)
 			{
-			case SDLK_LEFT:
-			case SDLK_A: in->puzzle_left = true; break;
-			case SDLK_RIGHT:
-			case SDLK_D: in->puzzle_right = true; break;
-			case SDLK_UP:
-			case SDLK_W: in->puzzle_up = true; break;
-			case SDLK_DOWN:
-			case SDLK_S: in->puzzle_down = true; break;
+			case SDLK_LEFT: in->puzzle_left = true; break;
+			case SDLK_RIGHT: in->puzzle_right = true; break;
+			case SDLK_UP: in->puzzle_up = true; break;
+			case SDLK_DOWN: in->puzzle_down = true; break;
 			case SDLK_RETURN:
 			case SDLK_SPACE: in->puzzle_confirm = true; break;
 			case SDLK_Q: in->puzzle_cancel = true; break;
+			case SDLK_R: in->restart = true; break;
+			default: break;
+			}
+		if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat)
+			switch (event.key.key)
+			{
+			case SDLK_UP:
+			case SDLK_W: in->menu_up = true; break;
+			case SDLK_DOWN:
+			case SDLK_S: in->menu_down = true; break;
+			case SDLK_LEFT:
+			case SDLK_A: in->menu_left = true; break;
+			case SDLK_RIGHT:
+			case SDLK_D: in->menu_right = true; break;
 			default: break;
 			}
 		if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
@@ -108,6 +131,31 @@ void input_poll(Input *in, SDL_Window *window)
 			set_mouse_capture(in, window, !in->mouse_captured);
 		if (event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED)
 			in->resized = true;
+		if (event.type == SDL_EVENT_MOUSE_MOTION)
+		{
+			in->mouse_x = event.motion.x;
+			in->mouse_y = event.motion.y;
+			in->mouse_dx += event.motion.xrel;
+			in->mouse_dy += event.motion.yrel;
+		}
+		if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN || event.type == SDL_EVENT_MOUSE_BUTTON_UP)
+		{
+			bool down = event.type == SDL_EVENT_MOUSE_BUTTON_DOWN;
+			in->mouse_x = event.button.x;
+			in->mouse_y = event.button.y;
+			if (event.button.button == SDL_BUTTON_LEFT)
+			{
+				in->mouse_left = down;
+				in->mouse_left_pressed |= down;
+				in->mouse_left_released |= !down;
+			}
+			if (event.button.button == SDL_BUTTON_RIGHT)
+				in->mouse_right = down;
+		}
+		if (event.type == SDL_EVENT_MOUSE_WHEEL)
+			in->wheel += event.wheel.y;
+		if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_TAB)
+			in->tab = true;
 	}
 
 	float mouse_x = 0.0f, mouse_y = 0.0f;

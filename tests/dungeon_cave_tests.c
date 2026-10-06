@@ -203,12 +203,49 @@ static void hard_rect_stamps_keep_square_corners(void)
 	dungeon_field_destroy(&field);
 }
 
+/* The first lock a level puts in front of the player is the one that teaches
+ * it. Doors are placed in whatever order the hallway scan finds them, which has
+ * nothing to do with the order they are walked into, so they are sorted by
+ * WALKING distance from the spawn before their kinds are handed out -- and door
+ * 0 is then both the nearest and the pin tumbler, which is what every harness
+ * script's `teleport_door 0` is written against.
+ *
+ * Walking distance, not straight-line: seed 3's prism door is 12.9 m from the
+ * spawn as the crow flies and 48.8 m to walk, and a straight-line sort would
+ * open that level with the light puzzle. */
+static void the_nearest_door_is_the_pin_tumbler(void)
+{
+	for (uint32_t seed = 1; seed <= 12u; ++seed)
+	{
+		DungeonCaveParams params = dungeon_cave_default_params(seed);
+		DungeonCaveResult cave = {0};
+		assert(dungeon_cave_generate(&params, &cave));
+		uint32_t previous = 0;
+		for (uint32_t i = 0; i < cave.door_count; ++i)
+		{
+			uint32_t steps = 0;
+			assert(dungeon_field_bfs_steps(&cave.field, 0.5f, cave.spawn, cave.doors[i].center,
+										   &steps));
+			assert(steps >= previous);
+			previous = steps;
+			/* Kinds cycle from the nearest outwards, so the mix is unchanged. */
+			const DungeonLockKind expected[] = {DUNGEON_LOCK_PIN_TUMBLER, DUNGEON_LOCK_SAFE_PINS,
+												DUNGEON_LOCK_PRISM};
+			assert(cave.doors[i].lock == expected[i % 3u]);
+		}
+		if (cave.door_count)
+			assert(cave.doors[0].lock == DUNGEON_LOCK_PIN_TUMBLER);
+		dungeon_cave_destroy(&cave);
+	}
+}
+
 int main(void)
 {
 	identical_seed_reproduces_byte_identical_field();
 	different_seeds_produce_different_fields();
 	generated_caves_are_connected_and_puddles_are_clear();
 	every_locked_door_is_a_real_chokepoint();
+	the_nearest_door_is_the_pin_tumbler();
 	hard_rect_stamps_keep_square_corners();
 	puts("dungeon cave tests passed");
 	return 0;

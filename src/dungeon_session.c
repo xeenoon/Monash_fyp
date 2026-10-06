@@ -1,5 +1,7 @@
 #include "dungeon_session.h"
 
+#include "dungeon_padlock.h"
+
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -66,7 +68,10 @@ bool dungeon_session_create(DungeonSession *session, const DungeonLevel *level)
 		/* Pin counts vary a little per door so the second lock is not simply
 		 * the first one again; the safe always has four pins, and takes its
 		 * variety from the order they have to be pressed in. */
-		dungeon_pin_tumbler_init(&state->pins, door->seed, 3u + (door->seed & 1u));
+		/* Four, always: a pin-tumbler door wears the padlock model, and that lock
+		 * has four pin stacks. A five-pin puzzle would have a pin the player could
+		 * select and work with nothing on the lock to show for it. */
+		dungeon_pin_tumbler_init(&state->pins, door->seed, DUNGEON_PADLOCK_PINS);
 		dungeon_safe_pins_init(&state->safe, door->seed);
 		dungeon_prism_init(&state->prism, door->seed);
 		/* Put the lock hardware on the side the player approaches from, so the

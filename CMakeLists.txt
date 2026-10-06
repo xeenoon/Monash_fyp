@@ -340,6 +340,7 @@ add_library(dungeon_level STATIC
     src/dungeon_lock.c
     src/dungeon_prism.c
     src/dungeon_lock_layout.c
+    src/dungeon_padlock.c
     src/dungeon_session.c)
 target_include_directories(dungeon_level PUBLIC src)
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
@@ -400,6 +401,44 @@ if(BUILD_TESTING)
     add_executable(dungeon_session_tests tests/dungeon_session_tests.c)
     target_link_libraries(dungeon_session_tests PRIVATE dungeon_level m)
     add_test(NAME dungeon_lock_session COMMAND dungeon_session_tests)
+
+    add_executable(dungeon_padlock_tests tests/dungeon_padlock_tests.c)
+    target_link_libraries(dungeon_padlock_tests PRIVATE dungeon_level m)
+    add_test(NAME dungeon_padlock_clips COMMAND dungeon_padlock_tests)
+
+    # The importer's CPU half, with the renderer symbols stubbed in the test:
+    # gltf_scene_parse is documented as usable without a device, and node
+    # animation is exactly the part worth testing without one.
+    add_executable(gltf_animation_tests
+        tests/gltf_animation_tests.c
+        src/gltf_scene.c
+        src/coordinate.c
+        third_party/mikktspace/mikktspace.c)
+    target_include_directories(gltf_animation_tests
+        PRIVATE src include third_party/cgltf third_party/mikktspace)
+    target_link_libraries(gltf_animation_tests
+        PRIVATE Vulkan::Vulkan cglm::cglm PkgConfig::SDL3 m)
+    target_compile_definitions(gltf_animation_tests PRIVATE CGLM_FORCE_DEPTH_ZERO_TO_ONE)
+    # The fixture is written next to the binary rather than into the source tree.
+    add_test(NAME gltf_node_animation
+             COMMAND gltf_animation_tests "${CMAKE_CURRENT_BINARY_DIR}")
+
+    # Where the padlock's parts actually end up, measured against the baked
+    # asset without a device. Skips when the asset has not been exported.
+    add_executable(padlock_pose_tests
+        tests/padlock_pose_tests.c
+        src/dungeon_padlock_pose.c
+        src/gltf_scene.c
+        src/coordinate.c
+        third_party/mikktspace/mikktspace.c)
+    target_include_directories(padlock_pose_tests
+        PRIVATE src include third_party/cgltf third_party/mikktspace)
+    target_link_libraries(padlock_pose_tests
+        PRIVATE dungeon_level Vulkan::Vulkan cglm::cglm PkgConfig::SDL3 m)
+    target_compile_definitions(padlock_pose_tests PRIVATE CGLM_FORCE_DEPTH_ZERO_TO_ONE)
+    add_test(NAME padlock_pick_readout
+             COMMAND padlock_pose_tests
+                     "${CMAKE_CURRENT_SOURCE_DIR}/assets/dungeons/padlock/runtime/padlock.gltf")
 endif()
 
 # Dev tool: dumps a generated cave's field for tools/preview_cave.py to render
@@ -412,6 +451,10 @@ add_executable(terrain_renderer
     src/dungeon_scene.c
     src/dungeon_camera.c
     src/dungeon_harness.c
+    src/dungeon_game.c
+    src/overworld.c
+    src/game_character.c
+    src/ui_draw.c
     src/input.c
     src/coordinate.c
     src/camera.c
@@ -420,6 +463,7 @@ add_executable(terrain_renderer
     src/upload.c
     src/mesh.c
     src/gltf_scene.c
+    src/dungeon_padlock_pose.c
     src/quarry.c
     src/benchmark_ground.c
     src/material_stability_demo.c
@@ -458,6 +502,14 @@ foreach(DUNGEON_ASSET
     endif()
 endforeach()
 
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets/dungeons/padlock/runtime/padlock.gltf")
+    message(STATUS
+        "No baked padlock at assets/dungeons/padlock/runtime -- pin-tumbler doors "
+        "will use the generated cutaway mechanism. To bake it: blender -b "
+        "assets/dungeons/padlock/padlock_animated.blend --python "
+        "tools/export_padlock_runtime.py -- --out assets/dungeons/padlock/runtime")
+endif()
+
 # Pinned decoder sources used by the strict static glTF importer.  cgltf:
 # 85cd62382dfea638278962690cf515023f33ed00 (MIT); MikkTSpace:
 # 3e895b49d05ea07e4c2133156cfa94369e19e409 (zlib).
@@ -473,6 +525,8 @@ target_compile_definitions(terrain_renderer PRIVATE
     GRADED_ALPS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/alps-data/trn-alps-16km-graded"
     ENV_HDR_PATH="${CMAKE_CURRENT_SOURCE_DIR}/assets/env.hdr"
     DUNGEON_TORCH_PATH="${CMAKE_CURRENT_SOURCE_DIR}/assets/dungeons/torch/walltorch.gltf"
+    INDIANA_RUNTIME_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets/characters/indiana_jones/runtime"
+    DUNGEON_PADLOCK_PATH="${CMAKE_CURRENT_SOURCE_DIR}/assets/dungeons/padlock/runtime/padlock.gltf"
     DUNGEON_TEXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/textures/dungeon/runtime"
     CGLM_FORCE_DEPTH_ZERO_TO_ONE)
 if(DEBUG_SHADER_DUMP)
@@ -518,6 +572,10 @@ if(BUILD_TESTING)
                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/dungeon_assets_tests.py"
                 --manifest "${CMAKE_CURRENT_SOURCE_DIR}/textures/dungeon/manifest.json"
                 --runtime "${CMAKE_CURRENT_SOURCE_DIR}/textures/dungeon/runtime")
+    add_test(NAME padlock_runtime_asset
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/padlock_asset_tests.py"
+                --runtime "${CMAKE_CURRENT_SOURCE_DIR}/assets/dungeons/padlock/runtime")
     add_test(NAME terrain_macro_colour_map
         COMMAND "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_terrain_macro_tests.py"

@@ -696,10 +696,40 @@ bool dungeon_cave_generate(const DungeonCaveParams *params, DungeonCaveResult *o
 		};
 		if (!door_is_chokepoint(&out->field, overlay, out->spawn, out->exit, &door))
 			continue; /* a pocket or a loop hallway already routes around it */
+		out->doors[out->door_count++] = door;
+	}
+	/* Doors are placed in whatever order the hallway scan found them, which has
+	 * nothing to do with the order a player walks into them -- and the lock a
+	 * level opens with is the one that teaches it. So they are sorted by
+	 * WALKING distance from the spawn (4-connected steps over open field, not a
+	 * straight line, or a door on the far side of a wall would sort as near)
+	 * and only then given their kinds. The nearest door is therefore always the
+	 * pin tumbler: the lock with a pick, a pin at a time, that the other two
+	 * are variations on.
+	 *
+	 * Sorting the ARRAY rather than assigning out of order also keeps door 0
+	 * meaning "the first one you meet", which is what every harness script and
+	 * every `expect door_open 0` in them is written against. */
+	uint32_t *walk = out->door_count ? malloc(out->door_count * sizeof(*walk)) : NULL;
+	for (uint32_t i = 0; walk && i < out->door_count; ++i)
+		if (!dungeon_field_bfs_steps(&out->field, 0.5f, out->spawn, out->doors[i].center, &walk[i]))
+			walk[i] = UINT32_MAX; /* unreachable without passing another door; sort it last */
+	for (uint32_t i = 1; walk && i < out->door_count; ++i)
+		for (uint32_t j = i; j && walk[j] < walk[j - 1u]; --j)
+		{
+			uint32_t steps = walk[j];
+			walk[j] = walk[j - 1u];
+			walk[j - 1u] = steps;
+			DungeonDoorway swap = out->doors[j];
+			out->doors[j] = out->doors[j - 1u];
+			out->doors[j - 1u] = swap;
+		}
+	free(walk);
+	for (uint32_t i = 0; i < out->door_count; ++i)
+	{
 		const DungeonLockKind lock_kinds[] = {DUNGEON_LOCK_PIN_TUMBLER, DUNGEON_LOCK_SAFE_PINS,
 											  DUNGEON_LOCK_PRISM};
-		door.lock = lock_kinds[out->door_count % 3u];
-		out->doors[out->door_count++] = door;
+		out->doors[i].lock = lock_kinds[i % 3u];
 	}
 
 	free(layout.rooms);

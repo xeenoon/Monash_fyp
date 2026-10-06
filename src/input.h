@@ -38,6 +38,18 @@ typedef struct
 	bool puzzle_left, puzzle_right, puzzle_up, puzzle_down;
 	bool puzzle_confirm; /* Enter or Space: try the lock */
 	bool puzzle_cancel;	 /* Q: step back from a lock without solving it */
+	/* Menu navigation, edge-triggered: arrows and WASD both steer. */
+	bool menu_up, menu_down, menu_left, menu_right;
+	bool escape;  /* Esc pressed: quits free-fly scenes, opens the pause menu in the game */
+	bool restart; /* R pressed: restart the current dungeon */
+	/* Pointer, for the overworld map: window coordinates (logical pixels),
+	 * motion this frame, buttons and wheel. Independent of mouse capture. */
+	float mouse_x, mouse_y;
+	float mouse_dx, mouse_dy;
+	bool mouse_left, mouse_right;		  /* held */
+	bool mouse_left_pressed, mouse_left_released;
+	float wheel;					  /* notches this frame, + away from the user */
+	bool tab;						  /* Tab pressed */
 } Input;
 
 /* Pumps SDL events + keyboard/mouse state into `in`. */

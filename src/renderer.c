@@ -505,8 +505,8 @@ static void create_descriptors(Renderer *r)
 	/* 0-5 sampled scene/history, 6 the exposure buffer, 7 the finished bloom
 	   pyramid's mip 0 -- the tone mapper is the only reader of that last one,
 	   and it already binds this set. */
-	VkDescriptorSetLayoutBinding temporal_bindings[8];
-	for (uint32_t i = 0; i < 8; ++i)
+	VkDescriptorSetLayoutBinding temporal_bindings[9];
+	for (uint32_t i = 0; i < 9; ++i)
 		temporal_bindings[i] = (VkDescriptorSetLayoutBinding){
 			.binding = i,
 			.descriptorCount = 1,
@@ -515,7 +515,7 @@ static void create_descriptors(Renderer *r)
 			.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT};
 	VkDescriptorSetLayoutCreateInfo temporal_layout = {
 		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-		.bindingCount = 8,
+		.bindingCount = 9,
 		.pBindings = temporal_bindings};
 	VK_CHECK(
 		vkCreateDescriptorSetLayout(r->device, &temporal_layout, NULL, &r->temporal_set_layout));
@@ -569,7 +569,7 @@ static void create_descriptors(Renderer *r)
 		   one per mip, plus the prefilter set that reads composite_color. */
 		{.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		 .descriptorCount = MAX_TEXTURE_SETS * 6u + MAX_FRAMES_IN_FLIGHT * 2u + 26u +
-							ENV_CUBE_MIPS + BLOOM_MIPS + 1u + 2u},
+							ENV_CUBE_MIPS + BLOOM_MIPS + 1u + 2u + 2u /* UI overlay */},
 		{.type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
 		 .descriptorCount = 5u + ENV_CUBE_MIPS + BLOOM_MIPS + 1u},
 		{.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
@@ -2115,7 +2115,7 @@ static void create_swapchain(Renderer *r)
 										&r->taa_history[destination],
 										&r->bloom};
 		VkDescriptorImageInfo temporal_images[7];
-		VkWriteDescriptorSet temporal_writes[8];
+		VkWriteDescriptorSet temporal_writes[9];
 		for (uint32_t binding = 0; binding < 7; ++binding)
 		{
 			/* The pyramid stays in GENERAL for the whole chain (see
@@ -2144,7 +2144,17 @@ static void create_swapchain(Renderer *r)
 								   .descriptorCount = 1,
 								   .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
 								   .pBufferInfo = &exposure_info};
-		vkUpdateDescriptorSets(r->device, 8, temporal_writes, 0, NULL);
+		VkDescriptorImageInfo ui_image = {.sampler = r->ui_overlay.sampler,
+										  .imageView = r->ui_overlay.view,
+										  .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+		temporal_writes[8] =
+			(VkWriteDescriptorSet){.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+								   .dstSet = r->temporal_set[destination],
+								   .dstBinding = 8,
+								   .descriptorCount = 1,
+								   .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+								   .pImageInfo = &ui_image};
+		vkUpdateDescriptorSets(r->device, 9, temporal_writes, 0, NULL);
 	}
 
 	VkImageView scene_attachments[] = {r->hdr_color.view, r->motion.view, r->depth.view};
@@ -2846,6 +2856,71 @@ static void record_atmosphere(Renderer *r, VkCommandBuffer command)
 	}
 }
 
+/* --- UI overlay ------------------------------------------------------
+   One CPU-painted canvas, re-uploaded every frame. It is small enough
+   (2 MB) that tracking dirtiness is not worth the bookkeeping. The game paints
+   `ui_pixels` whenever it likes; renderer_draw_frame copies it into the
+   staging buffer only after the fence says the last upload has finished. */
+
+static void create_ui_overlay(Renderer *r)
+{
+	r->ui_overlay = texture_create(
+		r->device, r->allocator,
+		&(TextureDesc){.format = VK_FORMAT_R8G8B8A8_UNORM,
+					   .width = RENDERER_UI_WIDTH,
+					   .height = RENDERER_UI_HEIGHT,
+					   .mip_levels = 1,
+					   .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+					   .aspect = VK_IMAGE_ASPECT_COLOR_BIT,
+					   .filter = VK_FILTER_LINEAR,
+					   .address_mode = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+					   .create_sampler = true});
+	r->ui_staging = gpu_buffer_create(
+		r->device, r->allocator, (VkDeviceSize)RENDERER_UI_WIDTH * RENDERER_UI_HEIGHT * 4u,
+		VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+	memset(r->ui_staging.allocation.mapped, 0, (size_t)r->ui_staging.size);
+	r->ui_pixels = calloc(1, (size_t)r->ui_staging.size);
+	if (!r->ui_pixels)
+	{
+		fprintf(stderr, "Out of memory allocating the UI canvas\n");
+		exit(EXIT_FAILURE);
+	}
+}
+
+uint8_t *renderer_ui_pixels(Renderer *r)
+{
+	return r->ui_pixels;
+}
+
+static void record_ui_upload(Renderer *r, VkCommandBuffer command)
+{
+	VkImageMemoryBarrier to_transfer = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+		.srcAccessMask = VK_ACCESS_SHADER_READ_BIT,
+		.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+		.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED, /* fully overwritten below */
+		.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.image = r->ui_overlay.image,
+		.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}};
+	vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+						 VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &to_transfer);
+	VkBufferImageCopy region = {
+		.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+		.imageExtent = {RENDERER_UI_WIDTH, RENDERER_UI_HEIGHT, 1}};
+	vkCmdCopyBufferToImage(command, r->ui_staging.buffer, r->ui_overlay.image,
+						   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+	VkImageMemoryBarrier to_read = to_transfer;
+	to_read.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+	to_read.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+	to_read.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+	to_read.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+	vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT,
+						 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, NULL, 0, NULL, 1, &to_read);
+}
+
 static void record_commands(Renderer *r, uint32_t image_index, const FrameUniforms *frame,
 							const RendererDraw *draws, uint32_t draw_count,
 							const RendererDraw *shadow_draws, uint32_t shadow_draw_count)
@@ -2854,6 +2929,7 @@ static void record_commands(Renderer *r, uint32_t image_index, const FrameUnifor
 	VkCommandBufferBeginInfo begin = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
 	VK_CHECK(vkBeginCommandBuffer(command, &begin));
 
+	record_ui_upload(r, command);
 	if (frame->atmosphere_options.z > 0.5f)
 		record_atmosphere(r, command);
 
@@ -3260,6 +3336,8 @@ void renderer_draw_frame(Renderer *r, const FrameUniforms *frame, const Renderer
 {
 	VkFence fence = r->in_flight[r->frame];
 	VK_CHECK(vkWaitForFences(r->device, 1, &fence, VK_TRUE, UINT64_MAX));
+	/* The previous frame's copy out of the staging buffer is now done. */
+	memcpy(r->ui_staging.allocation.mapped, r->ui_pixels, (size_t)r->ui_staging.size);
 	uint32_t image_index;
 	VkResult acquired =
 		vkAcquireNextImageKHR(r->device, r->swapchain, UINT64_MAX, r->image_available[r->frame],
@@ -3375,6 +3453,7 @@ void renderer_init(Renderer *r, SDL_Window *window, const RendererConfig *config
 	create_shadow_render_pass(r, r->shadow_map.format);
 	create_shadow_framebuffers(r);
 	create_shadow_pipeline(r);
+	create_ui_overlay(r);
 	create_swapchain(r);
 }
 
@@ -3392,6 +3471,9 @@ void renderer_shutdown(Renderer *r)
 {
 	vkDeviceWaitIdle(r->device);
 	destroy_swapchain(r);
+	texture_destroy(r->device, r->allocator, &r->ui_overlay);
+	gpu_buffer_destroy(r->device, r->allocator, &r->ui_staging);
+	free(r->ui_pixels);
 	vkDestroyPipeline(r->device, r->environment_prefilter_pipeline, NULL);
 	vkDestroyPipeline(r->device, r->environment_to_cube_pipeline, NULL);
 	vkDestroyPipelineLayout(r->device, r->environment_pipeline_layout, NULL);

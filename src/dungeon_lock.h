@@ -57,9 +57,7 @@ typedef struct
 } DungeonSafePins;
 
 /* Every pin starts at height 0 and every target is at least 1, so every pin has
- * to be moved. A pin already on its target would be locked in place from the
- * first frame (see dungeon_pin_tumbler_adjust) and read as a bore the player
- * cannot touch. */
+ * to be moved before it can lock. */
 void dungeon_pin_tumbler_init(DungeonPinTumbler *lock, uint32_t seed, uint32_t pin_count);
 
 /* Clamped, matching the source's Math.Clamp -- moving off either end is a
@@ -70,14 +68,13 @@ void dungeon_pin_tumbler_move(DungeonPinTumbler *lock, int direction);
  * and will not move again -- see dungeon_pin_tumbler_adjust. */
 bool dungeon_pin_tumbler_pin_set(const DungeonPinTumbler *lock, uint32_t pin);
 
-/* Wraps mod DUNGEON_LOCK_PIN_STATES, matching the source's (v + d + 4) % 4.
- * Height wraps even though selection clamps; that asymmetry is the source's.
- *
- * A pin that has reached its target is LOCKED and ignores this: it has dropped
- * into place and cannot be knocked back out. That is what keeps the puzzle a
+/* A pin that has reached its target is LOCKED and ignores input: it has
+ * dropped into place and cannot be knocked back out. That keeps the puzzle a
  * short, monotonic search -- work one pin until it sets, move to the next --
  * rather than a state you can undo by leaning on a key. Generation guarantees
  * no pin starts on its target, so every bore is one the player has to work. */
+/* Raises the selected pin by one level when direction is positive. Downward
+ * input is ignored; a pin freezes permanently as soon as it reaches target. */
 void dungeon_pin_tumbler_adjust(DungeonPinTumbler *lock, int direction);
 
 /* All-or-nothing against the target. Sets and returns `solved`. */

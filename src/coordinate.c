@@ -32,6 +32,30 @@ CameraRelativePosition coordinate_camera_relative(WorldPosition world, WorldPosi
 	};
 }
 
+LocalToWorldTransform coordinate_compose(const LocalToWorldTransform *parent, mat4s child)
+{
+	LocalToWorldTransform result = {.translation = parent->translation};
+	for (int column = 0; column < 3; ++column)
+		for (int row = 0; row < 3; ++row)
+		{
+			double sum = 0.0;
+			for (int k = 0; k < 3; ++k)
+				sum += parent->rotation[k][row] * (double)child.raw[column][k];
+			result.rotation[column][row] = sum;
+		}
+	/* The child's own offset is rotated into the world frame and added to the
+	   parent's origin in double precision, so a node a few centimetres from a
+	   lock keeps that offset exactly wherever the lock is in the world. */
+	double offset[3] = {0.0, 0.0, 0.0};
+	for (int row = 0; row < 3; ++row)
+		for (int k = 0; k < 3; ++k)
+			offset[row] += parent->rotation[k][row] * (double)child.raw[3][k];
+	result.translation.x += offset[0];
+	result.translation.y += offset[1];
+	result.translation.z += offset[2];
+	return result;
+}
+
 mat4s coordinate_local_to_camera_relative(const LocalToWorldTransform *local_to_world,
 										  WorldPosition camera_world)
 {

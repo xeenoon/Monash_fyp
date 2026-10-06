@@ -35,7 +35,22 @@ Run the dungeon explorer with:
 TERRAIN_SCENE=dungeon ./build/terrain_renderer
 ```
 
-By default this generates a procedural level from `DUNGEON_SEED` (a `uint32_t`,
+This launches the full game (`src/dungeon_game.c`): a title screen, How to
+Play, and a level select of three dungeons whose biomes (wall tint and torch
+colour) and layouts are re-rolled every launch (`DUNGEON_SESSION_SEED` pins
+them). In a dungeon, the treasure chest at the exit completes the level; a
+guardian patrols behind the first locked door and chases on sight, and being
+caught is game over. Stars: one for finishing, one for never being spotted,
+one for the hidden gem. **Esc** pauses, **R** restarts. Menus and HUD are
+painted on the CPU into a canvas the tone-map pass blends over the frame
+(`src/ui_draw.c`, fonts baked by `tools/build_ui_font.py`).
+`DUNGEON_START_PLAYING=1` skips the title. `DUNGEON_GAME_SCRIPT` injects
+inputs and captures for headless checks (see `game_script_step` in
+`src/main.c`). For smooth footage, use a Release build: Debug takes ~12 s
+to build a level, Release ~5 s.
+
+`DUNGEON_SCRIPT` and `DUNGEON_MAP` runs bypass the game layer and get the
+bare scene described below. By default the bare scene generates a procedural level from `DUNGEON_SEED` (a `uint32_t`,
 default 1): rooms joined by hallways, rounded cave pockets grown off the room
 walls, puddles, and up to three locked doors standing in the hallways. Try a
 few different seeds:

@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "atmosphere.h"
@@ -12,6 +13,10 @@
 #include "dungeon_camera.h"
 #include "dungeon_harness.h"
 #include "dungeon_lab.h"
+#include "dungeon_game.h"
+#include "game_character.h"
+#include "overworld.h"
+#include "ui_draw.h"
 #include "gltf_scene.h"
 #include "input.h"
 #include "material_stability_demo.h"
@@ -151,6 +156,111 @@ static_material_push(LocalToWorldTransform transform, WorldPosition camera_posit
 				   curvature_strength}}};
 }
 
+/* DUNGEON_GAME_SCRIPT="<frame> <command>[; ...]" injects game input on given
+ * frames so the menus and the run can be exercised and captured without a
+ * keyboard: up/down/left/right/confirm/escape/interact/restart, walk <fwd>
+ * <right> (held until the next walk), teleport chest|gem|guard|spawn|door<N>,
+ * select <N> (map), mouse <u> <v>, click, wheel <notches>, drag <dx> <dy>, capture
+ * <png>, quit. The harness (DUNGEON_SCRIPT) remains the tool for the bare
+ * scene; this is only for the game layer on top of it. */
+static void game_script_step(const char *script, uint64_t frame, Input *input, DungeonGame *game,
+							 DungeonScene *scene, Overworld *overworld, Renderer *renderer,
+							 bool *running,
+							 float walk[2], const char **capture)
+{
+	*capture = NULL;
+	if (walk[0] != 0.0f || walk[1] != 0.0f)
+	{
+		input->move_forward = walk[0];
+		input->move_right = walk[1];
+	}
+	if (!script)
+		return;
+	static char path[512];
+	for (const char *p = script; *p;)
+	{
+		char entry[600];
+		const char *end = strchr(p, ';');
+		size_t length = end ? (size_t)(end - p) : strlen(p);
+		if (length >= sizeof(entry))
+			length = sizeof(entry) - 1u;
+		memcpy(entry, p, length);
+		entry[length] = '\0';
+		p = end ? end + 1 : p + strlen(p);
+		unsigned long when = 0;
+		char command[32] = {0}, argument[512] = {0};
+		float a = 0.0f, b = 0.0f;
+		if (sscanf(entry, " %lu %31s %511s", &when, command, argument) < 2 || when != frame)
+			continue;
+		if (!strcmp(command, "up")) input->menu_up = input->puzzle_up = true;
+		else if (!strcmp(command, "down")) input->menu_down = input->puzzle_down = true;
+		else if (!strcmp(command, "left")) input->menu_left = input->puzzle_left = true;
+		else if (!strcmp(command, "right")) input->menu_right = input->puzzle_right = true;
+		else if (!strcmp(command, "confirm")) input->puzzle_confirm = true;
+		else if (!strcmp(command, "escape")) input->escape = true;
+		else if (!strcmp(command, "interact")) input->interact = true;
+		else if (!strcmp(command, "restart")) input->restart = true;
+		else if (!strcmp(command, "quit")) *running = false;
+		else if (!strcmp(command, "walk") && sscanf(entry, " %*u %*s %f %f", &a, &b) == 2)
+		{
+			walk[0] = a;
+			walk[1] = b;
+			input->move_forward = a;
+			input->move_right = b;
+		}
+		else if (!strcmp(command, "select"))
+		{
+			game->selected = atoi(argument) % (int)DUNGEON_GAME_LEVELS;
+			overworld_fly_to(overworld, (uint32_t)game->selected);
+		}
+		else if (!strcmp(command, "mouse") && sscanf(entry, " %*u %*s %f %f", &a, &b) == 2)
+		{
+			/* Normalised window position, then a press+release there. */
+			int w = 1, h = 1;
+			SDL_GetWindowSize(renderer->window, &w, &h);
+			input->mouse_x = a * (float)w;
+			input->mouse_y = b * (float)h;
+		}
+		else if (!strcmp(command, "click"))
+			input->mouse_left_pressed = input->mouse_left_released = true;
+		else if (!strcmp(command, "wheel"))
+			input->wheel = (float)atof(argument);
+		else if (!strcmp(command, "drag") && sscanf(entry, " %*u %*s %f %f", &a, &b) == 2)
+		{
+			input->mouse_left = true;
+			input->mouse_dx = a;
+			input->mouse_dy = b;
+		}
+		else if (!strcmp(command, "teleport"))
+		{
+			DungeonPoint target = scene->level.spawn;
+			unsigned door_index = 0;
+			if (sscanf(argument, "door%u", &door_index) == 1 &&
+				door_index < scene->level.door_count)
+			{
+				const DungeonDoorway *door = &scene->level.doors[door_index];
+				float side = scene->session.doors[door_index].hardware_side;
+				target = (DungeonPoint){door->center.x + cosf(door->yaw) * side * 1.1f,
+										door->center.z + sinf(door->yaw) * side * 1.1f};
+			}
+			else if (!strcmp(argument, "chest"))
+				target = (DungeonPoint){game->chest.x + 1.2f, game->chest.z};
+			else if (!strcmp(argument, "gem"))
+				target = game->gem;
+			else if (!strcmp(argument, "guard"))
+				target = dungeon_game_debug_point_near_guard(game, scene);
+			scene->player.position = target;
+		}
+		else if (!strcmp(command, "capture"))
+		{
+			snprintf(path, sizeof(path), "%s", argument);
+			*capture = path;
+		}
+		else
+			fprintf(stderr, "DUNGEON_GAME_SCRIPT: unknown command '%s'\n", command);
+	}
+}
+
 int main(int argc, char *argv[])
 {
 	TerrainTextureSet terrain_textures;
@@ -190,6 +300,11 @@ int main(int argc, char *argv[])
 	}
 	bool use_torch_lab = lab_scene != DUNGEON_LAB_NONE;
 	bool use_dungeon = use_torch_lab || (scene && strcmp(scene, "dungeon") == 0);
+	/* The full game -- menus, chest, guardian, stars -- wraps the procedural
+	 * dungeon. Scripted harness runs and the debug frontends get the bare
+	 * scene, exactly as before. */
+	bool use_dungeon_game = use_dungeon && !use_torch_lab && !getenv("DUNGEON_SCRIPT") &&
+							!getenv("DUNGEON_MAP");
 #ifdef DEBUG_SHADER_DUMP
 	const char *scene_name =
 		use_terrain ? "terrain"
@@ -244,13 +359,9 @@ int main(int argc, char *argv[])
 		SDL_SetWindowTitle(window, "Phase D — stabilized material detail");
 	else if (use_dungeon)
 		SDL_SetWindowTitle(window, "Dungeon Explorer");
-	if (!SDL_SetWindowRelativeMouseMode(window, true))
+	/* The game's map wants a free cursor; the free-fly scenes capture it. */
+	if (!SDL_SetWindowRelativeMouseMode(window, !use_dungeon_game))
 		fprintf(stderr, "Relative mouse mode unavailable: %s\n", SDL_GetError());
-	if (use_dungeon)
-	{
-		SDL_SetWindowRelativeMouseMode(window, false);
-		SDL_ShowCursor();
-	}
 
 	Renderer renderer;
 	ShadowQualitySettings shadow_quality = shadow_quality_from_environment();
@@ -264,6 +375,9 @@ int main(int argc, char *argv[])
 	GltfLoadError gltf_error = {0};
 	MaterialStabilityDemo demo = {0};
 	DungeonScene dungeon = {0};
+	DungeonGame game = {0};
+	Overworld overworld = {0};
+	GameCharacter indiana = {0};
 	GltfLoadResult load_result = GLTF_LOAD_OK;
 	if (use_terrain)
 	{
@@ -318,7 +432,43 @@ int main(int argc, char *argv[])
 	else if (use_dungeon)
 	{
 		DungeonLevelError dungeon_error = {0};
-		if (!dungeon_scene_create(&renderer, &dungeon, &dungeon_error))
+		if (use_dungeon_game)
+		{
+			/* A new set of biomes and layouts every launch, unless pinned. */
+			const char *session_env = getenv("DUNGEON_SESSION_SEED");
+			uint32_t session_seed = session_env ? (uint32_t)strtoul(session_env, NULL, 10)
+												: (uint32_t)time(NULL) ^ (uint32_t)SDL_GetTicksNS();
+			printf("Dungeon session seed: %u\n", session_seed);
+			dungeon_game_init(&game, session_seed);
+			if (getenv("DUNGEON_SEED"))
+				game.levels[0].seed = (uint32_t)strtoul(getenv("DUNGEON_SEED"), NULL, 10);
+			/* The overworld is the generated 1 km Alps tile set, drawn by the
+			 * same TerrainRuntime as the terrain scene. */
+			TerrainRuntimeSettings settings = terrain_runtime_default_settings();
+			settings.quadtree.split_threshold_px = 2.5f;
+			settings.quadtree.merge_threshold_px = 1.75f;
+			settings.quadtree.max_nodes = 8192;
+			settings.quadtree.max_resident_tiles = 512;
+			settings.quadtree.max_cpu_bytes = UINT64_C(512) * 1024u * 1024u;
+			settings.quadtree.max_gpu_bytes = UINT64_C(1024) * 1024u * 1024u;
+			settings.skirt_ratio = 0.01f;
+			terrain = terrain_runtime_create(&renderer, TRN_DIR, &settings);
+			if (!terrain || !overworld_create(&renderer, &overworld, TRN_DIR, session_seed))
+			{
+				fprintf(stderr, "Could not build the overworld from %s\n", TRN_DIR);
+				return EXIT_FAILURE;
+			}
+			OverworldGround grounds[DUNGEON_GAME_LEVELS];
+			for (uint32_t i = 0; i < DUNGEON_GAME_LEVELS; ++i)
+				grounds[i] = overworld.entrances[i].ground;
+			dungeon_game_assign_grounds(&game, grounds);
+			game.overworld = &overworld;
+			game_character_load(&renderer, &indiana, INDIANA_RUNTIME_DIR);
+		}
+		if (use_dungeon_game
+				? !dungeon_scene_create_seeded(&renderer, &dungeon, game.levels[0].seed,
+											   &dungeon_error)
+				: !dungeon_scene_create(&renderer, &dungeon, &dungeon_error))
 		{
 			fprintf(stderr, "Could not load dungeon: %s\n", dungeon_error.message);
 			load_result = GLTF_LOAD_INVALID;
@@ -399,6 +549,21 @@ int main(int argc, char *argv[])
 		dungeon_camera_init(&dungeon_camera, dungeon.level.spawn);
 		camera = dungeon_camera.camera;
 	}
+	if (use_dungeon_game)
+	{
+		/* Level 0 is loaded as the title screen's backdrop. */
+		dungeon.character = &indiana;
+		dungeon_game_begin_level(&game, &dungeon, 0);
+		game.screen = DUNGEON_GAME_TITLE;
+		game.in_overworld = true;
+		if (getenv("DUNGEON_START_PLAYING"))
+		{
+			game.screen = DUNGEON_GAME_PLAYING;
+			game.in_overworld = false;
+		}
+		else if (getenv("DUNGEON_START_OVERWORLD"))
+			game.screen = DUNGEON_GAME_OVERWORLD;
+	}
 	if (use_torch_lab)
 	{
 		/* Eye height, a few metres back from whatever is burning, looking at
@@ -477,7 +642,7 @@ int main(int argc, char *argv[])
 		fflush(stdout);
 	}
 
-	Input input = {.mouse_captured = !use_dungeon};
+	Input input = {.mouse_captured = !use_dungeon_game};
 	/* Automated visual comparisons need to survive window focus and pointer
 	   motion without drifting away from the replayed dump camera. */
 	const char *capture_path = getenv("TERRAIN_CAPTURE");
@@ -524,6 +689,11 @@ int main(int argc, char *argv[])
 	bool auto_exposure_enabled = !use_terrain && !use_dungeon;
 	AtmosphereParameters atmosphere = atmosphere_earth();
 	bool running = true;
+	const char *game_script = getenv("DUNGEON_GAME_SCRIPT");
+	bool previous_overworld_frame = false;
+	float map_drag_travel = 0.0f;
+	uint64_t game_frame = 0;
+	float game_walk[2] = {0.0f, 0.0f};
 #ifdef DEBUG_SHADER_DUMP
 	/* Automated capture for offline diagnosis. TERRAIN_DUMP_AFTER=N renders N
 	   frames (letting tiles stream in), dumps once, then quits. Optional env:
@@ -574,6 +744,10 @@ int main(int argc, char *argv[])
 	while (running)
 	{
 		input_poll(&input, window);
+		const char *game_capture = NULL;
+		if (use_dungeon_game && game_script)
+			game_script_step(game_script, game_frame++, &input, &game, &dungeon, &overworld, &renderer,
+							 &running, game_walk, &game_capture);
 #ifdef DEBUG_SHADER_DUMP
 		/* Input is polled before the draw, so whether this frame should dump is
 		   known in time to flip frame.shader_dump.x before renderer_draw_frame.
@@ -583,7 +757,7 @@ int main(int argc, char *argv[])
 			input.dump_shader_data || (auto_dump_after && rendered_frames + 1 >= auto_dump_after);
 #endif
 		unsigned previous_debug_mode = debug_mode;
-		if (input.quit)
+		if (input.quit || (input.escape && !use_dungeon_game))
 			running = false;
 		if (input.toggle_quarry_shading)
 		{
@@ -703,21 +877,119 @@ int main(int argc, char *argv[])
 			dungeon_scene_update(&dungeon, 0.0f, 0.0f, camera.yaw, dt);
 		else if (use_dungeon)
 		{
+			if (use_dungeon_game)
+			{
+				DungeonGameAction action = dungeon_game_update(&game, &input, &dungeon, dt);
+				if (action == DUNGEON_GAME_ACTION_QUIT)
+					running = false;
+				else if (action == DUNGEON_GAME_ACTION_LOAD)
+				{
+					uint64_t load_start = SDL_GetTicksNS();
+					renderer_wait_idle(&renderer);
+					dungeon_scene_destroy(&renderer, &dungeon);
+					DungeonLevelError load_error = {0};
+					uint32_t level = game.load_level;
+					if (!dungeon_scene_create_seeded(&renderer, &dungeon,
+													 dungeon_game_level_seed(&game, level),
+													 &load_error))
+					{
+						fprintf(stderr, "Could not load dungeon: %s\n", load_error.message);
+						running = false;
+						continue;
+					}
+					dungeon.character = &indiana;
+					dungeon_game_begin_level(&game, &dungeon, level);
+					dungeon_camera_init(&dungeon_camera, dungeon.level.spawn);
+					history_valid = false;
+					printf("Loaded dungeon %u (seed %u) in %.2f s\n", level,
+						   dungeon_game_level_seed(&game, level),
+						   (double)(SDL_GetTicksNS() - load_start) / 1e9);
+					/* Do not charge the load to the first frame's physics. */
+					previous_ticks = SDL_GetTicksNS();
+					dt = 1.0f / 60.0f;
+				}
+				else if (action == DUNGEON_GAME_ACTION_RETURN)
+				{
+					/* Back on the map, hovering over the door just left. */
+					overworld_fly_to(&overworld, game.current);
+					game.selected = (int)game.current;
+				}
+			}
+		}
+		if (use_dungeon_game && game.in_overworld)
+		{
+			/* On the surface: a map to browse, Google Earth style. */
+			bool browsing = game.screen == DUNGEON_GAME_OVERWORLD;
+			int window_w = 1, window_h = 1;
+			SDL_GetWindowSize(window, &window_w, &window_h);
+			/* A click is a press and release that did not become a drag. */
+			if (input.mouse_left_pressed)
+				map_drag_travel = 0.0f;
+			if (input.mouse_left)
+				map_drag_travel += fabsf(input.mouse_dx) + fabsf(input.mouse_dy);
+			bool click = input.mouse_left_released && map_drag_travel < 6.0f;
+			overworld_update(&overworld, browsing && input.mouse_left ? input.mouse_dx : 0.0f,
+							 browsing && input.mouse_left ? input.mouse_dy : 0.0f,
+							 browsing && input.mouse_right ? input.mouse_dx : 0.0f,
+							 browsing ? input.wheel : 0.0f, browsing ? input.move_forward : 0.0f,
+							 browsing ? input.move_right : 0.0f, (float)window_h, dt,
+							 !(game.screen == DUNGEON_GAME_TITLE ||
+							   (game.screen == DUNGEON_GAME_HOW_TO_PLAY &&
+								game.return_screen == DUNGEON_GAME_TITLE)));
+			camera = overworld_camera(&overworld);
+			/* Pins over the doors, in UI canvas pixels. The canvas is fitted
+			 * 16:9 into the window exactly as tonemap.frag does it. */
+			float aspect = renderer_aspect(&renderer);
+			float fit = aspect / ((float)RENDERER_UI_WIDTH / (float)RENDERER_UI_HEIGHT);
+			for (uint32_t i = 0; i < DUNGEON_GAME_LEVELS; ++i)
+			{
+				WorldPosition door = overworld.entrances[i].position;
+				door.y += 2.6; /* the top of the mound */
+				float u = 0.0f, v = 0.0f;
+				game.markers[i].visible = overworld_project(&overworld, &camera, aspect, door, &u, &v);
+				game.markers[i].x = ((fit > 1.0f ? (u - 0.5f) * fit : u - 0.5f) + 0.5f) *
+									(float)RENDERER_UI_WIDTH;
+				game.markers[i].y = ((fit > 1.0f ? v - 0.5f : (v - 0.5f) / fit) + 0.5f) *
+									(float)RENDERER_UI_HEIGHT;
+			}
+			float pointer_u = input.mouse_x / (float)window_w - 0.5f;
+			float pointer_v = input.mouse_y / (float)window_h - 0.5f;
+			if (fit > 1.0f)
+				pointer_u *= fit;
+			else
+				pointer_v /= fit;
+			dungeon_game_overworld_pointer(&game, (pointer_u + 0.5f) * (float)RENDERER_UI_WIDTH,
+										   (pointer_v + 0.5f) * (float)RENDERER_UI_HEIGHT,
+										   browsing && click, browsing && input.tab,
+										   browsing && (input.puzzle_confirm || input.interact));
+			if (game.fly_request >= 0)
+			{
+				overworld_fly_to(&overworld, (uint32_t)game.fly_request);
+				game.fly_request = -1;
+			}
+		}
+		else if (use_dungeon)
+		{
+			bool gameplay = !use_dungeon_game || dungeon_game_playing(&game);
 			DungeonSession *session = &dungeon.session;
-			bool picking = session->phase != DUNGEON_PHASE_EXPLORING;
-			/* While a lock is up, the movement and orbit keys drive the lock
-			 * instead -- the same keys, rebound by phase, exactly as the source
-			 * game's GameplayPhase switch does. */
+			bool picking = gameplay && session->phase != DUNGEON_PHASE_EXPLORING;
+			/* While a lock is up, the arrow keys drive the lock instead of
+			 * orbiting -- the same keys, rebound by phase, exactly as the
+			 * source game's GameplayPhase switch does. WASD is not rebound: it
+			 * stops walking, because there is nowhere to walk while a lock
+			 * fills the frame, and nudges the inspection view instead. */
 			if (picking)
 			{
 				if (session->phase == DUNGEON_PHASE_PRISM)
 				{
+					/* A held arrow keeps turning the prism, which is why the
+					 * orbit axis is read here as well as the edge-triggered
+					 * key. WASD is no longer an alias for it: while a lock is
+					 * up those keys pan the inspection view instead. */
 					bool turning = session->doors[session->focused_door].prism.rotating;
-					if (input.puzzle_left ||
-						(turning && (input.orbit_yaw < 0 || input.move_right < 0)))
+					if (input.puzzle_left || (turning && input.orbit_yaw < 0))
 						dungeon_session_prism_direction(session, DUNGEON_PRISM_WEST);
-					if (input.puzzle_right ||
-						(turning && (input.orbit_yaw > 0 || input.move_right > 0)))
+					if (input.puzzle_right || (turning && input.orbit_yaw > 0))
 						dungeon_session_prism_direction(session, DUNGEON_PRISM_EAST);
 					if (input.puzzle_up)
 						dungeon_session_prism_direction(session, DUNGEON_PRISM_NORTH);
@@ -758,21 +1030,38 @@ int main(int argc, char *argv[])
 				if (input.puzzle_cancel || input.interact)
 					dungeon_session_cancel(session);
 			}
-			else if (input.interact)
+			else if (gameplay && input.interact &&
+					 !(use_dungeon_game && dungeon_game_interact(&game, &dungeon)))
 				dungeon_session_interact(session, dungeon.player.position);
 
-			if (!freeze_camera && !picking)
+			/* Behind the menus the camera drifts slowly round the level. */
+			bool backdrop = use_dungeon_game && game.screen != DUNGEON_GAME_PLAYING &&
+							game.screen != DUNGEON_GAME_PAUSED && game.screen != DUNGEON_GAME_OVER &&
+							game.screen != DUNGEON_GAME_COMPLETE;
+			if (!freeze_camera && backdrop)
+				dungeon_camera_orbit(&dungeon_camera, 0.12f, 0.0f, dt);
+			else if (!freeze_camera && !picking && gameplay)
 				dungeon_camera_orbit(&dungeon_camera, input.orbit_yaw, input.orbit_pitch, dt);
-			float move_forward = picking ? 0.0f : input.move_forward;
-			float move_right = picking ? 0.0f : input.move_right;
+			float move_forward = picking || !gameplay ? 0.0f : input.move_forward;
+			float move_right = picking || !gameplay ? 0.0f : input.move_right;
 			if (!freeze_camera && dungeon_scene_update(&dungeon, move_forward, move_right,
 											 dungeon_camera.camera.yaw, dt))
-				printf("Dungeon exit reached\n");
+				if (!use_dungeon_game)
+					printf("Dungeon exit reached\n");
+			if (use_dungeon_game)
+				dungeon_game_post_update(&game, &dungeon, dt);
 			/* Ease the framing toward the lock, and follow a target blended the
 			 * same amount, so the door -- not the player -- ends up centred. */
 			dungeon_camera_focus(&dungeon_camera, picking,
 								 dungeon_session_focus_facing_degrees(session),
 								 DUNGEON_LOCK_CENTRE_Y_M, dt);
+			if (!freeze_camera && picking && input.mouse_captured)
+				dungeon_camera_focus_look(&dungeon_camera, input.look_dx, input.look_dy);
+			/* Same bounded offsets from the keyboard, so inspecting the lock
+			 * does not require reaching for the mouse. */
+			if (!freeze_camera && picking)
+				dungeon_camera_focus_pan(&dungeon_camera, input.move_right, input.move_forward,
+										 dt);
 			float focus = dungeon_camera_focus_blend(&dungeon_camera);
 			DungeonPoint lock = dungeon_session_focus_point(session);
 			DungeonPoint follow = {
@@ -819,6 +1108,14 @@ int main(int argc, char *argv[])
 				printf("Phase D demo flyby: Phase C\n");
 			}
 		}
+		/* The game switches worlds at runtime: on the surface the frame is a
+		 * terrain frame (sky, sun, atmosphere), underground a dungeon one. */
+		bool overworld_frame = use_dungeon_game && game.in_overworld;
+		bool frame_terrain = use_terrain || overworld_frame;
+		bool frame_dungeon = use_dungeon && !overworld_frame;
+		if (overworld_frame != previous_overworld_frame)
+			history_valid = false;
+		previous_overworld_frame = overworld_frame;
 		bool camera_cut =
 			history_valid &&
 			temporal_camera_cut(previous_camera_position, camera.position, previous_camera_yaw,
@@ -830,7 +1127,7 @@ int main(int argc, char *argv[])
 		const RendererDraw *terrain_shadow_draws = NULL;
 		uint32_t terrain_draw_count = 0;
 		uint32_t terrain_shadow_draw_count = 0;
-		if (use_terrain)
+		if (frame_terrain)
 		{
 			TerrainQuadtreeView terrain_view = {
 				.camera_world = camera.position,
@@ -877,19 +1174,43 @@ int main(int argc, char *argv[])
 		ground_push.debug.y = 0.0f; /* ground retains the neutral cavity descriptor */
 		RendererDraw ground_draw = {.mesh = &ground.mesh, .push = ground_push, .static_mesh = true};
 		RendererDraw dungeon_draws[DUNGEON_MAX_DRAWS] = {0};
-		const RendererDraw *active_draws = use_terrain ? terrain_draws : &quarry_draw;
-		uint32_t active_draw_count = use_terrain ? terrain_draw_count : 1u;
+		const RendererDraw *active_draws = frame_terrain ? terrain_draws : &quarry_draw;
+		uint32_t active_draw_count = frame_terrain ? terrain_draw_count : 1u;
 		const RendererDraw *active_shadow_draws =
-			use_terrain ? terrain_shadow_draws : active_draws;
+			frame_terrain ? terrain_shadow_draws : active_draws;
 		uint32_t active_shadow_draw_count =
-			use_terrain ? terrain_shadow_draw_count : active_draw_count;
+			frame_terrain ? terrain_shadow_draw_count : active_draw_count;
 		RendererDraw *allocated_draws = NULL;
-		if (use_dungeon)
+		if (frame_dungeon)
 		{
 			active_draw_count = dungeon_scene_draws(&dungeon, camera.position, dungeon_draws,
 											 DUNGEON_MAX_DRAWS, &active_shadow_draw_count);
 			active_draws = dungeon_draws;
 			active_shadow_draws = dungeon_draws;
+		}
+		if (overworld_frame)
+		{
+			/* Terrain, then the three doors, in both the main
+			 * and the shadow list: one allocation, main list first. */
+			RendererDraw extras[64];
+			uint32_t extra_count = overworld_draws(&overworld, camera.position, extras, 64u);
+			allocated_draws = calloc((size_t)terrain_draw_count + terrain_shadow_draw_count +
+										 2u * extra_count + 1u,
+									 sizeof(*allocated_draws));
+			if (!allocated_draws)
+			{
+				running = false;
+				continue;
+			}
+			memcpy(allocated_draws, terrain_draws, sizeof(RendererDraw) * terrain_draw_count);
+			memcpy(allocated_draws + terrain_draw_count, extras, sizeof(RendererDraw) * extra_count);
+			RendererDraw *shadow_list = allocated_draws + terrain_draw_count + extra_count;
+			memcpy(shadow_list, terrain_shadow_draws, sizeof(RendererDraw) * terrain_shadow_draw_count);
+			memcpy(shadow_list + terrain_shadow_draw_count, extras, sizeof(RendererDraw) * extra_count);
+			active_draws = allocated_draws;
+			active_draw_count = terrain_draw_count + extra_count;
+			active_shadow_draws = shadow_list;
+			active_shadow_draw_count = terrain_shadow_draw_count + extra_count;
 		}
 		if (use_quarry)
 		{
@@ -965,7 +1286,7 @@ int main(int argc, char *argv[])
 		vec2s jitter = temporal_jitter_ndc(temporal_frame++, renderer.swapchain_extent.width,
 										   renderer.swapchain_extent.height);
 		mat4s projection = temporal_jitter_projection(
-			use_dungeon ? dungeon_camera_projection(&dungeon_camera, renderer_aspect(&renderer))
+			frame_dungeon ? dungeon_camera_projection(&dungeon_camera, renderer_aspect(&renderer))
 						: camera_projection(&camera, renderer_aspect(&renderer)),
 			jitter);
 		mat4s view = camera_view(&camera);
@@ -1035,7 +1356,7 @@ int main(int argc, char *argv[])
 						 atmosphere.sun_angular_radius_rad, shadow_quality.blocker_search_m}},
 			.shadow_pcss = (vec4s){{shadow_quality.max_filter_radius_texels,
 									(float)renderer.shadow_resolution, 0.0f, 0.0f}},
-			.sun_radiance = use_dungeon ? (vec4s){{0.22f, 0.20f, 0.18f, 0.0f}}
+			.sun_radiance = frame_dungeon ? (vec4s){{0.22f, 0.20f, 0.18f, 0.0f}}
 										 : (vec4s){{1.6f, 1.5f, 1.35f, 0.0f}},
 			.atmosphere_radii = (vec4s){{atmosphere.bottom_radius_km, atmosphere.top_radius_km,
 										 fmaxf((float)camera.position.y * 0.001f, 0.001f),
@@ -1056,7 +1377,7 @@ int main(int argc, char *argv[])
 				(vec4s){{atmosphere.ground_albedo[0], atmosphere.ground_albedo[1],
 						 atmosphere.ground_albedo[2], atmosphere.multiple_scattering_factor}},
 			.atmosphere_options = (vec4s){{atmosphere.aerial_max_distance_km,
-										   (float)atmosphere_slice, use_dungeon ? 0.0f : 1.0f, 0.0f}},
+										   (float)atmosphere_slice, frame_dungeon ? 0.0f : 1.0f, 0.0f}},
 			.temporal_parameters =
 				(vec4s){{use_history ? 1.0f : 0.0f, dt, 0.0f, auto_exposure_enabled ? 1.0f : 0.0f}},
 			.temporal_jitter = (vec4s){{jitter.x, jitter.y, previous_jitter.x, previous_jitter.y}},
@@ -1069,10 +1390,10 @@ int main(int argc, char *argv[])
 			.stretch_overlay = (vec4s){{stretch_overlay.enabled ? 1.0f : 0.0f,
 										stretch_overlay.threshold, stretch_overlay.opacity, 0.0f}},
 			.point_light_options =
-				use_dungeon ? (vec4s){{0.0f, 0.25f, 0.25f, 0.0f}}
+				frame_dungeon ? (vec4s){{0.0f, 0.25f, 0.25f, 0.0f}}
 							: (vec4s){{0.0f, 1.0f, 1.0f, 0.0f}},
 		};
-		if (use_dungeon)
+		if (frame_dungeon)
 		{
 			frame.point_light_options.x = (float)dungeon_scene_write_lights(
 				&dungeon, camera.position, frame.point_light_position_radius,
@@ -1092,12 +1413,20 @@ int main(int argc, char *argv[])
 		if (getenv("TERRAIN_SHADOW_NBIAS"))
 			frame.shadow_parameters.x = (float)atof(getenv("TERRAIN_SHADOW_NBIAS"));
 #endif
+		if (use_dungeon_game)
+		{
+			UiCanvas canvas = {renderer_ui_pixels(&renderer), (int)RENDERER_UI_WIDTH,
+							   (int)RENDERER_UI_HEIGHT};
+			dungeon_game_draw_ui(&game, &dungeon, &canvas);
+		}
 		renderer_draw_frame(&renderer, &frame, active_draws, active_draw_count, active_shadow_draws,
 							active_shadow_draw_count, input.resized);
 		if (harness)
 			dungeon_harness_post_frame(harness, &renderer);
+		if (game_capture && !renderer_capture_swapchain(&renderer, game_capture))
+			fprintf(stderr, "DUNGEON_GAME_SCRIPT: could not write %s\n", game_capture);
 		free(allocated_draws);
-		if (use_terrain)
+		if (frame_terrain)
 			terrain_runtime_collect_evictions(terrain);
 #ifdef DEBUG_SHADER_DUMP
 		/* Dump reads the buffer the frame above just populated. Clear first so a
@@ -1166,7 +1495,16 @@ int main(int argc, char *argv[])
 	if (use_terrain)
 		terrain_runtime_destroy(terrain);
 	else if (use_dungeon)
+	{
 		dungeon_scene_destroy(&renderer, &dungeon);
+		dungeon_game_destroy(&game);
+		if (use_dungeon_game)
+		{
+			overworld_destroy(&renderer, &overworld);
+			game_character_destroy(&renderer, &indiana);
+			terrain_runtime_destroy(terrain);
+		}
+	}
 	else if (use_quarry)
 	{
 		benchmark_ground_destroy(&renderer, &ground);

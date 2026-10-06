@@ -8,6 +8,8 @@ layout(location = 0) in vec2 texcoord;
 layout(location = 0) out vec4 out_color;
 layout(set = 1, binding = 5) uniform sampler2D resolved_hdr;
 layout(set = 1, binding = 7) uniform sampler2D bloom_pyramid;
+/* CPU-painted UI canvas, straight alpha, already display-encoded. */
+layout(set = 1, binding = 8) uniform sampler2D ui_overlay;
 layout(std430, set = 1, binding = 6) readonly buffer ExposureState {
     float exposure;
     float average_luminance;
@@ -78,6 +80,22 @@ void main() {
         : aces_fitted(resolved * exposure_state.exposure);
     float dither = centred_dither(gl_FragCoord.xy, frame.time * 60.0);
     vec3 encoded = clamp(linear_to_srgb(display_linear) + dither, 0.0, 1.0);
+    /* Fit the 16:9 canvas inside the window without stretching it. Past its
+       edges, use the bottom-right texel: only full-screen fills (menu dims)
+       ever cover it, so those carry out to the window edge and HUD panels
+       anchored to the canvas edges do not smear into the bars. */
+    vec2 screen_size = vec2(textureSize(resolved_hdr, 0));
+    vec2 ui_size = vec2(textureSize(ui_overlay, 0));
+    float fit = (screen_size.x / screen_size.y) / (ui_size.x / ui_size.y);
+    vec2 ui_uv = texcoord - 0.5;
+    if (fit > 1.0)
+        ui_uv.x *= fit;
+    else
+        ui_uv.y /= fit;
+    ui_uv += 0.5;
+    bool inside_ui = all(greaterThanEqual(ui_uv, vec2(0.0))) && all(lessThanEqual(ui_uv, vec2(1.0)));
+    vec4 ui = texture(ui_overlay, inside_ui ? ui_uv : vec2(1.0) - 0.5 / ui_size);
+    encoded = mix(encoded, ui.rgb, ui.a);
     /* For an sRGB attachment, invert back to linear so the attachment's one
        hardware transfer recreates `encoded`. UNORM fallbacks receive it directly. */
     vec3 attachment_value = frame.temporal_parameters.z > 0.5
