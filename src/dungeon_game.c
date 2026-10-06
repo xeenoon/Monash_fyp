@@ -908,6 +908,62 @@ void dungeon_game_post_update(DungeonGame *game, DungeonScene *scene, float dt)
 #define W ((int)RENDERER_UI_WIDTH)
 #define H ((int)RENDERER_UI_HEIGHT)
 
+static const char *const TITLE_ITEMS[] = {"Play", "How to Play", "Quit"};
+static const char *const DUNGEON_PAUSE_ITEMS[] = {"Resume", "Restart Level", "How to Play",
+											  "Leave Dungeon", "Quit Game"};
+static const char *const OVERWORLD_PAUSE_ITEMS[] = {"Resume", "How to Play", "Title Screen",
+												"Quit Game"};
+static const char *const GAME_OVER_ITEMS[] = {"Restart Level", "Return to the Surface"};
+static const char *const COMPLETE_ITEMS[] = {"Return to the Surface", "Replay"};
+
+static bool menu_spec(const DungeonGame *game, int *y, const char *const **items, int *count)
+{
+	switch (game->screen)
+	{
+	case DUNGEON_GAME_TITLE:
+		*y = 290;
+		*items = TITLE_ITEMS;
+		*count = 3;
+		return true;
+	case DUNGEON_GAME_PAUSED:
+		*y = 190;
+		*items = game->in_overworld ? OVERWORLD_PAUSE_ITEMS : DUNGEON_PAUSE_ITEMS;
+		*count = game->in_overworld ? 4 : 5;
+		return true;
+	case DUNGEON_GAME_OVER:
+		*y = 290;
+		*items = GAME_OVER_ITEMS;
+		*count = 2;
+		return true;
+	case DUNGEON_GAME_COMPLETE:
+		*y = 350;
+		*items = COMPLETE_ITEMS;
+		*count = 2;
+		return true;
+	default: return false;
+	}
+}
+
+bool dungeon_game_menu_pointer(DungeonGame *game, float x, float y, bool click)
+{
+	int top = 0, count = 0;
+	const char *const *items = NULL;
+	if (!menu_spec(game, &top, &items, &count))
+		return false;
+	for (int i = 0; i < count; ++i)
+	{
+		int line = top + i * 44;
+		int width = ui_text_width(UI_FONT_BODY, items[i]) + 70;
+		if (x >= (float)(W / 2 - width / 2) && x <= (float)(W / 2 + width / 2) &&
+			y >= (float)(line - 4) && y <= (float)(line + 34))
+		{
+			game->cursor = i;
+			return click;
+		}
+	}
+	return false;
+}
+
 static void dim_screen(UiCanvas *c, uint8_t alpha)
 {
 	ui_fill_rect(c, 0, 0, W, H, (UiColor){6, 5, 8, alpha});
@@ -969,8 +1025,7 @@ static void draw_title(DungeonGame *game, UiCanvas *c)
 	ui_fill_rect(c, W / 2 - 200, 182, 400, 2, (UiColor){150, 112, 52, 220});
 	ui_text(c, UI_FONT_BODY, W / 2, 196, UI_ALIGN_CENTRE, DIM,
 			"Pick the locks. Evade the guardian. Claim the treasure.");
-	static const char *items[] = {"Play", "How to Play", "Quit"};
-	menu(c, game, 290, items, 3);
+	menu(c, game, 290, TITLE_ITEMS, 3);
 	footer(c, "W/S or arrows to choose   -   Enter to select");
 }
 
@@ -1261,13 +1316,10 @@ static void draw_pause(DungeonGame *game, UiCanvas *c)
 	dim_screen(c, 170);
 	panel(c, W / 2 - 200, 90, 400, 360);
 	ui_text(c, UI_FONT_HEADING, W / 2, 110, UI_ALIGN_CENTRE, GOLD, "Paused");
-	static const char *dungeon_items[] = {"Resume", "Restart Level", "How to Play",
-										  "Leave Dungeon", "Quit Game"};
-	static const char *overworld_items[] = {"Resume", "How to Play", "Title Screen", "Quit Game"};
 	if (game->in_overworld)
-		menu(c, game, 190, overworld_items, 4);
+		menu(c, game, 190, OVERWORLD_PAUSE_ITEMS, 4);
 	else
-		menu(c, game, 190, dungeon_items, 5);
+		menu(c, game, 190, DUNGEON_PAUSE_ITEMS, 5);
 }
 
 static void draw_game_over(DungeonGame *game, UiCanvas *c)
@@ -1276,8 +1328,7 @@ static void draw_game_over(DungeonGame *game, UiCanvas *c)
 	ui_text(c, UI_FONT_TITLE, W / 2, 110, UI_ALIGN_CENTRE, RED, "CAUGHT");
 	ui_text(c, UI_FONT_BODY, W / 2, 205, UI_ALIGN_CENTRE, WHITE,
 			"The guardian dragged you back into the dark.");
-	static const char *items[] = {"Restart Level", "Return to the Surface"};
-	menu(c, game, 290, items, 2);
+	menu(c, game, 290, GAME_OVER_ITEMS, 2);
 	footer(c, "R to restart instantly");
 }
 
@@ -1299,8 +1350,7 @@ static void draw_complete(DungeonGame *game, UiCanvas *c)
 			game->spotted ? "Spotted by the guardian" : "Never spotted");
 	ui_text(c, UI_FONT_SMALL, W / 2, y + 52, UI_ALIGN_CENTRE, game->gem_taken ? GOLD : DIM,
 			game->gem_taken ? "Hidden gem found" : "Hidden gem missed");
-	static const char *items[] = {"Return to the Surface", "Replay"};
-	menu(c, game, 350, items, 2);
+	menu(c, game, 350, COMPLETE_ITEMS, 2);
 }
 
 void dungeon_game_draw_ui(DungeonGame *game, const DungeonScene *scene, UiCanvas *c)

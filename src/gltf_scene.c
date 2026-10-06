@@ -500,16 +500,11 @@ GltfLoadResult gltf_scene_upload(struct Renderer *renderer, GltfScene *scene, Gl
     /* Until a material slot is populated by an image, bind typed fallbacks. */
     for (uint32_t i = 0; i < scene->material_count; ++i) {
         GltfMaterial *m = &scene->materials[i];
-        if (m->base_color_path) texture_load(renderer->device, renderer->allocator, renderer->upload, &m->base_color, m->base_color_path, renderer->max_anisotropy);
-        if (m->metallic_roughness_path) texture_load_linear(renderer->device, renderer->allocator, renderer->upload, &m->metallic_roughness, m->metallic_roughness_path, renderer->max_anisotropy);
-        if (m->normal_path) texture_load_linear(renderer->device, renderer->allocator, renderer->upload, &m->normal, m->normal_path, renderer->max_anisotropy);
-        if (m->occlusion_path) texture_load_linear(renderer->device, renderer->allocator, renderer->upload, &m->occlusion, m->occlusion_path, renderer->max_anisotropy);
-        m->descriptor_set = renderer_allocate_pbr5_set(renderer,
-            m->base_color.image ? &m->base_color : &renderer->fallback_texture,
-            m->metallic_roughness.image ? &m->metallic_roughness : &renderer->fallback_linear_texture,
-            m->normal.image ? &m->normal : &renderer->fallback_normal_texture,
-            m->occlusion.image ? &m->occlusion : (m->use_metallic_roughness_red_as_occlusion && m->metallic_roughness.image ? &m->metallic_roughness : &renderer->fallback_linear_texture),
-            &renderer->fallback_linear_texture);
+        m->descriptor_set = renderer_acquire_file_material(
+            renderer, m->base_color_path, m->metallic_roughness_path, m->normal_path,
+            m->occlusion_path, m->use_metallic_roughness_red_as_occlusion,
+            &m->base_color, &m->metallic_roughness, &m->normal, &m->occlusion);
+        m->material_cached = true;
     }
     for (uint32_t i = 0; i < scene->primitive_count; ++i)
         mesh_upload(renderer, &scene->primitives[i].mesh);
@@ -524,7 +519,7 @@ GltfLoadResult gltf_scene_create(struct Renderer *renderer,const char *path,cons
     if (result != GLTF_LOAD_OK) gltf_scene_destroy(renderer, out);
     return result;
 }
-void gltf_scene_destroy(struct Renderer *renderer,GltfScene *scene){if(!scene)return;for(uint32_t i=0;i<scene->primitive_count;i++){if(renderer)mesh_destroy(renderer,&scene->primitives[i].mesh);free(scene->primitives[i].vertices);free(scene->primitives[i].indices);free(scene->primitives[i].joints);free(scene->primitives[i].weights);}for(uint32_t i=0;i<scene->skin_count;i++){free(scene->skins[i].joints);free(scene->skins[i].inverse_bind);}free(scene->skins);for(uint32_t i=0;i<scene->material_count;i++){GltfMaterial *m=&scene->materials[i];if(renderer){if(m->descriptor_set)renderer_free_material_set(renderer,m->descriptor_set);if(m->base_color.image)texture_destroy(renderer->device,renderer->allocator,&m->base_color);if(m->metallic_roughness.image)texture_destroy(renderer->device,renderer->allocator,&m->metallic_roughness);if(m->normal.image)texture_destroy(renderer->device,renderer->allocator,&m->normal);if(m->occlusion.image)texture_destroy(renderer->device,renderer->allocator,&m->occlusion);}free(m->base_color_path);free(m->metallic_roughness_path);free(m->normal_path);free(m->occlusion_path);}for(uint32_t i=0;i<scene->node_count;i++)free(scene->nodes[i].name);
+void gltf_scene_destroy(struct Renderer *renderer,GltfScene *scene){if(!scene)return;for(uint32_t i=0;i<scene->primitive_count;i++){if(renderer)mesh_destroy(renderer,&scene->primitives[i].mesh);free(scene->primitives[i].vertices);free(scene->primitives[i].indices);free(scene->primitives[i].joints);free(scene->primitives[i].weights);}for(uint32_t i=0;i<scene->skin_count;i++){free(scene->skins[i].joints);free(scene->skins[i].inverse_bind);}free(scene->skins);for(uint32_t i=0;i<scene->material_count;i++){GltfMaterial *m=&scene->materials[i];if(renderer&&!m->material_cached){if(m->descriptor_set)renderer_free_material_set(renderer,m->descriptor_set);if(m->base_color.image)texture_destroy(renderer->device,renderer->allocator,&m->base_color);if(m->metallic_roughness.image)texture_destroy(renderer->device,renderer->allocator,&m->metallic_roughness);if(m->normal.image)texture_destroy(renderer->device,renderer->allocator,&m->normal);if(m->occlusion.image)texture_destroy(renderer->device,renderer->allocator,&m->occlusion);}free(m->base_color_path);free(m->metallic_roughness_path);free(m->normal_path);free(m->occlusion_path);}for(uint32_t i=0;i<scene->node_count;i++)free(scene->nodes[i].name);
     for(uint32_t i=0;i<scene->clip_count;i++){GltfClip *clip=&scene->clips[i];for(uint32_t c=0;c<clip->channel_count;c++){free(clip->channels[c].times);free(clip->channels[c].values);}free(clip->channels);free(clip->name);}
     free(scene->nodes);free(scene->node_order);free(scene->clips);
     free((char *)scene->source_path);free(scene->primitives);free(scene->materials);*scene=(GltfScene){0};}

@@ -133,6 +133,9 @@ void dungeon_game_enter(DungeonGame *game, uint32_t level);
  * Enter/E to descend into the selection. */
 void dungeon_game_overworld_pointer(DungeonGame *game, float canvas_x, float canvas_y, bool click,
 									bool tab, bool confirm);
+/* Pointer interaction for the title/pause/result menus. Updates the highlighted
+ * row while hovering and returns true once when a click activates that row. */
+bool dungeon_game_menu_pointer(DungeonGame *game, float canvas_x, float canvas_y, bool click);
 const char *dungeon_game_biome_name(const DungeonGame *game, uint32_t level);
 
 /* After the scene for levels[current] is (re)created: theme it, place the

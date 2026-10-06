@@ -29,37 +29,27 @@ void mesh_upload(struct Renderer *r, Mesh *mesh)
 
 	if (mesh->texture_path)
 	{
-		texture_load(r->device, r->allocator, r->upload, &mesh->texture, mesh->texture_path,
-					 r->max_anisotropy);
-		if (mesh->orm_path && mesh->normal_path)
-		{
-			texture_load_linear(r->device, r->allocator, r->upload, &mesh->orm, mesh->orm_path,
-								r->max_anisotropy);
-			texture_load_linear(r->device, r->allocator, r->upload, &mesh->normal_map,
-								mesh->normal_path, r->max_anisotropy);
-			mesh->material_set =
-				renderer_allocate_pbr_set(r, &mesh->texture, &mesh->orm, &mesh->normal_map);
-		}
-		else
-		{
-			mesh->material_set =
-				renderer_allocate_material_set(r, mesh->texture.view, mesh->texture.sampler);
-		}
+		bool pbr = mesh->orm_path && mesh->normal_path;
+		mesh->material_set = renderer_acquire_file_material(
+			r, mesh->texture_path, pbr ? mesh->orm_path : NULL,
+			pbr ? mesh->normal_path : NULL, NULL, pbr, &mesh->texture, &mesh->orm,
+			&mesh->normal_map, NULL);
+		mesh->material_cached = true;
 	}
 }
 
 void mesh_destroy(struct Renderer *r, Mesh *mesh)
 {
-	if (mesh->material_set)
+	if (mesh->material_set && !mesh->material_cached)
 		renderer_free_material_set(r, mesh->material_set);
 	gpu_buffer_destroy(r->device, r->allocator, &mesh->vertex_buffer);
 	if (mesh->index_count)
 		gpu_buffer_destroy(r->device, r->allocator, &mesh->index_buffer);
-	if (mesh->texture_path)
+	if (mesh->texture_path && !mesh->material_cached)
 		texture_destroy(r->device, r->allocator, &mesh->texture);
-	if (mesh->orm_path)
+	if (mesh->orm_path && !mesh->material_cached)
 		texture_destroy(r->device, r->allocator, &mesh->orm);
-	if (mesh->normal_path)
+	if (mesh->normal_path && !mesh->material_cached)
 		texture_destroy(r->device, r->allocator, &mesh->normal_map);
 }
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <vulkan/vulkan.h>
 
@@ -47,6 +48,10 @@ typedef struct
 	const char *normal_path;
 	Texture normal_map;
 	VkDescriptorSet material_set; /* set 1: combined image sampler           */
+	/* File-backed materials come from the renderer-lifetime cache. Texture
+	 * structs above are borrowed handles in that case and must not be freed by
+	 * mesh_destroy. */
+	bool material_cached;
 } Mesh;
 
 struct Renderer;

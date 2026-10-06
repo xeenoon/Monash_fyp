@@ -56,8 +56,10 @@ painted on the CPU into a canvas the tone-map pass blends over the frame
 (`src/ui_draw.c`, fonts baked by `tools/build_ui_font.py`).
 `DUNGEON_START_PLAYING=1` skips the title. `DUNGEON_GAME_SCRIPT` injects
 inputs and captures for headless checks (see `game_script_step` in
-`src/main.c`). For smooth footage, use a Release build: Debug takes ~12 s
-to build a level, Release ~5 s.
+`src/main.c`); `expect_screen <name>` turns those replays into state-machine
+regression tests. Menu rows support both keyboard selection and pointer clicks.
+File-backed materials are cached for the renderer lifetime, so entering another
+dungeon or restarting one reuses decoded textures and material descriptors.
 
 `DUNGEON_SCRIPT` and `DUNGEON_MAP` runs bypass the game layer and get the
 bare scene described below. By default the bare scene generates a procedural level from `DUNGEON_SEED` (a `uint32_t`,
