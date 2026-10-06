@@ -1,4 +1,5 @@
 #include "dungeon_game.h"
+#include "dungeon_collision.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -67,6 +68,7 @@ static float randf(DungeonGame *game)
 void dungeon_game_init(DungeonGame *game, uint32_t session_seed)
 {
 	*game = (DungeonGame){0};
+	monk_dialogue_init(&game->monk_dialogue);
 	game->session_seed = session_seed ? session_seed : 1u;
 	/* A fresh pick of biomes every session: three different ones, each with
 	 * its own random layout. */
@@ -325,6 +327,7 @@ static void theme_scene(const DungeonGame *game, DungeonScene *scene)
 void dungeon_game_begin_level(DungeonGame *game, DungeonScene *scene, uint32_t level)
 {
 	game->current = level % DUNGEON_GAME_LEVELS;
+	dialogue_close(&game->monk_dialogue);
 	game->screen = DUNGEON_GAME_PLAYING;
 	game->in_overworld = false;
 	game->run_time = 0.0f;
@@ -533,6 +536,30 @@ DungeonGameAction dungeon_game_update(DungeonGame *game, const Input *in, Dungeo
 		else if (in->restart && scene->session.phase == DUNGEON_PHASE_EXPLORING)
 			return request_load(game, game->current);
 		break;
+	case DUNGEON_GAME_DIALOGUE:
+	{
+		Dialogue *d = &game->monk_dialogue;
+		dialogue_update(d, dt);
+		if (in->escape)
+			dialogue_close(d);
+		else
+		{
+			if (d->phase == DIALOGUE_CHOICES)
+			{
+				if (in->menu_up)
+					d->cursor = (d->cursor + 2) % 3;
+				if (in->menu_down)
+					d->cursor = (d->cursor + 1) % 3;
+			}
+			for (unsigned i = 0; i < in->edit_count; ++i)
+				dialogue_edit(d, &in->edits[i]);
+			if (in->puzzle_confirm)
+				dialogue_confirm(d);
+		}
+		if (!d->active)
+			game->screen = DUNGEON_GAME_PLAYING;
+		break;
+	}
 	case DUNGEON_GAME_PAUSED:
 		if (game->in_overworld)
 		{
@@ -592,8 +619,32 @@ DungeonGameAction dungeon_game_update(DungeonGame *game, const Input *in, Dungeo
 	return DUNGEON_GAME_ACTION_NONE;
 }
 
+bool dungeon_game_monk_in_reach(const DungeonGame *game, const DungeonScene *scene)
+{
+	(void)game;
+	if (!scene->monk.active || scene->session.phase != DUNGEON_PHASE_EXPLORING ||
+		point_distance(scene->player.position, scene->level.monk_spawn) > 2.0f)
+		return false;
+	/* Reject interactions through a corner wall. */
+	for (int i = 1; i < 16; ++i)
+	{
+		float t = i / 16.0f;
+		DungeonPoint p = {scene->player.position.x * (1 - t) + scene->level.monk_spawn.x * t,
+						  scene->player.position.z * (1 - t) + scene->level.monk_spawn.z * t};
+		if (dungeon_field_sample(&scene->level.field, p) < .5f)
+			return false;
+	}
+	return true;
+}
+
 bool dungeon_game_interact(DungeonGame *game, DungeonScene *scene)
 {
+	if (dungeon_game_playing(game) && dungeon_game_monk_in_reach(game, scene))
+	{
+		dialogue_open(&game->monk_dialogue);
+		game->screen = DUNGEON_GAME_DIALOGUE;
+		return true;
+	}
 	if (game->chest_open || point_distance(scene->player.position, game->chest) > CHEST_REACH_M)
 		return false;
 	game->chest_open = true;
@@ -889,8 +940,25 @@ static void build_props(DungeonGame *game, DungeonScene *scene)
 
 void dungeon_game_post_update(DungeonGame *game, DungeonScene *scene, float dt)
 {
-	if (game->screen == DUNGEON_GAME_PLAYING && game->over_timer <= 0.0f)
+	if (game->screen == DUNGEON_GAME_PLAYING && !scene->conversation_paused &&
+		game->over_timer <= 0.0f)
 	{
+		if (scene->monk.active)
+		{
+			DungeonPoint *player = &scene->player.position;
+			DungeonPoint home = scene->level.monk_spawn;
+			float distance = point_distance(*player, home);
+			float radius = .72f + scene->player.radius;
+			if (distance < radius)
+			{
+				float dx = distance > .0001f ? (player->x - home.x) / distance : .70710678f;
+				float dz = distance > .0001f ? (player->z - home.z) / distance : .70710678f;
+				DungeonPoint delta = {dx * (radius - distance), dz * (radius - distance)};
+				*player =
+					dungeon_collision_move(scene->session.colliders, scene->session.collider_count,
+										   *player, delta, scene->player.radius);
+			}
+		}
 		if (!game->chest_open && scene->session.phase == DUNGEON_PHASE_EXPLORING)
 			update_guard(game, scene, dt);
 		/* The chest is solid: push the player back out of it. */
@@ -919,6 +987,7 @@ void dungeon_game_post_update(DungeonGame *game, DungeonScene *scene, float dt)
 #define H ((int)RENDERER_UI_HEIGHT)
 
 static const char *const TITLE_ITEMS[] = {"Play", "How to Play", "Quit"};
+static const char *const DIALOGUE_ITEMS[] = {"Say something", "Keep listening", "Leave"};
 static const char *const DUNGEON_PAUSE_ITEMS[] = {"Resume", "Restart Level", "How to Play",
 											  "Leave Dungeon", "Quit Game"};
 static const char *const OVERWORLD_PAUSE_ITEMS[] = {"Resume", "How to Play", "Title Screen",
@@ -930,6 +999,13 @@ static bool menu_spec(const DungeonGame *game, int *y, const char *const **items
 {
 	switch (game->screen)
 	{
+	case DUNGEON_GAME_DIALOGUE:
+		if (game->monk_dialogue.phase != DIALOGUE_CHOICES)
+			return false;
+		*y = 392;
+		*items = DIALOGUE_ITEMS;
+		*count = 3;
+		return true;
 	case DUNGEON_GAME_TITLE:
 		*y = 290;
 		*items = TITLE_ITEMS;
@@ -956,6 +1032,9 @@ static bool menu_spec(const DungeonGame *game, int *y, const char *const **items
 
 bool dungeon_game_menu_pointer(DungeonGame *game, float x, float y, bool click)
 {
+	if (game->screen == DUNGEON_GAME_DIALOGUE && (game->monk_dialogue.phase == DIALOGUE_REVEAL ||
+												  game->monk_dialogue.phase == DIALOGUE_PAGE))
+		return click && x >= 35 && x <= W - 35 && y >= 243 && y <= 527;
 	int top = 0, count = 0;
 	const char *const *items = NULL;
 	if (!menu_spec(game, &top, &items, &count))
@@ -968,6 +1047,8 @@ bool dungeon_game_menu_pointer(DungeonGame *game, float x, float y, bool click)
 			y >= (float)(line - 4) && y <= (float)(line + 34))
 		{
 			game->cursor = i;
+			if (game->screen == DUNGEON_GAME_DIALOGUE)
+				game->monk_dialogue.cursor = (unsigned)i;
 			return click;
 		}
 	}
@@ -1269,6 +1350,8 @@ static void draw_hud(DungeonGame *game, const DungeonScene *scene, UiCanvas *c)
 				text = strstr(text, " | ") + 3;
 		snprintf(status, sizeof(status), "%s", text);
 	}
+	else if (dungeon_game_monk_in_reach(game, scene))
+		snprintf(line, sizeof(line), "[E]  Talk to the monk");
 	else if (!game->chest_open && point_distance(scene->player.position, game->chest) < CHEST_REACH_M)
 		snprintf(line, sizeof(line), "[E]  Open the treasure chest");
 	else
@@ -1363,6 +1446,56 @@ static void draw_complete(DungeonGame *game, UiCanvas *c)
 	menu(c, game, 350, COMPLETE_ITEMS, 2);
 }
 
+static void draw_dialogue(DungeonGame *game, UiCanvas *c)
+{
+	Dialogue *d = &game->monk_dialogue;
+	panel(c, 35, 243, W - 70, 284);
+	ui_text(c, UI_FONT_HEADING, 61, 250, UI_ALIGN_LEFT, GOLD, "The Praying Monk");
+	char page[48];
+	snprintf(page, sizeof(page), "%u / %u", d->page + 1, d->entries[d->entry].page_count);
+	ui_text(c, UI_FONT_SMALL, W - 62, 265, UI_ALIGN_RIGHT, DIM, page);
+	if (d->fragment[0])
+	{
+		ui_fill_rect(c, 45, 206, W - 90, 32, (UiColor){14, 11, 9, 220});
+		char said[64];
+		snprintf(said, sizeof(said), "Player: %s", d->fragment);
+		ui_text(c, UI_FONT_SMALL, 61, 210, UI_ALIGN_LEFT, DIM, said);
+	}
+	ui_text_reveal(c, UI_FONT_SMALL, 62, 300, W - 124, 4, WHITE, dialogue_text(d),
+				   (size_t)d->reveal);
+	if (d->phase == DIALOGUE_CHOICES)
+	{
+		game->cursor = (int)d->cursor;
+		menu(c, game, 392, DIALOGUE_ITEMS, 3);
+	}
+	else if (d->phase == DIALOGUE_EDIT)
+	{
+		ui_text(c, UI_FONT_SMALL, 62, 393, UI_ALIGN_LEFT, GOLD,
+				"Your reply (up to 120 characters)");
+		ui_fill_rect(c, 59, 424, W - 118, 38, (UiColor){3, 3, 4, 235});
+		ui_frame_rect(c, 59, 424, W - 118, 38, 1, GOLD);
+		char before[DIALOGUE_REPLY_CAPACITY];
+		memcpy(before, d->reply, d->caret);
+		before[d->caret] = 0;
+		size_t start = 0;
+		while (start < d->caret && ui_text_width(UI_FONT_BODY, before + start) > W - 150)
+			++start;
+		ui_text_reveal(c, UI_FONT_BODY, 68, 427, W - 145, 1, WHITE, d->reply + start, SIZE_MAX);
+		if (fmodf(game->ui_time, 1.0f) < .6f)
+			ui_fill_rect(c, 68 + ui_text_width(UI_FONT_BODY, before + start), 430, 2, 25, GOLD);
+		ui_text(c, UI_FONT_SMALL, 62, 481, UI_ALIGN_LEFT, DIM, "Enter: speak    Esc: leave");
+	}
+	else if (d->phase == DIALOGUE_INTERRUPT)
+	{
+		ui_text(c, UI_FONT_SMALL, 62, 468, UI_ALIGN_LEFT, GOLD, "You try to get a word in...");
+	}
+	else
+	{
+		ui_text(c, UI_FONT_SMALL, 62, 481, UI_ALIGN_LEFT, DIM,
+				"Enter / Space / Click: continue    Esc: leave");
+	}
+}
+
 void dungeon_game_draw_ui(DungeonGame *game, const DungeonScene *scene, UiCanvas *c)
 {
 	ui_clear(c);
@@ -1373,6 +1506,9 @@ void dungeon_game_draw_ui(DungeonGame *game, const DungeonScene *scene, UiCanvas
 	case DUNGEON_GAME_OVERWORLD: draw_overworld_hud(game, c); break;
 	case DUNGEON_GAME_LOADING: draw_loading(game, c); break;
 	case DUNGEON_GAME_PLAYING: draw_hud(game, scene, c); break;
+	case DUNGEON_GAME_DIALOGUE:
+		draw_dialogue(game, c);
+		break;
 	case DUNGEON_GAME_PAUSED: draw_pause(game, c); break;
 	case DUNGEON_GAME_OVER: draw_game_over(game, c); break;
 	case DUNGEON_GAME_COMPLETE: draw_complete(game, c); break;

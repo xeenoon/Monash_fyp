@@ -38,6 +38,8 @@ typedef struct
 
 	DungeonPoint spawn;
 	DungeonPoint exit;
+	DungeonPoint monk_spawn;
+	bool has_monk_spawn;
 	float floor_y;
 	float wall_height;
 } DungeonLevel;

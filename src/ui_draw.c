@@ -163,6 +163,45 @@ int ui_text_wrapped(UiCanvas *c, UiFont font, int x, int y, int max_width, UiCol
 	return y;
 }
 
+size_t ui_text_reveal(UiCanvas *c, UiFont font, int x, int y, int width, unsigned max_lines,
+					  UiColor color, const char *text, size_t visible)
+{
+	size_t start = 0, length = strlen(text);
+	for (unsigned row = 0; row < max_lines && start < length; ++row)
+	{
+		size_t end = start, space = start;
+		int pixels = 0;
+		while (end < length && text[end] != '\n')
+		{
+			int advance = glyph(&ui_fonts[font], text[end])->advance;
+			if (pixels + advance > width && end > start)
+				break;
+			pixels += advance;
+			if (text[end] == ' ')
+				space = end;
+			++end;
+		}
+		if (end < length && text[end] != '\n' && space > start)
+			end = space;
+		if (visible > start)
+		{
+			char line[512];
+			size_t n = (visible < end ? visible : end) - start;
+			if (n >= sizeof(line))
+				n = sizeof(line) - 1;
+			memcpy(line, text + start, n);
+			line[n] = 0;
+			ui_text(c, font, x, y + (int)row * ui_line_height(font), UI_ALIGN_LEFT, color, line);
+		}
+		start = end;
+		while (text[start] == ' ')
+			++start;
+		if (text[start] == '\n')
+			++start;
+	}
+	return start;
+}
+
 /* Point-in-star by the even-odd rule over its ten-vertex outline, 4x4
  * supersampled so the edges are smooth at menu sizes. */
 static bool inside_star(const float *vx, const float *vy, float px, float py)

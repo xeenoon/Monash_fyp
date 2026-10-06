@@ -1,6 +1,7 @@
 #include "input.h"
 
 #include <stdio.h>
+#include <string.h>
 
 static void set_mouse_capture(Input *in, SDL_Window *window, bool captured)
 {
@@ -16,8 +17,37 @@ static void set_mouse_capture(Input *in, SDL_Window *window, bool captured)
 		fprintf(stderr, "Could not change relative mouse mode: %s\n", SDL_GetError());
 }
 
+void input_set_mode(Input *in, SDL_Window *window, InputMode mode)
+{
+	if (in->mode == mode)
+		return;
+	if (in->mode == INPUT_TEXT)
+		SDL_StopTextInput(window);
+	if (in->mode == INPUT_GAME && mode != INPUT_GAME)
+	{
+		in->restore_capture = in->mouse_captured;
+		set_mouse_capture(in, window, false);
+	}
+	if (mode == INPUT_GAME)
+		set_mouse_capture(in, window, in->restore_capture);
+	if (mode == INPUT_TEXT)
+		SDL_StartTextInput(window);
+	in->mode = mode;
+}
+
+static void append_edit(Input *in, TextEditKind kind, const char *text)
+{
+	if (in->edit_count >= INPUT_MAX_EDITS)
+		return;
+	TextEdit *edit = &in->edits[in->edit_count++];
+	*edit = (TextEdit){.kind = kind};
+	if (text)
+		snprintf(edit->text, sizeof(edit->text), "%s", text);
+}
+
 void input_poll(Input *in, SDL_Window *window)
 {
+	in->edit_count = 0;
 	in->quit = false;
 	in->resized = false;
 	in->toggle_quarry_shading = false;
@@ -52,6 +82,57 @@ void input_poll(Input *in, SDL_Window *window)
 	{
 		if (event.type == SDL_EVENT_QUIT)
 			in->quit = true;
+		if (in->mode == INPUT_TEXT && event.type == SDL_EVENT_TEXT_INPUT)
+		{
+			append_edit(in, TEXT_INSERT, event.text.text);
+			continue;
+		}
+		if (in->mode != INPUT_GAME && event.type == SDL_EVENT_KEY_DOWN)
+		{
+			SDL_Keycode key = event.key.key;
+			if (in->mode == INPUT_TEXT)
+			{
+				switch (key)
+				{
+				case SDLK_BACKSPACE:
+					append_edit(in, TEXT_BACKSPACE, NULL);
+					break;
+				case SDLK_DELETE:
+					append_edit(in, TEXT_DELETE, NULL);
+					break;
+				case SDLK_LEFT:
+					append_edit(in, TEXT_LEFT, NULL);
+					break;
+				case SDLK_RIGHT:
+					append_edit(in, TEXT_RIGHT, NULL);
+					break;
+				case SDLK_HOME:
+					append_edit(in, TEXT_HOME, NULL);
+					break;
+				case SDLK_END:
+					append_edit(in, TEXT_END, NULL);
+					break;
+				case SDLK_RETURN:
+					if (!event.key.repeat)
+						append_edit(in, TEXT_SUBMIT, NULL);
+					break;
+				case SDLK_ESCAPE:
+					if (!event.key.repeat)
+						in->escape = true;
+					break;
+				default:
+					break;
+				}
+			}
+			else if (!event.key.repeat)
+			{
+				in->menu_up |= key == SDLK_UP || key == SDLK_W;
+				in->menu_down |= key == SDLK_DOWN || key == SDLK_S;
+				in->puzzle_confirm |= key == SDLK_RETURN || key == SDLK_SPACE;
+				in->escape |= key == SDLK_ESCAPE;
+			}
+			continue;
+		}
 		if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_ESCAPE)
 			in->escape = true;
 		if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_F3)
@@ -103,28 +184,52 @@ void input_poll(Input *in, SDL_Window *window)
 		if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat)
 			switch (event.key.key)
 			{
-			case SDLK_LEFT: in->puzzle_left = true; break;
-			case SDLK_RIGHT: in->puzzle_right = true; break;
-			case SDLK_UP: in->puzzle_up = true; break;
-			case SDLK_DOWN: in->puzzle_down = true; break;
+			case SDLK_LEFT:
+				in->puzzle_left = true;
+				break;
+			case SDLK_RIGHT:
+				in->puzzle_right = true;
+				break;
+			case SDLK_UP:
+				in->puzzle_up = true;
+				break;
+			case SDLK_DOWN:
+				in->puzzle_down = true;
+				break;
 			case SDLK_RETURN:
-			case SDLK_SPACE: in->puzzle_confirm = true; break;
-			case SDLK_Q: in->puzzle_cancel = true; break;
-			case SDLK_R: in->restart = true; break;
-			default: break;
+			case SDLK_SPACE:
+				in->puzzle_confirm = true;
+				break;
+			case SDLK_Q:
+				in->puzzle_cancel = true;
+				break;
+			case SDLK_R:
+				in->restart = true;
+				break;
+			default:
+				break;
 			}
 		if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat)
 			switch (event.key.key)
 			{
 			case SDLK_UP:
-			case SDLK_W: in->menu_up = true; break;
+			case SDLK_W:
+				in->menu_up = true;
+				break;
 			case SDLK_DOWN:
-			case SDLK_S: in->menu_down = true; break;
+			case SDLK_S:
+				in->menu_down = true;
+				break;
 			case SDLK_LEFT:
-			case SDLK_A: in->menu_left = true; break;
+			case SDLK_A:
+				in->menu_left = true;
+				break;
 			case SDLK_RIGHT:
-			case SDLK_D: in->menu_right = true; break;
-			default: break;
+			case SDLK_D:
+				in->menu_right = true;
+				break;
+			default:
+				break;
 			}
 		if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
 			(event.key.key == SDLK_LCTRL || event.key.key == SDLK_RCTRL))
@@ -164,6 +269,13 @@ void input_poll(Input *in, SDL_Window *window)
 	in->look_dy = in->mouse_captured ? mouse_y : 0.0f;
 
 	const bool *keys = SDL_GetKeyboardState(NULL);
+	if (in->mode != INPUT_GAME)
+	{
+		in->rotate_sun = in->sprint = false;
+		in->move_forward = in->move_right = in->orbit_yaw = in->orbit_pitch = 0;
+		in->look_dx = in->look_dy = 0;
+		return;
+	}
 	in->rotate_sun = keys[SDL_SCANCODE_F12];
 	in->move_forward =
 		(keys[SDL_SCANCODE_W] ? 1.0f : 0.0f) - (keys[SDL_SCANCODE_S] ? 1.0f : 0.0f);

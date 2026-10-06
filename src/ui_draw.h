@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 /* A tiny software painter for the renderer's UI canvas (renderer_ui_pixels).
@@ -50,3 +51,7 @@ int ui_text_wrapped(UiCanvas *c, UiFont font, int x, int y, int max_width, UiCol
 					const char *text);
 /* Five-pointed star centred at (cx, cy); hollow draws only a dim fill. */
 void ui_star(UiCanvas *c, float cx, float cy, float radius, UiColor color, bool filled);
+/* Wrap the complete text once per draw, reveal without changing its layout.
+ * Returns consumed characters; stops at the panel's line limit. */
+size_t ui_text_reveal(UiCanvas *c, UiFont font, int x, int y, int width, unsigned max_lines,
+					  UiColor color, const char *text, size_t visible);

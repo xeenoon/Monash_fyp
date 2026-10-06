@@ -11,7 +11,7 @@
 #define DUNGEON_COLLIDER_EPSILON_M 0.4f /* player-scale collision fidelity */
 #define DUNGEON_OCCLUDER_EPSILON_M 1.0f /* coarser: only feeds the fixed-size blocker array */
 
-#define DUNGEON_CACHE_FORMAT_VERSION 1u
+#define DUNGEON_CACHE_FORMAT_VERSION 2u
 #define DUNGEON_CACHE_HEADER_SIZE 32u
 #define DUNGEON_CACHE_MAX_FIELD_DIMENSION 4096u
 #define DUNGEON_CACHE_MAX_FIELD_SAMPLES (16u * 1024u * 1024u)
@@ -111,9 +111,12 @@ static bool cache_write_level(CacheWriter *writer, const DungeonLevel *level)
 	if (!cache_write_u32(writer, level->field.width) ||
 		!cache_write_u32(writer, level->field.height) ||
 		!cache_write_float(writer, level->field.cell_size) ||
-		!cache_write_point(writer, level->field.origin) || !cache_write_point(writer, level->spawn) ||
-		!cache_write_point(writer, level->exit) || !cache_write_float(writer, level->floor_y) ||
-		!cache_write_float(writer, level->wall_height))
+		!cache_write_point(writer, level->field.origin) ||
+		!cache_write_point(writer, level->spawn) || !cache_write_point(writer, level->exit) ||
+		!cache_write_float(writer, level->floor_y) ||
+		!cache_write_float(writer, level->wall_height) ||
+		!cache_write_u32(writer, level->has_monk_spawn) ||
+		!cache_write_point(writer, level->monk_spawn))
 		return false;
 	size_t field_count = (size_t)level->field.width * level->field.height;
 	for (size_t i = 0; i < field_count; ++i)
@@ -245,13 +248,17 @@ static bool cache_read_triangle_mesh(CacheReader *reader, DungeonTriangleMesh *m
 
 static bool cache_read_level(CacheReader *reader, DungeonLevel *level)
 {
+	uint32_t has_monk = 0;
 	if (!cache_read_u32(reader, &level->field.width) ||
 		!cache_read_u32(reader, &level->field.height) ||
 		!cache_read_float(reader, &level->field.cell_size) ||
-		!cache_read_point(reader, &level->field.origin) || !cache_read_point(reader, &level->spawn) ||
-		!cache_read_point(reader, &level->exit) || !cache_read_float(reader, &level->floor_y) ||
-		!cache_read_float(reader, &level->wall_height))
+		!cache_read_point(reader, &level->field.origin) ||
+		!cache_read_point(reader, &level->spawn) || !cache_read_point(reader, &level->exit) ||
+		!cache_read_float(reader, &level->floor_y) ||
+		!cache_read_float(reader, &level->wall_height) || !cache_read_u32(reader, &has_monk) ||
+		has_monk > 1 || !cache_read_point(reader, &level->monk_spawn))
 		return false;
+	level->has_monk_spawn = has_monk != 0;
 	if (level->field.width < 2u || level->field.height < 2u ||
 		level->field.width > DUNGEON_CACHE_MAX_FIELD_DIMENSION ||
 		level->field.height > DUNGEON_CACHE_MAX_FIELD_DIMENSION ||
