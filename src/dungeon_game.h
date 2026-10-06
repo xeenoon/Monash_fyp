@@ -26,6 +26,7 @@ typedef enum
 	DUNGEON_GAME_OVERWORLD, /* walking the Alps between the three entrances */
 	DUNGEON_GAME_LOADING,
 	DUNGEON_GAME_PLAYING,
+	DUNGEON_GAME_DIALOGUE,
 	DUNGEON_GAME_PAUSED,
 	DUNGEON_GAME_OVER,
 	DUNGEON_GAME_COMPLETE
@@ -96,6 +97,8 @@ typedef struct
 	uint32_t session_seed;
 	DungeonGameLevel levels[DUNGEON_GAME_LEVELS];
 	uint32_t current;
+	/* Conversation memory survives dungeon reloads for this game session. */
+	Dialogue monk_dialogue;
 	uint32_t load_level;
 	int loading_frames;
 	DungeonGameScreen after_load;
@@ -153,6 +156,7 @@ DungeonGameAction dungeon_game_update(DungeonGame *game, const Input *input, Dun
 									  float dt);
 /* Handles E near the chest. Returns true if it consumed the interact press. */
 bool dungeon_game_interact(DungeonGame *game, DungeonScene *scene);
+bool dungeon_game_monk_in_reach(const DungeonGame *game, const DungeonScene *scene);
 /* After the scene update: guardian, pickups, chest collision, props. */
 void dungeon_game_post_update(DungeonGame *game, DungeonScene *scene, float dt);
 

@@ -1,15 +1,16 @@
 #pragma once
 
+#include "dungeon_guardian.h"
 #include "dungeon_lab.h"
 #include "dungeon_level.h"
 #include "dungeon_lighting.h"
 #include "dungeon_mesh.h"
+#include "dungeon_monk.h"
 #include "dungeon_padlock.h"
 #include "dungeon_padlock_pose.h"
-#include "dungeon_shadow.h"
-#include "dungeon_guardian.h"
 #include "dungeon_player.h"
 #include "dungeon_session.h"
+#include "dungeon_shadow.h"
 #include "game_character.h"
 #include "gltf_scene.h"
 #include "renderer.h"
@@ -34,9 +35,9 @@
  * instances of the player's cube -- placeholder art until real models land. */
 #define DUNGEON_MAX_PROPS 24u
 #define DUNGEON_MAX_DRAWS                                                                          \
-	(DUNGEON_MESH_BATCH_COUNT + 5u * DUNGEON_MAX_LIGHTS + 2u +                                      \
-	 DUNGEON_MAX_DOORS * (1u + DUNGEON_MAX_LOCK_PIECES) + DUNGEON_MAX_PROPS +                         \
-	 DUNGEON_GUARDIAN_MAX_DRAWS)
+	(DUNGEON_MESH_BATCH_COUNT + 5u * DUNGEON_MAX_LIGHTS + 2u +                                     \
+	 DUNGEON_MAX_DOORS * (1u + DUNGEON_MAX_LOCK_PIECES) + DUNGEON_MAX_PROPS +                      \
+	 DUNGEON_GUARDIAN_MAX_DRAWS + DUNGEON_MONK_MAX_DRAWS)
 
 typedef struct
 {
@@ -110,6 +111,8 @@ typedef struct
 	 * level and included in the shadow pass. */
 	DungeonProp props[DUNGEON_MAX_PROPS];
 	DungeonGuardianArt guardian;
+	DungeonMonkArt monk;
+	bool conversation_paused;
 	/* The player character, when the game supplies one (NULL draws the
 	 * placeholder cube and the separate carried torch, as the harness and the
 	 * torch lab expect). Borrowed, not owned. */

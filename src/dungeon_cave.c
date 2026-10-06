@@ -673,6 +673,12 @@ bool dungeon_cave_generate(const DungeonCaveParams *params, DungeonCaveResult *o
 	dungeon_field_blur_masked(&out->field, params->blur_iterations, layout.organic_mask);
 
 	out->spawn = layout.rooms[0].center;
+	/* A reserved corner of room zero, inside its original rectangle even when
+	 * a grotto opens another wall. Keep the complete seated silhouette clear. */
+	DungeonRect home = layout.rooms[0].rect;
+	float inset_x = fminf(1.2f, (home.max.x - home.min.x) * .32f);
+	float inset_z = fminf(1.2f, (home.max.z - home.min.z) * .32f);
+	out->monk_spawn = (DungeonPoint){home.min.x + inset_x, home.min.z + inset_z};
 	dungeon_field_keep_largest_component(&out->field, 0.5f, out->spawn);
 	if (!dungeon_field_bfs_farthest(&out->field, 0.5f, out->spawn, &out->exit))
 		goto fail;
@@ -804,6 +810,9 @@ bool dungeon_cave_generate(const DungeonCaveParams *params, DungeonCaveResult *o
 		}
 		if (too_close)
 			continue;
+		float monk_dx = center.x - out->monk_spawn.x, monk_dz = center.z - out->monk_spawn.z;
+		if (monk_dx * monk_dx + monk_dz * monk_dz < (radius + 1.1f) * (radius + 1.1f))
+			continue;
 		out->puddles[out->puddle_count++] = (DungeonPuddle){.center = center, .radius = radius};
 	}
 	free(distance);
@@ -851,6 +860,11 @@ bool dungeon_cave_compile(const DungeonCaveParams *params, DungeonLevel *out,
 										  2.4f, out, error);
 	free(cave.puddles);
 	free(cave.doors);
+	if (ok)
+	{
+		out->monk_spawn = cave.monk_spawn;
+		out->has_monk_spawn = true;
+	}
 	return ok;
 }
 

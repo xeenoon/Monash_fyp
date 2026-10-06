@@ -5,7 +5,7 @@
 
 /* The imported spline sculpture is shared by all poses. Crown pieces rotate
  * about their buried roots, retaining their continuous swept surfaces. */
-#define DUNGEON_GUARDIAN_MAX_DRAWS 80u
+#define DUNGEON_GUARDIAN_MAX_DRAWS 112u
 
 typedef struct
 {

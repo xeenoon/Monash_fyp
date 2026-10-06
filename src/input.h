@@ -1,12 +1,25 @@
 #pragma once
 
+#include "dialogue.h"
 #include <SDL3/SDL.h>
 #include <stdbool.h>
 
+typedef enum
+{
+	INPUT_GAME,
+	INPUT_DIALOGUE,
+	INPUT_TEXT
+} InputMode;
+#define INPUT_MAX_EDITS 32
+
 typedef struct
 {
+	InputMode mode;
+	bool restore_capture;
+	TextEdit edits[INPUT_MAX_EDITS];
+	unsigned edit_count;
 	float look_dx, look_dy;			/* mouse delta this frame  */
-	float orbit_yaw, orbit_pitch; /* arrow keys */
+	float orbit_yaw, orbit_pitch;	/* arrow keys */
 	float move_forward, move_right; /* -1..1 from WASD         */
 	bool sprint;					/* shift held              */
 	bool quit;						/* window close / escape   */
@@ -24,8 +37,8 @@ typedef struct
 	bool rotate_sun;				/* F12 held                */
 	bool previous_atmosphere_slice;
 	bool next_atmosphere_slice;
-	bool dump_shader_data;	/* X pressed (dump-enabled builds) */
-	bool clear_shader_dump; /* C pressed (dump-enabled builds) */
+	bool dump_shader_data;	   /* X pressed (dump-enabled builds) */
+	bool clear_shader_dump;	   /* C pressed (dump-enabled builds) */
 	bool toggle_auto_exposure; /* E pressed */
 	/* Dungeon lock picking. All edge-triggered: one press is one pin step, one
 	 * safe pin pressed, or one attempt. Optical rotation additionally reads
@@ -46,11 +59,12 @@ typedef struct
 	 * motion this frame, buttons and wheel. Independent of mouse capture. */
 	float mouse_x, mouse_y;
 	float mouse_dx, mouse_dy;
-	bool mouse_left, mouse_right;		  /* held */
+	bool mouse_left, mouse_right; /* held */
 	bool mouse_left_pressed, mouse_left_released;
-	float wheel;					  /* notches this frame, + away from the user */
-	bool tab;						  /* Tab pressed */
+	float wheel; /* notches this frame, + away from the user */
+	bool tab;	 /* Tab pressed */
 } Input;
 
 /* Pumps SDL events + keyboard/mouse state into `in`. */
 void input_poll(Input *in, SDL_Window *window);
+void input_set_mode(Input *in, SDL_Window *window, InputMode mode);

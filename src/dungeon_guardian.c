@@ -40,7 +40,7 @@ uint32_t dungeon_guardian_draws(DungeonGuardianArt *art, WorldPosition camera,
 		return 0;
 	gltf_scene_rest_pose(&art->model, art->pose);
 	const GltfClip *clip = &art->model.clips[art->clip];
-	gltf_clip_sample(clip, fmodf(art->time, clip->duration), art->pose);
+	gltf_clip_sample(&art->model, art->clip, fmodf(art->time, clip->duration), art->pose);
 	gltf_scene_world_matrices(&art->model, art->pose, art->world);
 	WorldPosition position = art->position;
 	position.y += .018 * sinf(art->time * 2.0f);

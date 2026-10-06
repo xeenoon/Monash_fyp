@@ -349,6 +349,14 @@ endif()
 
 if(BUILD_TESTING)
     add_executable(dungeon_grid_tests tests/dungeon_grid_tests.c)
+    add_executable(dialogue_tests tests/dialogue_tests.c src/dialogue.c src/monk_dialogue.c src/ui_draw.c src/input.c)
+    target_include_directories(dialogue_tests PRIVATE src)
+    target_link_libraries(dialogue_tests PRIVATE PkgConfig::SDL3 m)
+    add_test(NAME monk_dialogue COMMAND dialogue_tests)
+    set_tests_properties(monk_dialogue PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+    add_executable(monk_placement_tests tests/monk_placement_tests.c)
+    target_link_libraries(monk_placement_tests PRIVATE dungeon_level m)
+    add_test(NAME monk_placement COMMAND monk_placement_tests)
     add_executable(dungeon_shadow_tests tests/dungeon_shadow_tests.c)
     target_link_libraries(dungeon_shadow_tests PRIVATE dungeon_level m)
     add_test(NAME dungeon_triangle_shadows COMMAND dungeon_shadow_tests)
@@ -452,6 +460,9 @@ add_executable(terrain_renderer
     src/dungeon_camera.c
     src/dungeon_harness.c
     src/dungeon_game.c
+    src/dialogue.c
+    src/monk_dialogue.c
+    src/dungeon_monk.c
     src/dungeon_guardian.c
     src/overworld.c
     src/game_character.c
@@ -530,6 +541,7 @@ target_compile_definitions(terrain_renderer PRIVATE
     DUNGEON_PADLOCK_PATH="${CMAKE_CURRENT_SOURCE_DIR}/assets/dungeons/padlock/runtime/padlock.gltf"
     DUNGEON_TEXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/textures/dungeon/runtime"
     DUNGEON_GUARDIAN_PATH="${CMAKE_CURRENT_SOURCE_DIR}/assets/characters/medusa/medusa.gltf"
+    DUNGEON_MONK_PATH="${CMAKE_CURRENT_SOURCE_DIR}/assets/characters/praying_monk/praying_monk.gltf"
     CGLM_FORCE_DEPTH_ZERO_TO_ONE)
 if(DEBUG_SHADER_DUMP)
     target_compile_definitions(terrain_renderer PRIVATE

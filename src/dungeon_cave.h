@@ -9,7 +9,7 @@
 
 /* Increment when an identical seed should produce a newly generated layout.
  * Cached DungeonLevels carry this value and are ignored after it changes. */
-#define DUNGEON_CAVE_CACHE_VERSION 1u
+#define DUNGEON_CAVE_CACHE_VERSION 2u
 
 /* Tunable knobs for the procedural frontend. All distances are metres, angles
  * radians. dungeon_cave_default_params gives a level roughly the size of the
@@ -58,6 +58,7 @@ typedef struct
 {
 	DungeonField field;
 	DungeonPoint spawn, exit;
+	DungeonPoint monk_spawn;
 	DungeonPuddle *puddles;
 	uint32_t puddle_count;
 	/* Every doorway here is verified: solidifying its footprint disconnects

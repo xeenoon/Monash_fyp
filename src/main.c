@@ -187,6 +187,8 @@ static const char *game_screen_name(DungeonGameScreen screen)
 	case DUNGEON_GAME_OVERWORLD: return "overworld";
 	case DUNGEON_GAME_LOADING: return "loading";
 	case DUNGEON_GAME_PLAYING: return "playing";
+	case DUNGEON_GAME_DIALOGUE:
+		return "dialogue";
 	case DUNGEON_GAME_PAUSED: return "paused";
 	case DUNGEON_GAME_OVER: return "over";
 	case DUNGEON_GAME_COMPLETE: return "complete";
@@ -224,6 +226,8 @@ static void game_script_step(const char *script, uint64_t frame, Input *input, D
 	if (!script)
 		return;
 	static char path[512];
+	static DungeonPoint remembered_player, remembered_guard;
+	static float remembered_run_time, remembered_scene_time;
 	for (const char *p = script; *p;)
 	{
 		char entry[600];
@@ -247,6 +251,74 @@ static void game_script_step(const char *script, uint64_t frame, Input *input, D
 		else if (!strcmp(command, "escape")) input->escape = true;
 		else if (!strcmp(command, "interact")) input->interact = true;
 		else if (!strcmp(command, "restart")) input->restart = true;
+		else if (!strcmp(command, "text") && input->edit_count < INPUT_MAX_EDITS)
+		{
+			const char *text = strstr(entry, command) + strlen(command);
+			while (*text == ' ')
+				++text;
+			TextEdit *edit = &input->edits[input->edit_count++];
+			*edit = (TextEdit){.kind = TEXT_INSERT};
+			snprintf(edit->text, sizeof(edit->text), "%s", text);
+		}
+		else if (!strcmp(command, "submit") && input->edit_count < INPUT_MAX_EDITS)
+			input->edits[input->edit_count++] = (TextEdit){.kind = TEXT_SUBMIT};
+		else if (!strcmp(command, "expect_dialogue"))
+		{
+			const Dialogue *d = &game->monk_dialogue;
+			if (!d->active || strcmp(d->entries[d->entry].id, argument))
+			{
+				fprintf(stderr, "Dialogue assertion: expected %s, got %s (active %d)\n", argument,
+						d->entries[d->entry].id, d->active);
+				*failed = true;
+				*running = false;
+			}
+		}
+		else if (!strcmp(command, "remember_world"))
+		{
+			remembered_player = scene->player.position;
+			remembered_guard = game->guard.position;
+			remembered_run_time = game->run_time;
+			remembered_scene_time = scene->time;
+		}
+		else if (!strcmp(command, "expect_frozen"))
+		{
+			if (scene->player.position.x != remembered_player.x ||
+				scene->player.position.z != remembered_player.z ||
+				game->guard.position.x != remembered_guard.x ||
+				game->guard.position.z != remembered_guard.z ||
+				game->run_time != remembered_run_time || scene->time <= remembered_scene_time)
+			{
+				fprintf(stderr,
+						"Dialogue: gameplay did not freeze or ambient time did not advance\n");
+				*failed = true;
+				*running = false;
+			}
+		}
+		else if (!strcmp(command, "expect_phase"))
+		{
+			const char *names[] = {"reveal", "page", "choices", "edit", "interrupt"};
+			if (strcmp(names[game->monk_dialogue.phase], argument))
+			{
+				fprintf(stderr, "Dialogue: expected phase %s, got %s\n", argument,
+						names[game->monk_dialogue.phase]);
+				*failed = true;
+				*running = false;
+			}
+		}
+		else if (!strcmp(command, "expect_fragment") || !strcmp(command, "expect_reply"))
+		{
+			const char *expected = strstr(entry, command) + strlen(command);
+			while (*expected == ' ')
+				++expected;
+			const char *actual = !strcmp(command, "expect_reply") ? game->monk_dialogue.reply
+																  : game->monk_dialogue.fragment;
+			if (strcmp(expected, actual))
+			{
+				fprintf(stderr, "Dialogue: expected text '%s', got '%s'\n", expected, actual);
+				*failed = true;
+				*running = false;
+			}
+		}
 		else if (!strcmp(command, "quit")) *running = false;
 		else if (!strcmp(command, "walk") && sscanf(entry, " %*u %*s %f %f", &a, &b) == 2)
 		{
@@ -296,6 +368,9 @@ static void game_script_step(const char *script, uint64_t frame, Input *input, D
 				target = game->gem;
 			else if (!strcmp(argument, "guard"))
 				target = dungeon_game_debug_point_near_guard(game, scene);
+			else if (!strcmp(argument, "monk"))
+				target = (DungeonPoint){scene->level.monk_spawn.x + 1.0f,
+										scene->level.monk_spawn.z + 1.0f};
 			scene->player.position = target;
 		}
 		else if (!strcmp(command, "capture"))
@@ -833,17 +908,20 @@ int main(int argc, char *argv[])
 		sun_orbit_angle = (float)atof(getenv("TERRAIN_START_SUN_ORBIT"));
 	while (running)
 	{
+		InputMode mode = INPUT_GAME;
+		if (use_dungeon_game && game.screen == DUNGEON_GAME_DIALOGUE)
+			mode = game.monk_dialogue.phase == DIALOGUE_EDIT ? INPUT_TEXT : INPUT_DIALOGUE;
+		input_set_mode(&input, window, mode);
 		input_poll(&input, window);
 		const char *game_capture = NULL;
 		if (use_dungeon_game && game_script)
-			game_script_step(game_script, game_frame++, &input, &game, &dungeon, &overworld, &renderer,
-							 &running, &game_script_failed, game_walk, &game_capture);
+			game_script_step(game_script, game_frame++, &input, &game, &dungeon, &overworld,
+							 &renderer, &running, &game_script_failed, game_walk, &game_capture);
 		if (use_dungeon_game && game.screen != DUNGEON_GAME_OVERWORLD)
 		{
 			float canvas_x = 0.0f, canvas_y = 0.0f;
 			game_pointer_canvas(&renderer, &input, &canvas_x, &canvas_y);
-			if (dungeon_game_menu_pointer(&game, canvas_x, canvas_y,
-										 input.mouse_left_released))
+			if (dungeon_game_menu_pointer(&game, canvas_x, canvas_y, input.mouse_left_released))
 				input.puzzle_confirm = true;
 		}
 		/* An edge-triggered input belongs to the world where its frame began.
@@ -956,6 +1034,8 @@ int main(int argc, char *argv[])
 		previous_ticks = ticks;
 		if (dt > 0.1f)
 			dt = 0.1f;
+		if (use_dungeon_game && game_script)
+			dt = 1.0f / 60.0f;
 		if (harness)
 		{
 			/* A fixed timestep, so scripted `wait` durations are exact and a
@@ -1088,7 +1168,8 @@ int main(int argc, char *argv[])
 		}
 		else if (use_dungeon)
 		{
-			bool gameplay = !use_dungeon_game || dungeon_game_playing(&game);
+			bool gameplay = !use_dungeon_game || (dungeon_game_playing(&game) &&
+												  began_frame_screen != DUNGEON_GAME_DIALOGUE);
 			DungeonSession *session = &dungeon.session;
 			bool picking = gameplay && session->phase != DUNGEON_PHASE_EXPLORING;
 			/* While a lock is up, the arrow keys drive the lock instead of
@@ -1152,10 +1233,16 @@ int main(int argc, char *argv[])
 					 !(use_dungeon_game && dungeon_game_interact(&game, &dungeon)))
 				dungeon_session_interact(session, dungeon.player.position);
 
+			dungeon.conversation_paused =
+				use_dungeon_game && (game.screen == DUNGEON_GAME_DIALOGUE ||
+									 began_frame_screen == DUNGEON_GAME_DIALOGUE);
+			if (dungeon.conversation_paused)
+				gameplay = false;
 			/* Behind the menus the camera drifts slowly round the level. */
 			bool backdrop = use_dungeon_game && game.screen != DUNGEON_GAME_PLAYING &&
-							game.screen != DUNGEON_GAME_PAUSED && game.screen != DUNGEON_GAME_OVER &&
-							game.screen != DUNGEON_GAME_COMPLETE;
+							game.screen != DUNGEON_GAME_PAUSED &&
+							game.screen != DUNGEON_GAME_OVER &&
+							game.screen != DUNGEON_GAME_COMPLETE && !dungeon.conversation_paused;
 			if (!freeze_camera && backdrop)
 				dungeon_camera_orbit(&dungeon_camera, 0.12f, 0.0f, dt);
 			else if (!freeze_camera && !picking && gameplay)
@@ -1189,8 +1276,16 @@ int main(int argc, char *argv[])
 			DungeonPoint follow = {
 				dungeon.player.position.x + (lock.x - dungeon.player.position.x) * focus,
 				dungeon.player.position.z + (lock.z - dungeon.player.position.z) * focus};
-			dungeon_camera_update(&dungeon_camera, focus > 0.0f ? follow : dungeon.player.position,
-								  dt);
+			DungeonPoint camera_target = focus > 0.0f ? follow : dungeon.player.position;
+			if (dungeon.conversation_paused)
+			{
+				/* Keep the seated silhouette above the lower dialogue panel using
+				 * the existing follow easing, without disturbing orbit or zoom. */
+				float yaw = glm_rad(dungeon_camera.camera.yaw);
+				camera_target = (DungeonPoint){dungeon.level.monk_spawn.x - cosf(yaw) * 2.2f,
+											   dungeon.level.monk_spawn.z - sinf(yaw) * 2.2f};
+			}
+			dungeon_camera_update(&dungeon_camera, camera_target, dt);
 			camera = dungeon_camera.camera;
 
 			/* This renderer draws no text, so the window title is where status

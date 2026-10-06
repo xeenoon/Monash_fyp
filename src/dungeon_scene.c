@@ -1467,6 +1467,21 @@ static bool scene_create(Renderer *renderer, DungeonScene *out, const uint32_t *
 		out->geometry.batches[DUNGEON_MESH_MOSS].vertex_count / 180u,
 		out->geometry.batches[DUNGEON_MESH_MOSS].index_count / 3u);
 	dungeon_player_init(&out->player, out->level.spawn);
+	if (out->level.has_monk_spawn)
+	{
+		if (!dungeon_monk_load(renderer, &out->monk))
+		{
+			if (error)
+				snprintf(error->message, sizeof(error->message), "could not load praying monk");
+			dungeon_scene_destroy(renderer, out);
+			return false;
+		}
+		out->monk.active = true;
+		out->monk.position =
+			(WorldPosition){out->level.monk_spawn.x, out->level.floor_y, out->level.monk_spawn.z};
+		out->monk.yaw = atan2f(out->level.spawn.x - out->level.monk_spawn.x,
+							   out->level.spawn.z - out->level.monk_spawn.z);
+	}
 	if (!out->lab && !dungeon_guardian_load(renderer, &out->guardian))
 	{
 		if (error)
@@ -1670,6 +1685,8 @@ uint32_t dungeon_scene_draws(DungeonScene *scene, WorldPosition camera_position,
 		}
 	}
 	append_prop_draws(scene, camera_position, out, &draw_count, capacity);
+	draw_count +=
+		dungeon_monk_draws(&scene->monk, camera_position, out + draw_count, capacity - draw_count);
 	draw_count += dungeon_guardian_draws(&scene->guardian, camera_position,
 		out + draw_count, capacity - draw_count);
 	if (scene->lab_pole_uploaded && draw_count < capacity)
@@ -1775,6 +1792,11 @@ bool dungeon_scene_update(DungeonScene *scene, float move_forward, float move_ri
 	/* Advanced before the early return below, so torches keep burning while a
 	 * lock is being picked. */
 	scene->time += dt;
+	if (scene->conversation_paused)
+	{
+		scene->player_stride = 0;
+		return false;
+	}
 	dungeon_session_update(&scene->session, dt);
 	update_pick(scene, dt);
 	update_padlocks(scene, dt);
@@ -1935,6 +1957,7 @@ void dungeon_scene_destroy(Renderer *renderer, DungeonScene *scene)
 	free(scene->padlock_pose);
 	free(scene->padlock_world);
 	dungeon_guardian_destroy(renderer, &scene->guardian);
+	dungeon_monk_destroy(renderer, &scene->monk);
 	if (renderer)
 	{
 		gltf_scene_destroy(renderer, &scene->torch);
