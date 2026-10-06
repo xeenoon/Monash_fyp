@@ -124,6 +124,9 @@ void dungeon_game_init(DungeonGame *game, uint32_t session_seed);
 void dungeon_game_destroy(DungeonGame *game);
 
 uint32_t dungeon_game_level_seed(const DungeonGame *game, uint32_t level);
+/* Restores the seed recorded by a persistent dungeon cache and keeps the
+ * seed-derived display name in sync with the loaded layout. */
+void dungeon_game_set_level_seed(DungeonGame *game, uint32_t level, uint32_t seed);
 /* Theme each level from the ground its entrance stands on. */
 void dungeon_game_assign_grounds(DungeonGame *game, const OverworldGround grounds[DUNGEON_GAME_LEVELS]);
 /* E at entrance `level` in the overworld. */

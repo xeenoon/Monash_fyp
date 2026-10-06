@@ -49,6 +49,18 @@ typedef struct
 	size_t column;
 } DungeonLevelError;
 
+/* On-disk procedural-level cache. The caller supplies a content version tied
+ * to the generator: changing generation semantics must change that version,
+ * while representation changes are covered by the cache format itself. */
+typedef enum
+{
+	DUNGEON_LEVEL_CACHE_LOADED,
+	DUNGEON_LEVEL_CACHE_MISSING,
+	DUNGEON_LEVEL_CACHE_STALE,
+	DUNGEON_LEVEL_CACHE_INVALID,
+	DUNGEON_LEVEL_CACHE_IO_ERROR
+} DungeonLevelCacheResult;
+
 /* Shared compile path: turns a rasterized occupancy field into every piece of
  * derived geometry a frontend needs (contours, floor/plateau fills, collider
  * and occluder segments). Both dungeon_grid (ASCII maps) and dungeon_cave
@@ -62,6 +74,19 @@ bool dungeon_level_compile_field(DungeonField *field, DungeonPoint spawn, Dungeo
 								 float wall_height, DungeonLevel *out, DungeonLevelError *error);
 
 void dungeon_level_destroy(DungeonLevel *level);
+
+/* Reads only a cache header. This lets the game restore a persistent
+ * dungeon's seed and display name without constructing its level at startup. */
+DungeonLevelCacheResult dungeon_level_cache_probe(const char *path, uint32_t dungeon_id,
+										   uint32_t content_version, uint32_t *out_seed);
+/* Loads/saves the complete compiled DungeonLevel. Files are versioned,
+ * checksummed and written through a temporary file followed by an atomic
+ * rename, so an interrupted write is treated as a miss rather than a level. */
+DungeonLevelCacheResult dungeon_level_cache_load(const char *path, uint32_t dungeon_id,
+										  uint32_t seed, uint32_t content_version,
+										  DungeonLevel *out);
+bool dungeon_level_cache_save(const char *path, uint32_t dungeon_id, uint32_t seed,
+							  uint32_t content_version, const DungeonLevel *level);
 
 /* Print dungeon layout in human-readable text format: spawn, exit, doors with types, puddles. */
 void dungeon_level_print(const DungeonLevel *level);

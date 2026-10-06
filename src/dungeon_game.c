@@ -148,6 +148,16 @@ uint32_t dungeon_game_level_seed(const DungeonGame *game, uint32_t level)
 	return game->levels[level % DUNGEON_GAME_LEVELS].seed;
 }
 
+void dungeon_game_set_level_seed(DungeonGame *game, uint32_t level, uint32_t seed)
+{
+	DungeonGameLevel *entry = &game->levels[level % DUNGEON_GAME_LEVELS];
+	entry->seed = seed;
+	uint32_t h = hash_u32(seed);
+	snprintf(entry->name, sizeof(entry->name), "The %s %s",
+			 name_first[h % (sizeof(name_first) / sizeof(name_first[0]))],
+			 name_second[(h >> 8) % (sizeof(name_second) / sizeof(name_second[0]))]);
+}
+
 bool dungeon_game_playing(const DungeonGame *game)
 {
 	return game->screen == DUNGEON_GAME_PLAYING && game->over_timer <= 0.0f &&

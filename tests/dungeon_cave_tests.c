@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 /* Re-runs keep_largest_component on a copy and requires it to be a no-op:
  * the only way that holds is if the generated field already has exactly one
@@ -239,6 +240,110 @@ static void the_nearest_door_is_the_pin_tumbler(void)
 	}
 }
 
+static void assert_cached_level_matches(const DungeonLevel *expected, const DungeonLevel *actual)
+{
+	assert(expected->field.width == actual->field.width);
+	assert(expected->field.height == actual->field.height);
+	assert(expected->field.cell_size == actual->field.cell_size);
+	assert(memcmp(&expected->field.origin, &actual->field.origin,
+				  sizeof(expected->field.origin)) == 0);
+	assert(memcmp(&expected->spawn, &actual->spawn, sizeof(expected->spawn)) == 0);
+	assert(memcmp(&expected->exit, &actual->exit, sizeof(expected->exit)) == 0);
+	assert(expected->floor_y == actual->floor_y);
+	assert(expected->wall_height == actual->wall_height);
+	size_t field_count = (size_t)expected->field.width * expected->field.height;
+	assert(memcmp(expected->field.values, actual->field.values,
+				  field_count * sizeof(*expected->field.values)) == 0);
+
+	assert(expected->contours.loop_count == actual->contours.loop_count);
+	for (uint32_t i = 0; i < expected->contours.loop_count; ++i)
+	{
+		assert(expected->contours.loops[i].point_count == actual->contours.loops[i].point_count);
+		assert(memcmp(expected->contours.loops[i].points, actual->contours.loops[i].points,
+					  expected->contours.loops[i].point_count * sizeof(DungeonPoint)) == 0);
+	}
+	const DungeonTriangleMesh *expected_meshes[] = {&expected->floor_triangles,
+											  &expected->plateau_triangles};
+	const DungeonTriangleMesh *actual_meshes[] = {&actual->floor_triangles,
+											&actual->plateau_triangles};
+	for (uint32_t mesh = 0; mesh < 2u; ++mesh)
+	{
+		assert(expected_meshes[mesh]->vertex_count == actual_meshes[mesh]->vertex_count);
+		assert(expected_meshes[mesh]->index_count == actual_meshes[mesh]->index_count);
+		assert(memcmp(expected_meshes[mesh]->positions, actual_meshes[mesh]->positions,
+					  expected_meshes[mesh]->vertex_count * sizeof(DungeonPoint)) == 0);
+		assert(memcmp(expected_meshes[mesh]->indices, actual_meshes[mesh]->indices,
+					  expected_meshes[mesh]->index_count * sizeof(uint32_t)) == 0);
+	}
+	assert(expected->collider_count == actual->collider_count);
+	for (uint32_t i = 0; i < expected->collider_count; ++i)
+	{
+		assert(expected->colliders[i].type == actual->colliders[i].type);
+		assert(memcmp(&expected->colliders[i].segment, &actual->colliders[i].segment,
+					  sizeof(DungeonSegment)) == 0);
+	}
+	assert(expected->occluder_count == actual->occluder_count);
+	assert(memcmp(expected->occluders, actual->occluders,
+				  expected->occluder_count * sizeof(DungeonSegment)) == 0);
+	assert(expected->puddle_count == actual->puddle_count);
+	for (uint32_t i = 0; i < expected->puddle_count; ++i)
+	{
+		assert(memcmp(&expected->puddles[i].center, &actual->puddles[i].center,
+					  sizeof(DungeonPoint)) == 0);
+		assert(expected->puddles[i].radius == actual->puddles[i].radius);
+	}
+	assert(expected->door_count == actual->door_count);
+	for (uint32_t i = 0; i < expected->door_count; ++i)
+	{
+		const DungeonDoorway *a = &expected->doors[i], *b = &actual->doors[i];
+		assert(memcmp(&a->center, &b->center, sizeof(a->center)) == 0);
+		assert(a->yaw == b->yaw && a->half_width == b->half_width);
+		assert(memcmp(&a->blocker, &b->blocker, sizeof(a->blocker)) == 0);
+		assert(a->lock == b->lock && a->seed == b->seed);
+	}
+}
+
+static void compiled_level_cache_round_trips_and_rejects_bad_files(void)
+{
+	const uint32_t dungeon_id = 1u, seed = 4242u, content_version = 7u;
+	DungeonCaveParams params = dungeon_cave_default_params(seed);
+	params.extent_m = 20.0f;
+	params.worm_steps = 60u;
+	DungeonLevel generated = {0}, loaded = {0};
+	DungeonLevelError error = {0};
+	assert(dungeon_cave_compile(&params, &generated, &error));
+
+	char path[128];
+	snprintf(path, sizeof(path), "/tmp/gameport-dungeon-cache-test-%ld", (long)getpid());
+	remove(path);
+	uint32_t probed_seed = 0;
+	assert(dungeon_level_cache_probe(path, dungeon_id, content_version, &probed_seed) ==
+		   DUNGEON_LEVEL_CACHE_MISSING);
+	assert(dungeon_level_cache_save(path, dungeon_id, seed, content_version, &generated));
+	assert(dungeon_level_cache_probe(path, dungeon_id, content_version, &probed_seed) ==
+		   DUNGEON_LEVEL_CACHE_LOADED);
+	assert(probed_seed == seed);
+	assert(dungeon_level_cache_probe(path, dungeon_id, content_version + 1u, &probed_seed) ==
+		   DUNGEON_LEVEL_CACHE_STALE);
+	assert(dungeon_level_cache_load(path, dungeon_id, seed, content_version, &loaded) ==
+		   DUNGEON_LEVEL_CACHE_LOADED);
+	assert_cached_level_matches(&generated, &loaded);
+	dungeon_level_destroy(&loaded);
+	assert(dungeon_level_cache_load(path, dungeon_id, seed + 1u, content_version, &loaded) ==
+		   DUNGEON_LEVEL_CACHE_STALE);
+
+	FILE *file = fopen(path, "r+b");
+	assert(file && fseek(file, -1L, SEEK_END) == 0);
+	int byte = fgetc(file);
+	assert(byte != EOF && fseek(file, -1L, SEEK_END) == 0);
+	assert(fputc(byte ^ 0x5a, file) != EOF);
+	assert(fclose(file) == 0);
+	assert(dungeon_level_cache_load(path, dungeon_id, seed, content_version, &loaded) ==
+		   DUNGEON_LEVEL_CACHE_INVALID);
+	assert(remove(path) == 0);
+	dungeon_level_destroy(&generated);
+}
+
 int main(void)
 {
 	identical_seed_reproduces_byte_identical_field();
@@ -247,6 +352,7 @@ int main(void)
 	every_locked_door_is_a_real_chokepoint();
 	the_nearest_door_is_the_pin_tumbler();
 	hard_rect_stamps_keep_square_corners();
+	compiled_level_cache_round_trips_and_rejects_bad_files();
 	puts("dungeon cave tests passed");
 	return 0;
 }

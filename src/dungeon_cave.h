@@ -7,6 +7,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/* Increment when an identical seed should produce a newly generated layout.
+ * Cached DungeonLevels carry this value and are ignored after it changes. */
+#define DUNGEON_CAVE_CACHE_VERSION 1u
+
 /* Tunable knobs for the procedural frontend. All distances are metres, angles
  * radians. dungeon_cave_default_params gives a level roughly the size of the
  * old hand-authored example.map.

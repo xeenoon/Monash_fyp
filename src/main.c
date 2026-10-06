@@ -9,6 +9,7 @@
 #include "atmosphere.h"
 #include "benchmark_ground.h"
 #include "camera.h"
+#include "dungeon_cave.h"
 #include "dungeon_scene.h"
 #include "dungeon_camera.h"
 #include "dungeon_harness.h"
@@ -28,6 +29,19 @@
 
 #define WINDOW_WIDTH 1280
 #define WINDOW_HEIGHT 720
+
+static bool dungeon_cache_path(uint32_t dungeon_id, char *out, size_t capacity)
+{
+	const char *directory = getenv("DUNGEON_CACHE_DIR");
+	if (!directory || !*directory)
+		directory = SDL_GetBasePath();
+	if (!directory || !*directory || !out || !capacity)
+		return false;
+	size_t length = strlen(directory);
+	const char *separator = length && directory[length - 1u] == '/' ? "" : "/";
+	int written = snprintf(out, capacity, "%s%sdungeon%u", directory, separator, dungeon_id);
+	return written > 0 && (size_t)written < capacity;
+}
 
 /* Compile-time terrain start camera. These are absolute WORLD coordinates (the
    `camera pos=` value printed in a shader dump / replay hint), NOT tile-local.
@@ -487,8 +501,23 @@ int main(int argc, char *argv[])
 												: (uint32_t)time(NULL) ^ (uint32_t)SDL_GetTicksNS();
 			printf("Dungeon session seed: %u\n", session_seed);
 			dungeon_game_init(&game, session_seed);
+			/* A cache makes dungeon IDs persistent across ordinary launches. An
+			 * explicit seed remains authoritative and deliberately replaces it. */
+			bool pinned_session = session_env && *session_env;
+			for (uint32_t i = 0; !pinned_session && i < DUNGEON_GAME_LEVELS; ++i)
+			{
+				if (i == 0u && getenv("DUNGEON_SEED"))
+					continue;
+				char cache_path[1024];
+				uint32_t cached_seed = 0;
+				if (dungeon_cache_path(i + 1u, cache_path, sizeof(cache_path)) &&
+					dungeon_level_cache_probe(cache_path, i + 1u, DUNGEON_CAVE_CACHE_VERSION,
+										  &cached_seed) == DUNGEON_LEVEL_CACHE_LOADED)
+					dungeon_game_set_level_seed(&game, i, cached_seed);
+			}
 			if (getenv("DUNGEON_SEED"))
-				game.levels[0].seed = (uint32_t)strtoul(getenv("DUNGEON_SEED"), NULL, 10);
+				dungeon_game_set_level_seed(
+					&game, 0u, (uint32_t)strtoul(getenv("DUNGEON_SEED"), NULL, 10));
 			/* The overworld is the generated 1 km Alps tile set, drawn by the
 			 * same TerrainRuntime as the terrain scene. */
 			TerrainRuntimeSettings settings = terrain_runtime_default_settings();
@@ -520,10 +549,15 @@ int main(int argc, char *argv[])
 			game_character_load(&renderer, &indiana, INDIANA_RUNTIME_DIR);
 		}
 		bool load_initial_dungeon = !use_dungeon_game || start_dungeon_playing;
+		char initial_cache_path[1024];
+		const char *initial_cache =
+			use_dungeon_game && dungeon_cache_path(1u, initial_cache_path, sizeof(initial_cache_path))
+				? initial_cache_path
+				: NULL;
 		if (load_initial_dungeon &&
 			(use_dungeon_game
-				 ? !dungeon_scene_create_seeded(&renderer, &dungeon, game.levels[0].seed,
-												&dungeon_error)
+				 ? !dungeon_scene_create_cached(&renderer, &dungeon, 1u, game.levels[0].seed,
+											 initial_cache, &dungeon_error)
 				 : !dungeon_scene_create(&renderer, &dungeon, &dungeon_error)))
 		{
 			fprintf(stderr, "Could not load dungeon: %s\n", dungeon_error.message);
@@ -963,9 +997,13 @@ int main(int argc, char *argv[])
 					}
 					DungeonLevelError load_error = {0};
 					uint32_t level = game.load_level;
-					if (!dungeon_scene_create_seeded(&renderer, &dungeon,
-													 dungeon_game_level_seed(&game, level),
-													 &load_error))
+					char cache_path[1024];
+					const char *cache = dungeon_cache_path(level + 1u, cache_path, sizeof(cache_path))
+										? cache_path
+										: NULL;
+					if (!dungeon_scene_create_cached(&renderer, &dungeon, level + 1u,
+											dungeon_game_level_seed(&game, level), cache,
+											&load_error))
 					{
 						fprintf(stderr, "Could not load dungeon: %s\n", load_error.message);
 						running = false;

@@ -1293,21 +1293,28 @@ static void append_door_draws(DungeonScene *scene, WorldPosition camera, Rendere
 }
 
 static bool scene_create(Renderer *renderer, DungeonScene *out, const uint32_t *seed_override,
-						 DungeonLevelError *error);
+						 uint32_t dungeon_id, const char *cache_path, DungeonLevelError *error);
 
 bool dungeon_scene_create(Renderer *renderer, DungeonScene *out, DungeonLevelError *error)
 {
-	return scene_create(renderer, out, NULL, error);
+	return scene_create(renderer, out, NULL, 0u, NULL, error);
 }
 
 bool dungeon_scene_create_seeded(Renderer *renderer, DungeonScene *out, uint32_t seed,
 								 DungeonLevelError *error)
 {
-	return scene_create(renderer, out, &seed, error);
+	return scene_create(renderer, out, &seed, 0u, NULL, error);
+}
+
+bool dungeon_scene_create_cached(Renderer *renderer, DungeonScene *out, uint32_t dungeon_id,
+								 uint32_t seed, const char *cache_path,
+								 DungeonLevelError *error)
+{
+	return scene_create(renderer, out, &seed, dungeon_id, cache_path, error);
 }
 
 static bool scene_create(Renderer *renderer, DungeonScene *out, const uint32_t *seed_override,
-						 DungeonLevelError *error)
+						 uint32_t dungeon_id, const char *cache_path, DungeonLevelError *error)
 {
 	if (!renderer || !out)
 		return false;
@@ -1330,8 +1337,32 @@ static bool scene_create(Renderer *renderer, DungeonScene *out, const uint32_t *
 			seed = (uint32_t)strtoul(seed_env, NULL, 10);
 		if (seed_override)
 			seed = *seed_override;
-		DungeonCaveParams params = dungeon_cave_default_params(seed);
-		compiled = dungeon_cave_compile(&params, &out->level, error);
+		DungeonLevelCacheResult cached = DUNGEON_LEVEL_CACHE_MISSING;
+		if (cache_path && dungeon_id)
+			cached = dungeon_level_cache_load(cache_path, dungeon_id, seed,
+										  DUNGEON_CAVE_CACHE_VERSION, &out->level);
+		compiled = cached == DUNGEON_LEVEL_CACHE_LOADED;
+		if (compiled)
+			printf("Dungeon cache: loaded dungeon%u from %s\n", dungeon_id, cache_path);
+		else
+		{
+			if (cached == DUNGEON_LEVEL_CACHE_STALE)
+				printf("Dungeon cache: dungeon%u is stale; regenerating\n", dungeon_id);
+			else if (cached == DUNGEON_LEVEL_CACHE_INVALID)
+				fprintf(stderr, "Dungeon cache: dungeon%u is corrupt; regenerating\n", dungeon_id);
+			else if (cached == DUNGEON_LEVEL_CACHE_IO_ERROR)
+				fprintf(stderr, "Dungeon cache: could not read %s; regenerating\n", cache_path);
+			DungeonCaveParams params = dungeon_cave_default_params(seed);
+			compiled = dungeon_cave_compile(&params, &out->level, error);
+			if (compiled && cache_path && dungeon_id)
+			{
+				if (dungeon_level_cache_save(cache_path, dungeon_id, seed,
+										 DUNGEON_CAVE_CACHE_VERSION, &out->level))
+					printf("Dungeon cache: saved dungeon%u to %s\n", dungeon_id, cache_path);
+				else
+					fprintf(stderr, "Dungeon cache: could not write %s\n", cache_path);
+			}
+		}
 	}
 	if (!compiled || !dungeon_mesh_build(&out->level, &out->geometry, error))
 	{

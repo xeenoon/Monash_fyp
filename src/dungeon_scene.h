@@ -135,6 +135,12 @@ bool dungeon_scene_create(Renderer *renderer, DungeonScene *out, DungeonLevelErr
  * DUNGEON_MAP / DUNGEON_LAB still take precedence. */
 bool dungeon_scene_create_seeded(Renderer *renderer, DungeonScene *out, uint32_t seed,
 								 DungeonLevelError *error);
+/* Procedural game-level variant. `dungeon_id` is the stable one-based ID used
+ * in the cache header; `cache_path` is normally <executable-dir>/dungeonN.
+ * Labs and explicit map files still bypass the procedural cache. */
+bool dungeon_scene_create_cached(Renderer *renderer, DungeonScene *out, uint32_t dungeon_id,
+								 uint32_t seed, const char *cache_path,
+								 DungeonLevelError *error);
 
 /* Fills `out` with up to `capacity` draws and returns how many were written.
  * `out_shadow_draw_count` (may be NULL) receives the length of the PREFIX of
