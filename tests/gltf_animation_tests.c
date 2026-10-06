@@ -241,18 +241,54 @@ static void sampling_interpolates_clamps_and_layers(void)
 	gltf_scene_destroy(NULL, &scene);
 }
 
+/* Linear-blend skinning, on a scene built in memory: two joints, one vertex
+ * on each and one split evenly between them. */
+static void skinning_blends_joint_matrices(void)
+{
+	GltfScene scene = {0};
+	mat4s world[2] = {GLMS_MAT4_IDENTITY, glms_translate_make((vec3s){{0.0f, 4.0f, 0.0f}})};
+	mat4s inverse_bind[2] = {GLMS_MAT4_IDENTITY, glms_translate_make((vec3s){{-1.0f, 0.0f, 0.0f}})};
+	uint32_t joints[2] = {0, 1};
+	GltfSkin skin = {.joint_count = 2, .joints = joints, .inverse_bind = inverse_bind};
+	Vertex bind[3] = {{.position = {0, 0, 0}, .normal = {0, 1, 0}, .tangent = {1, 0, 0, 1}},
+					  {.position = {1, 0, 0}, .normal = {0, 1, 0}, .tangent = {1, 0, 0, 1}},
+					  {.position = {2, 0, 0}, .normal = {0, 1, 0}, .tangent = {1, 0, 0, 1}}};
+	uint16_t vertex_joints[3][4] = {{0}, {0, 1}, {1}};
+	float weights[3][4] = {{1}, {0.5f, 0.5f}, {1}};
+	GltfPrimitive primitive = {.vertices = bind, .joints = vertex_joints, .weights = weights,
+							   .skin = 0, .mesh = {.vertex_count = 3}};
+	scene.primitives = &primitive;
+	scene.primitive_count = 1;
+	scene.skins = &skin;
+	scene.skin_count = 1;
+	Vertex out[3];
+	gltf_scene_skin(&scene, 0, world, out);
+	/* Joint 0 is identity; joint 1 moves bind (2,0,0) to (1,4,0). */
+	assert(close_enough(out[0].position[1], 0.0f));
+	assert(close_enough(out[2].position[0], 1.0f) && close_enough(out[2].position[1], 4.0f));
+	/* Half and half: halfway between (1,0,0) and (0,4,0). */
+	assert(close_enough(out[1].position[0], 0.5f) && close_enough(out[1].position[1], 2.0f));
+	assert(close_enough(out[1].normal[1], 1.0f));
+	/* The joint matrix a held prop rides on. */
+	mat4s hand = gltf_scene_joint_matrix(&scene, 0, 1, world);
+	assert(close_enough(hand.col[3].x, -1.0f) && close_enough(hand.col[3].y, 4.0f));
+	mat4s missing = gltf_scene_joint_matrix(&scene, 0, 7, world);
+	assert(close_enough(missing.col[3].y, 0.0f));
+}
+
 static void unsupported_files_are_refused(void)
 {
 	GltfScene scene;
 	GltfLoadError error = {0};
-	/* Skinning: the renderer poses nodes, not vertices. */
+	/* A skin whose primitive carries no JOINTS_0/WEIGHTS_0 cannot be skinned:
+	 * it is refused as malformed rather than drawn undeformed. */
 	const char *skinned =
 		",\"skins\":[{\"joints\":[1]}],\"animations\":[{\"name\":\"a\",\"samplers\":"
 		"[{\"input\":2,\"output\":3}],\"channels\":[{\"sampler\":0,\"target\":"
 		"{\"node\":0,\"path\":\"translation\"}}]}]";
 	assert(gltf_scene_parse(write_fixture(compose("", skinned, "", "\"skin\":0,")), NULL, &scene,
-						   &error) == GLTF_LOAD_UNSUPPORTED);
-	assert(strstr(error.message, "skin"));
+						   &error) == GLTF_LOAD_INVALID);
+	assert(strstr(error.message, "JOINTS_0"));
 
 	/* Morph targets: phase 2 for the padlock's tear-off, unsupported today. */
 	assert(gltf_scene_parse(write_fixture(compose("", "", ",\"targets\":[{\"POSITION\":0}]", "")), NULL,
@@ -291,6 +327,7 @@ int main(int argc, char **argv)
 	a_static_file_is_still_flattened();
 	an_animated_file_keeps_its_hierarchy();
 	sampling_interpolates_clamps_and_layers();
+	skinning_blends_joint_matrices();
 	unsupported_files_are_refused();
 	printf("glTF animation tests passed\n");
 	return 0;

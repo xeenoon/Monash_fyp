@@ -14,12 +14,19 @@ mesh with ONE baked texture set:
   normal  -- the high-detail surface baked onto the low mesh
   orm     -- R=1, G=baked roughness pushed toward matte, B=0
 
+The mesh is exported in BIND pose, skinned to the study's 55-bone rig (four
+weights per vertex), with two looping clips authored here on top of the
+study's raised-torch pose -- "Idle" (breathing, a slow sway of the torch arm)
+and "Walk" (a striding gait that keeps the torch up) -- which the engine
+blends by speed and skins on the CPU (src/game_character.c).
+
 Output: assets/characters/indiana_jones/runtime/indiana.gltf (+ .bin, textures)
-and runtime/manifest.json with the bounds and the torch head position the game
-hangs the flame and light from.
+and runtime/manifest.json with the bounds, the torch head (bind space) and the
+bone that holds it, and the ground speed the Walk clip covers at 1x.
 """
 import bpy
 import bmesh
+from mathutils import Quaternion
 import json
 import math
 import numpy as np
@@ -39,23 +46,38 @@ def log(*args):
 
 scene = bpy.context.scene
 scene.frame_set(1)
+rig = bpy.data.objects["Indiana_Rig"]
+# Meshes are taken in BIND pose: the engine skins them, and every pose --
+# including the raised torch -- comes back through the clips.
+rig.data.pose_position = "REST"
+bpy.context.view_layer.update()
 depsgraph = bpy.context.evaluated_depsgraph_get()
 character = bpy.data.collections["INDIANA • character"]
 
 # --- High: every character mesh, posed and subdivided, joined -------------
 high_parts = []
 torch_points = []
+torch_votes = {}
 for obj in character.all_objects:
     if obj.type != "MESH" or obj.hide_render:
         continue
     evaluated = obj.evaluated_get(depsgraph)
-    mesh = bpy.data.meshes.new_from_object(evaluated, depsgraph=depsgraph)
+    mesh = bpy.data.meshes.new_from_object(evaluated, preserve_all_data_layers=True,
+                                           depsgraph=depsgraph)
     mesh.transform(obj.matrix_world)
     part = bpy.data.objects.new("high_" + obj.name, mesh)
+    for group in obj.vertex_groups:
+        part.vertex_groups.new(name=group.name)
     scene.collection.objects.link(part)
     high_parts.append(part)
     if obj.name.startswith("Torch • linen"):
         torch_points.extend(v.co.copy() for v in mesh.vertices)
+        # Which bone carries the torch: the heaviest group on its head.
+        for v in mesh.vertices:
+            for g in v.groups:
+                name = part.vertex_groups[g.group].name if g.group < len(part.vertex_groups) else None
+                if name:
+                    torch_votes[name] = torch_votes.get(name, 0.0) + g.weight
 log("high parts", len(high_parts))
 bpy.ops.object.select_all(action="DESELECT")
 for part in high_parts:
@@ -255,15 +277,145 @@ normal_map = nodes.new("ShaderNodeNormalMap")
 links.new(normal_node.outputs["Color"], normal_map.inputs["Color"])
 links.new(normal_map.outputs["Normal"], bsdf.inputs["Normal"])
 
+# --- Skin -------------------------------------------------------------------
 bpy.ops.object.select_all(action="DESELECT")
 low.select_set(True)
 bpy.context.view_layer.objects.active = low
-bpy.ops.export_scene.gltf(
+bpy.ops.object.vertex_group_limit_total(group_select_mode="ALL", limit=4)
+bpy.ops.object.vertex_group_normalize_all(group_select_mode="ALL", lock_active=False)
+low.parent = rig
+low.matrix_parent_inverse = rig.matrix_world.inverted()
+armature = low.modifiers.new("Armature", "ARMATURE")
+armature.object = rig
+torch_bone = max(torch_votes, key=torch_votes.get) if torch_votes else "hand_r"
+log("torch bone", torch_bone)
+
+# --- Clips ------------------------------------------------------------------
+rig.data.pose_position = "POSE"
+scene.render.fps = 30
+base_action = rig.animation_data.action
+scene.frame_set(1)
+bpy.context.view_layer.update()
+bones = rig.pose.bones
+base = {}
+for pb in bones:
+    if pb.rotation_mode != "QUATERNION":
+        q = pb.rotation_euler.to_quaternion()
+        pb.rotation_mode = "QUATERNION"
+        pb.rotation_quaternion = q
+    base[pb.name] = (pb.rotation_quaternion.copy(), pb.location.copy())
+rig.animation_data.action = None
+for pb in bones:
+    pb.rotation_quaternion, pb.location = base[pb.name][0].copy(), base[pb.name][1].copy()
+bpy.context.view_layer.update()
+
+
+def world_point(bone, tail=True):
+    pb = bones[bone]
+    return rig.matrix_world @ (pb.tail if tail else pb.head)
+
+
+def forward_sign(bone, probe, axis="X"):
+    """+1 if turning `bone` positively about its local `axis` moves `probe`
+    forward (Blender -Y is the character's front), else -1."""
+    pb = bones[bone]
+    before = world_point(probe).y
+    pb.rotation_quaternion = base[bone][0] @ Quaternion(Vector((1, 0, 0)) if axis == "X" else Vector((0, 0, 1)), 0.3)
+    bpy.context.view_layer.update()
+    after = world_point(probe).y
+    pb.rotation_quaternion = base[bone][0].copy()
+    bpy.context.view_layer.update()
+    return 1.0 if after < before else -1.0
+
+
+X = Vector((1, 0, 0))
+Y = Vector((0, 1, 0))
+thigh_sign = {side: forward_sign("thigh_" + side, "calf_" + side) for side in "lr"}
+# A knee only folds backwards: positive bend must take the foot back.
+knee_sign = {side: -forward_sign("calf_" + side, "foot_" + side) for side in "lr"}
+arm_sign = forward_sign("upperarm_l", "hand_l")
+log("signs", thigh_sign, knee_sign, arm_sign)
+
+
+def key_pose(frame, offsets, pelvis_lift=0.0):
+    """Key every bone: base pose times its offset rotations (local axes)."""
+    for pb in bones:
+        q = base[pb.name][0].copy()
+        for axis, angle in offsets.get(pb.name, []):
+            q = q @ Quaternion(axis, angle)
+        pb.rotation_quaternion = q
+        pb.keyframe_insert("rotation_quaternion", frame=frame)
+        loc = base[pb.name][1].copy()
+        if pb.name == "pelvis":
+            loc.y += pelvis_lift  # the pelvis bone points up: local Y is height
+        pb.location = loc
+        pb.keyframe_insert("location", frame=frame)
+
+
+def make_action(name):
+    action = bpy.data.actions.new(name)
+    action.use_fake_user = True
+    rig.animation_data.action = action
+    return action
+
+
+WALK_FRAMES = 24  # 0.8 s per stride cycle at 30 fps
+SWING = math.radians(30)
+make_action("Walk")
+for f in range(WALK_FRAMES + 1):
+    phase = 2 * math.pi * f / WALK_FRAMES
+    o = {}
+    for side, offset in (("l", 0.0), ("r", math.pi)):
+        p = phase + offset
+        swing = SWING * math.sin(p)
+        # Fold the knee while that leg swings through (moving forward).
+        bend = math.radians(6) + math.radians(55) * max(0.0, math.cos(p)) ** 1.5
+        o["thigh_" + side] = [(X, thigh_sign[side] * swing)]
+        o["calf_" + side] = [(X, knee_sign[side] * bend)]
+        # Keep the sole roughly level through the stride.
+        o["foot_" + side] = [(X, -thigh_sign[side] * swing * 0.5 + knee_sign[side] * bend * 0.35)]
+    o["pelvis"] = [(Y, math.radians(5) * math.sin(phase))]
+    o["spine_03"] = [(Y, -math.radians(6) * math.sin(phase)), (X, math.radians(3))]
+    o["head"] = [(Y, math.radians(3) * math.sin(phase))]
+    # The free arm swings against its leg; the torch arm only rides along.
+    o["upperarm_l"] = [(X, -arm_sign * math.radians(16) * math.sin(phase))]
+    o["lowerarm_l"] = [(X, math.radians(6) * (1 - math.cos(phase)) * 0.5)]
+    o["upperarm_r"] = [(X, math.radians(2.5) * math.sin(2 * phase))]
+    key_pose(f + 1, o, pelvis_lift=0.028 * math.cos(2 * phase))
+
+IDLE_FRAMES = 90  # 3 s breath
+make_action("Idle")
+for f in range(0, IDLE_FRAMES + 1, 6):
+    phase = 2 * math.pi * f / IDLE_FRAMES
+    o = {
+        "spine_02": [(X, math.radians(1.2) * math.sin(phase))],
+        "spine_03": [(X, math.radians(1.0) * math.sin(phase))],
+        "upperarm_r": [(X, math.radians(1.5) * math.sin(phase + 1.0))],
+        "head": [(Y, math.radians(4) * math.sin(phase * 0.5))],
+    }
+    key_pose(f + 1, o, pelvis_lift=0.004 * math.sin(phase))
+
+# Stride length for the speed match: how far a foot travels per cycle.
+leg = (world_point("thigh_l", tail=False) - world_point("foot_l", tail=False)).length
+walk_speed = 4.0 * leg * math.sin(SWING) / (WALK_FRAMES / scene.render.fps)
+log("walk speed", walk_speed)
+rig.animation_data.action = None
+if base_action:
+    bpy.data.actions.remove(base_action)  # its pose lives inside both clips now
+for pb in bones:
+    pb.rotation_quaternion, pb.location = base[pb.name][0].copy(), base[pb.name][1].copy()
+
+bpy.ops.object.select_all(action="DESELECT")
+low.select_set(True)
+rig.select_set(True)
+bpy.context.view_layer.objects.active = low
+export_args = dict(
     filepath=str(OUT / "indiana.gltf"), export_format="GLTF_SEPARATE", use_selection=True,
-    export_apply=True, export_animations=False, export_skins=False, export_morph=False,
-    export_yup=True, export_cameras=False, export_lights=False, export_tangents=True,
-    export_texcoords=True, export_normals=True, export_keep_originals=True,
-    export_extras=False)
+    export_apply=True, export_animations=True, export_animation_mode="ACTIONS",
+    export_force_sampling=True, export_skins=True, export_morph=False, export_yup=True,
+    export_cameras=False, export_lights=False, export_tangents=True, export_texcoords=True,
+    export_normals=True, export_keep_originals=True, export_extras=False)
+bpy.ops.export_scene.gltf(**export_args)
 
 
 def to_gltf(v):
@@ -276,12 +428,15 @@ lo = Vector((min(c.x for c in corners), min(c.y for c in corners), min(c.z for c
 hi = Vector((max(c.x for c in corners), max(c.y for c in corners), max(c.z for c in corners)))
 torch_head = sum(torch_points, Vector()) / max(len(torch_points), 1)
 manifest = {
-    "source": "assets/characters/indiana_jones/indiana_jones.blend (frame 1, torch raised)",
+    "source": "assets/characters/indiana_jones/indiana_jones.blend (bind pose, skinned)",
     "triangles": low_tris,
     "source_triangles": high_tris,
     "bounds_min": to_gltf(lo),
     "bounds_max": to_gltf(hi),
     "torch_head": to_gltf(torch_head),
+    "torch_bone": torch_bone,
+    "walk_speed": round(walk_speed, 3),
+    "clips": ["Idle", "Walk"],
     "front": "Blender -Y, which glTF calls +Z",
 }
 (OUT / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")

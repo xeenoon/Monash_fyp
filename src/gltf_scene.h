@@ -81,7 +81,20 @@ typedef struct {
     /* Which node the geometry hangs off, or GLTF_NO_NODE when the file had no
      * animation and the hierarchy was flattened into the vertices at load. */
     uint32_t node;
+    /* Skinned primitives: the skin index (GLTF_NO_NODE when rigid), four
+     * joint slots (indices into that skin's joint list) and weights per
+     * vertex, parallel to `vertices`, which stay in bind pose. See
+     * gltf_scene_skin. */
+    uint32_t skin;
+    uint16_t (*joints)[4];
+    float (*weights)[4];
 } GltfPrimitive;
+
+typedef struct {
+    uint32_t joint_count;
+    uint32_t *joints;     /* node index of each joint */
+    mat4s *inverse_bind;  /* per joint */
+} GltfSkin;
 
 typedef struct {
     float base_color_factor[4];
@@ -119,6 +132,8 @@ typedef struct GltfScene {
     uint32_t *node_order;
     GltfClip *clips;
     uint32_t clip_count;
+    GltfSkin *skins;
+    uint32_t skin_count;
 } GltfScene;
 
 struct Renderer;
@@ -158,3 +173,14 @@ uint32_t gltf_scene_find_clip(const GltfScene *scene, const char *name);
 void gltf_scene_rest_pose(const GltfScene *scene, GltfTransform *pose);
 void gltf_clip_sample(const GltfScene *scene, uint32_t clip, float time, GltfTransform *pose);
 void gltf_scene_world_matrices(const GltfScene *scene, const GltfTransform *pose, mat4s *out);
+
+/* Linear-blend skinning on the CPU: deforms primitive `primitive`'s bind-pose
+ * vertices by the joints' `world` matrices (from gltf_scene_world_matrices)
+ * into `out` (vertex_count long), positions, normals and tangents. The result
+ * is in the scene's root space -- a skinned mesh's own node transform is
+ * ignored, as glTF specifies. Rigid primitives are copied through. */
+void gltf_scene_skin(const GltfScene *scene, uint32_t primitive, const mat4s *world, Vertex *out);
+/* One joint's skinning matrix (world * inverse bind): where a point given in
+ * bind pose and attached to that joint ends up. GLMS identity if absent. */
+mat4s gltf_scene_joint_matrix(const GltfScene *scene, uint32_t skin, uint32_t node,
+                              const mat4s *world);

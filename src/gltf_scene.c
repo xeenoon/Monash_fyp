@@ -114,10 +114,35 @@ static void import_primitive(Import *in, const cgltf_node *node, const cgltf_pri
     if (p->indices) for(uint32_t i=0;i<ic;i++){size_t x=cgltf_accessor_read_index(p->indices,i);if(x>=vc){fail(in,GLTF_LOAD_INVALID,ni,pi,"index outside POSITION range");return;}o->indices[i]=(uint32_t)x;}
     if(det<0) { if (p->indices) for(uint32_t i=0;i<ic;i+=3){uint32_t x=o->indices[i+1];o->indices[i+1]=o->indices[i+2];o->indices[i+2]=x;} else for(uint32_t i=0;i<vc;i+=3){Vertex x=o->vertices[i+1];o->vertices[i+1]=o->vertices[i+2];o->vertices[i+2]=x;} }
     if(!norm) generate_normals(o->vertices,vc,o->indices,ic);
+    o->skin = GLTF_NO_NODE;
+    if (node->skin) {
+        /* Linear-blend skin data, parallel to the vertices. Weights are
+         * renormalised: exporters round them, and a sum short of one shrinks
+         * the vertex toward the skeleton's origin. */
+        cgltf_accessor *joints=NULL,*weights=NULL;
+        if (!has_attribute(p,cgltf_attribute_type_joints,&joints) || !has_attribute(p,cgltf_attribute_type_weights,&weights) || joints->count != pos->count || weights->count != pos->count) { fail(in,GLTF_LOAD_INVALID,ni,pi,"skinned primitive needs one JOINTS_0 and one WEIGHTS_0"); return; }
+        o->skin = (uint32_t)(node->skin - in->data->skins);
+        o->joints = malloc((size_t)vc * sizeof(*o->joints)); o->weights = malloc((size_t)vc * sizeof(*o->weights));
+        if (!o->joints || !o->weights) { fail(in,GLTF_LOAD_OUT_OF_MEMORY,ni,pi,"out of memory for skin weights"); return; }
+        uint32_t joint_count = (uint32_t)node->skin->joints_count;
+        for (uint32_t i = 0; i < vc; ++i) {
+            cgltf_uint j[4] = {0}; float w[4] = {0};
+            cgltf_accessor_read_uint(joints, i, j, 4); cgltf_accessor_read_float(weights, i, w, 4);
+            float sum = 0.0f;
+            for (int k = 0; k < 4; ++k) { if (j[k] >= joint_count || !finite_value(w[k]) || w[k] < 0.0f) { j[k] = 0; w[k] = 0.0f; } sum += w[k]; }
+            for (int k = 0; k < 4; ++k) { o->joints[i][k] = (uint16_t)j[k]; o->weights[i][k] = sum > 0.0f ? w[k] / sum : (k == 0 ? 1.0f : 0.0f); }
+        }
+    }
     if (!tan && p->material && p->material->normal_texture.texture) {
         Vertex *corners = malloc((size_t)ic * sizeof(*corners));
         if (!corners) { fail(in, GLTF_LOAD_OUT_OF_MEMORY, ni, pi, "out of memory expanding tangent corners"); return; }
         for (uint32_t i = 0; i < ic; ++i) corners[i] = o->vertices[o->indices ? o->indices[i] : i];
+        if (o->joints) {
+            uint16_t (*cj)[4] = malloc((size_t)ic * sizeof(*cj)); float (*cw)[4] = malloc((size_t)ic * sizeof(*cw));
+            if (!cj || !cw) { free(cj); free(cw); free(corners); fail(in, GLTF_LOAD_OUT_OF_MEMORY, ni, pi, "out of memory expanding skin corners"); return; }
+            for (uint32_t i = 0; i < ic; ++i) { uint32_t src = o->indices ? o->indices[i] : i; memcpy(cj[i], o->joints[src], sizeof(cj[i])); memcpy(cw[i], o->weights[src], sizeof(cw[i])); }
+            free(o->joints); free(o->weights); o->joints = cj; o->weights = cw;
+        }
         free(o->vertices); free(o->indices); o->vertices = corners; o->indices = NULL; vc = ic;
         if (!generate_mikk(o->vertices, vc)) { fail(in, GLTF_LOAD_INVALID, ni, pi, "MikkTSpace tangent generation failed"); return; }
     } else {
@@ -125,7 +150,7 @@ static void import_primitive(Import *in, const cgltf_node *node, const cgltf_pri
     }
     o->mesh=(Mesh){.local_to_world=in->scene->placement,.vertices=o->vertices,.vertex_count=vc,.indices=o->indices,.index_count=o->indices?ic:0}; o->material_index=material_number(in->data,p->material); o->node=in->posed?ni:GLTF_NO_NODE; in->scene->primitive_count++;
 }
-static void visit(Import *in,const cgltf_node *n){ if(in->result!=GLTF_LOAD_OK)return; if(n->skin){fail(in,GLTF_LOAD_UNSUPPORTED,node_number(in->data,n),0,"skins are unsupported");return;} if(n->mesh)for(cgltf_size i=0;i<n->mesh->primitives_count;i++)import_primitive(in,n,&n->mesh->primitives[i],(uint32_t)i);for(cgltf_size i=0;i<n->children_count;i++)visit(in,n->children[i]); }
+static void visit(Import *in,const cgltf_node *n){ if(in->result!=GLTF_LOAD_OK)return; if(n->mesh)for(cgltf_size i=0;i<n->mesh->primitives_count;i++)import_primitive(in,n,&n->mesh->primitives[i],(uint32_t)i);for(cgltf_size i=0;i<n->children_count;i++)visit(in,n->children[i]); }
 
 /* ------------------------------------------------------------------ posing
  *
@@ -233,6 +258,74 @@ static bool build_nodes(Import *in)
     }
     free(placed);
     return true;
+}
+
+static bool build_skins(Import *in)
+{
+    GltfScene *s = in->scene; const cgltf_data *d = in->data;
+    if (!d->skins_count) return true;
+    s->skin_count = (uint32_t)d->skins_count;
+    s->skins = calloc(s->skin_count, sizeof(*s->skins));
+    if (!s->skins) { fail(in,GLTF_LOAD_OUT_OF_MEMORY,UINT32_MAX,UINT32_MAX,"out of memory for skins"); return false; }
+    for (uint32_t i = 0; i < s->skin_count; ++i) {
+        const cgltf_skin *k = &d->skins[i];
+        GltfSkin *o = &s->skins[i];
+        o->joint_count = (uint32_t)k->joints_count;
+        o->joints = malloc((size_t)o->joint_count * sizeof(*o->joints));
+        o->inverse_bind = malloc((size_t)o->joint_count * sizeof(*o->inverse_bind));
+        if (!o->joints || !o->inverse_bind) { fail(in,GLTF_LOAD_OUT_OF_MEMORY,UINT32_MAX,UINT32_MAX,"out of memory for skin joints"); return false; }
+        if (k->inverse_bind_matrices && k->inverse_bind_matrices->count < k->joints_count) { fail(in,GLTF_LOAD_INVALID,UINT32_MAX,UINT32_MAX,"skin %u has too few inverse bind matrices",i); return false; }
+        for (uint32_t j = 0; j < o->joint_count; ++j) {
+            o->joints[j] = node_number(d, k->joints[j]);
+            float m[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+            if (k->inverse_bind_matrices) cgltf_accessor_read_float(k->inverse_bind_matrices, j, m, 16);
+            memcpy(o->inverse_bind[j].raw, m, sizeof(m)); /* both column-major */
+        }
+    }
+    return true;
+}
+
+mat4s gltf_scene_joint_matrix(const GltfScene *scene, uint32_t skin, uint32_t node, const mat4s *world)
+{
+    if (!scene || skin >= scene->skin_count || !world) return GLMS_MAT4_IDENTITY;
+    const GltfSkin *k = &scene->skins[skin];
+    for (uint32_t j = 0; j < k->joint_count; ++j)
+        if (k->joints[j] == node) return glms_mat4_mul(world[node], k->inverse_bind[j]);
+    return GLMS_MAT4_IDENTITY;
+}
+
+void gltf_scene_skin(const GltfScene *scene, uint32_t primitive, const mat4s *world, Vertex *out)
+{
+    if (!scene || primitive >= scene->primitive_count || !out) return;
+    const GltfPrimitive *p = &scene->primitives[primitive];
+    uint32_t n = p->mesh.vertex_count;
+    if (p->skin == GLTF_NO_NODE || p->skin >= scene->skin_count || !world) { memcpy(out, p->vertices, (size_t)n * sizeof(Vertex)); return; }
+    const GltfSkin *k = &scene->skins[p->skin];
+    mat4s stack[256];
+    mat4s *joint = k->joint_count <= 256 ? stack : malloc((size_t)k->joint_count * sizeof(*joint));
+    if (!joint) { memcpy(out, p->vertices, (size_t)n * sizeof(Vertex)); return; }
+    for (uint32_t j = 0; j < k->joint_count; ++j) joint[j] = glms_mat4_mul(world[k->joints[j]], k->inverse_bind[j]);
+    for (uint32_t i = 0; i < n; ++i) {
+        const Vertex *v = &p->vertices[i];
+        float m[4][4] = {{0}};
+        for (int s4 = 0; s4 < 4; ++s4) {
+            float w = p->weights[i][s4];
+            if (w <= 0.0f) continue;
+            const mat4s *jm = &joint[p->joints[i][s4]];
+            for (int c = 0; c < 4; ++c) for (int r = 0; r < 4; ++r) m[c][r] += jm->raw[c][r] * w;
+        }
+        Vertex *o = &out[i]; *o = *v;
+        for (int r = 0; r < 3; ++r) {
+            o->position[r] = m[0][r] * v->position[0] + m[1][r] * v->position[1] + m[2][r] * v->position[2] + m[3][r];
+            /* The blended matrix is near-rigid, so its upper 3x3 serves the
+             * normal and tangent too; renormalised below. */
+            o->normal[r] = m[0][r] * v->normal[0] + m[1][r] * v->normal[1] + m[2][r] * v->normal[2];
+            o->tangent[r] = m[0][r] * v->tangent[0] + m[1][r] * v->tangent[1] + m[2][r] * v->tangent[2];
+        }
+        normalize3(o->normal);
+        normalize3(o->tangent);
+    }
+    if (joint != stack) free(joint);
 }
 
 static uint32_t path_components(GltfPath path) { return path == GLTF_PATH_ROTATION ? 4u : 3u; }
@@ -384,7 +477,6 @@ GltfLoadResult gltf_scene_parse(const char *path,const GltfLoadOptions *options,
     out->source_path = source_copy;
     out->placement = options ? options->placement : coordinate_identity_transform((WorldPosition){0});
     cgltf_options co={0};cgltf_data *d=NULL;cgltf_result cr=cgltf_parse_file(&co,path,&d);if(cr!=cgltf_result_success){if(error)snprintf(error->message,sizeof(error->message),"could not parse glTF: %d",cr);return cr==cgltf_result_file_not_found?GLTF_LOAD_IO_ERROR:GLTF_LOAD_INVALID;} cr=cgltf_load_buffers(&co,d,path);if(cr==cgltf_result_success)cr=cgltf_validate(d);if(cr!=cgltf_result_success){if(error)snprintf(error->message,sizeof(error->message),"glTF buffer/validation failure: %d",cr);cgltf_free(d);return GLTF_LOAD_INVALID;}
-    for(cgltf_size i=0;i<d->nodes_count;i++) if(d->nodes[i].skin){if(error)snprintf(error->message,sizeof(error->message),"node %zu is skinned; skinning is unsupported",i);cgltf_free(d);gltf_scene_destroy(NULL,out);return GLTF_LOAD_UNSUPPORTED;}
     for(cgltf_size i=0;i<d->meshes_count;i++)for(cgltf_size j=0;j<d->meshes[i].primitives_count;j++)if(d->meshes[i].primitives[j].targets_count){if(error)snprintf(error->message,sizeof(error->message),"mesh %zu has morph targets, which are unsupported",i);cgltf_free(d);gltf_scene_destroy(NULL,out);return GLTF_LOAD_UNSUPPORTED;}
     out->material_count=(uint32_t)d->materials_count+1u;out->materials=calloc(out->material_count,sizeof(*out->materials));if(!out->materials){cgltf_free(d);return GLTF_LOAD_OUT_OF_MEMORY;}
     out->materials[0] = (GltfMaterial){.base_color_factor={1,1,1,1},.metallic_factor=1,.roughness_factor=1,.normal_scale=1,.occlusion_strength=1};
@@ -392,8 +484,10 @@ GltfLoadResult gltf_scene_parse(const char *path,const GltfLoadOptions *options,
     /* Animation is what decides the scene's shape: posed files keep their
      * hierarchy, static ones are flattened into their vertices exactly as
      * before. See the GltfScene comment. */
-    Import in={.scene=out,.data=d,.error=error,.result=GLTF_LOAD_OK,.posed=d->animations_count>0};
+    /* Skinned files are posed too: skinning needs the joint hierarchy. */
+    Import in={.scene=out,.data=d,.error=error,.result=GLTF_LOAD_OK,.posed=d->animations_count>0||d->skins_count>0};
     if(in.posed) build_nodes(&in);
+    if(in.posed&&in.result==GLTF_LOAD_OK) build_skins(&in);
     if(in.result==GLTF_LOAD_OK){cgltf_scene *scene=d->scene; if(scene)for(cgltf_size i=0;i<scene->nodes_count;i++)visit(&in,scene->nodes[i]);else for(cgltf_size i=0;i<d->nodes_count;i++)if(!d->nodes[i].parent)visit(&in,&d->nodes[i]);}
     if(in.posed&&in.result==GLTF_LOAD_OK) build_clips(&in);
     cgltf_free(d);
@@ -430,7 +524,7 @@ GltfLoadResult gltf_scene_create(struct Renderer *renderer,const char *path,cons
     if (result != GLTF_LOAD_OK) gltf_scene_destroy(renderer, out);
     return result;
 }
-void gltf_scene_destroy(struct Renderer *renderer,GltfScene *scene){if(!scene)return;for(uint32_t i=0;i<scene->primitive_count;i++){if(renderer)mesh_destroy(renderer,&scene->primitives[i].mesh);free(scene->primitives[i].vertices);free(scene->primitives[i].indices);}for(uint32_t i=0;i<scene->material_count;i++){GltfMaterial *m=&scene->materials[i];if(renderer){if(m->descriptor_set)renderer_free_material_set(renderer,m->descriptor_set);if(m->base_color.image)texture_destroy(renderer->device,renderer->allocator,&m->base_color);if(m->metallic_roughness.image)texture_destroy(renderer->device,renderer->allocator,&m->metallic_roughness);if(m->normal.image)texture_destroy(renderer->device,renderer->allocator,&m->normal);if(m->occlusion.image)texture_destroy(renderer->device,renderer->allocator,&m->occlusion);}free(m->base_color_path);free(m->metallic_roughness_path);free(m->normal_path);free(m->occlusion_path);}for(uint32_t i=0;i<scene->node_count;i++)free(scene->nodes[i].name);
+void gltf_scene_destroy(struct Renderer *renderer,GltfScene *scene){if(!scene)return;for(uint32_t i=0;i<scene->primitive_count;i++){if(renderer)mesh_destroy(renderer,&scene->primitives[i].mesh);free(scene->primitives[i].vertices);free(scene->primitives[i].indices);free(scene->primitives[i].joints);free(scene->primitives[i].weights);}for(uint32_t i=0;i<scene->skin_count;i++){free(scene->skins[i].joints);free(scene->skins[i].inverse_bind);}free(scene->skins);for(uint32_t i=0;i<scene->material_count;i++){GltfMaterial *m=&scene->materials[i];if(renderer){if(m->descriptor_set)renderer_free_material_set(renderer,m->descriptor_set);if(m->base_color.image)texture_destroy(renderer->device,renderer->allocator,&m->base_color);if(m->metallic_roughness.image)texture_destroy(renderer->device,renderer->allocator,&m->metallic_roughness);if(m->normal.image)texture_destroy(renderer->device,renderer->allocator,&m->normal);if(m->occlusion.image)texture_destroy(renderer->device,renderer->allocator,&m->occlusion);}free(m->base_color_path);free(m->metallic_roughness_path);free(m->normal_path);free(m->occlusion_path);}for(uint32_t i=0;i<scene->node_count;i++)free(scene->nodes[i].name);
     for(uint32_t i=0;i<scene->clip_count;i++){GltfClip *clip=&scene->clips[i];for(uint32_t c=0;c<clip->channel_count;c++){free(clip->channels[c].times);free(clip->channels[c].values);}free(clip->channels);free(clip->name);}
     free(scene->nodes);free(scene->node_order);free(scene->clips);
     free((char *)scene->source_path);free(scene->primitives);free(scene->materials);*scene=(GltfScene){0};}

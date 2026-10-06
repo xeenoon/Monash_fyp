@@ -1057,6 +1057,10 @@ int main(int argc, char *argv[])
 					printf("Dungeon exit reached\n");
 			if (use_dungeon_game)
 				dungeon_game_post_update(&game, &dungeon, dt);
+			/* Drive the character's gait from how fast the player actually
+			 * moved this frame (after collision), not from the input. */
+			if (use_dungeon_game)
+				game_character_animate(&indiana, dungeon.player_stride * dungeon.player.speed, dt);
 			/* Ease the framing toward the lock, and follow a target blended the
 			 * same amount, so the door -- not the player -- ends up centred. */
 			dungeon_camera_focus(&dungeon_camera, picking,
