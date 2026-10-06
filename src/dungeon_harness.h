@@ -55,10 +55,9 @@
  *                                 this far off its automatic framing -- WASD
  *                                 and the mouse write the same offsets
  *   expect view_centred <degrees> and it is back within this of centre
- *   expect flame_framed           the carried flame clears the near plane and
- *                                 lands inside the frame -- the light reaching
- *                                 the lock does not prove the fire is on screen
- *   expect flame_clear_of_pins    and it is not standing in front of a pin
+ *   expect torch_hidden           the pin-tumbler close-up draws neither the
+ *                                 carried torch mesh nor its flame billboard
+ *   expect torch_lit              its retained point light remains active
  *   expect pins_left_to_right     pin 0 is left of the last pin on screen
  *   expect pin_selected <n>       which pin the keys are currently driving
  *   expect pin_height <n> <value> a pin's slot, so key input is proved not eyeballed

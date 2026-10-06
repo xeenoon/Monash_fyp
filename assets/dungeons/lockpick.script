@@ -29,13 +29,11 @@ expect aimed 2.0
 # At the requested 90-degree head-on pose the keyway runs into screen depth;
 # moving the mouse slightly off-axis reveals the pin spacing.
 #
-# Focusing also brings the carried torch up beside the lock, and the two things
-# that has to do -- be visible, and not stand in front of the mechanism it is
-# lighting -- are the ones that fail quietly, because the LIGHT lands correctly
-# either way. The flame was clipped by the near plane once and the picture was
-# the only thing that knew.
-expect flame_framed
-expect flame_clear_of_pins
+# Focusing brings the carried light up beside the lock, but this inspection
+# view deliberately hides both the imported torch mesh and the animated flame.
+# The light itself must remain active so the mechanism stays readable.
+expect torch_hidden
+expect torch_lit
 report
 capture lockpick_02_facing_pin_tumbler.png
 

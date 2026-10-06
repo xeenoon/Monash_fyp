@@ -80,9 +80,14 @@ bool game_character_load(Renderer *renderer, GameCharacter *out, const char *run
 	char torch_bone[64] = "hand_r";
 	manifest_string(text, "torch_bone", torch_bone, sizeof(torch_bone));
 	out->walk_speed = 1.4f;
+	out->run_speed = 3.2f;
 	manifest_float(text, "walk_speed", &out->walk_speed);
+	manifest_float(text, "run_speed", &out->run_speed);
+	manifest_float(text, "walk_phase", &out->walk_phase);
+	manifest_float(text, "run_phase", &out->run_phase);
 	out->idle_clip = gltf_scene_find_clip(scene, "Idle");
 	out->walk_clip = gltf_scene_find_clip(scene, "Walk");
+	out->run_clip = gltf_scene_find_clip(scene, "Run");
 	out->torch_node = gltf_scene_find_node(scene, torch_bone);
 	uint32_t largest = 0;
 	bool skinned = scene->skin_count > 0 && scene->primitive_count <= GAME_CHARACTER_MAX_PRIMITIVES;
@@ -93,9 +98,10 @@ bool game_character_load(Renderer *renderer, GameCharacter *out, const char *run
 	{
 		out->pose = calloc(scene->node_count, sizeof(*out->pose));
 		out->walk_pose = calloc(scene->node_count, sizeof(*out->walk_pose));
+		out->run_pose = calloc(scene->node_count, sizeof(*out->run_pose));
 		out->world = calloc(scene->node_count, sizeof(*out->world));
 		out->skinned = calloc(largest, sizeof(*out->skinned));
-		if (!out->pose || !out->walk_pose || !out->world || !out->skinned)
+		if (!out->pose || !out->walk_pose || !out->run_pose || !out->world || !out->skinned)
 		{
 			game_character_destroy(renderer, out);
 			return false;
@@ -114,8 +120,9 @@ bool game_character_load(Renderer *renderer, GameCharacter *out, const char *run
 		out->animated = true;
 		game_character_animate(out, 0.0f, 0.0f);
 	}
-	printf("Character: %u primitives, %s\n", scene->primitive_count,
-		   out->animated ? "skinned, Idle + Walk" : "static pose");
+	printf("Character: %u primitives, %s%s\n", scene->primitive_count,
+		   out->animated ? "skinned, Idle + Walk" : "static pose",
+		   out->animated && out->run_clip != GLTF_NO_NODE ? " + Run" : "");
 	return true;
 }
 
@@ -126,46 +133,72 @@ static float clip_duration(const GltfScene *scene, uint32_t clip)
 			   : 1.0f;
 }
 
+/* a = a + (b - a) * w per node: lerped translation and scale, normalised
+ * lerp of rotation on the near hemisphere. */
+static void blend_pose(GltfTransform *a, const GltfTransform *b, uint32_t count, float w)
+{
+	if (w <= 0.0f)
+		return;
+	for (uint32_t n = 0; n < count; ++n)
+	{
+		for (int k = 0; k < 3; ++k)
+		{
+			a[n].translation[k] += (b[n].translation[k] - a[n].translation[k]) * w;
+			a[n].scale[k] += (b[n].scale[k] - a[n].scale[k]) * w;
+		}
+		float dot = 0.0f;
+		for (int k = 0; k < 4; ++k)
+			dot += a[n].rotation[k] * b[n].rotation[k];
+		float sign = dot < 0.0f ? -1.0f : 1.0f, length = 0.0f;
+		for (int k = 0; k < 4; ++k)
+		{
+			a[n].rotation[k] += (b[n].rotation[k] * sign - a[n].rotation[k]) * w;
+			length += a[n].rotation[k] * a[n].rotation[k];
+		}
+		length = sqrtf(length);
+		for (int k = 0; k < 4 && length > 0.0f; ++k)
+			a[n].rotation[k] /= length;
+	}
+}
+
 void game_character_animate(GameCharacter *c, float speed_mps, float dt)
 {
 	if (!c->animated)
 		return;
 	GltfScene *scene = &c->scene;
-	/* Idle and Walk cross-fade on speed; Walk's playback rate follows the
-	 * ground speed so the feet do not skate. */
+	bool has_run = c->run_clip != GLTF_NO_NODE && c->run_speed > c->walk_speed;
+	/* Idle -> Walk over the first half of walking pace, Walk -> Run between
+	 * the two clips' own speeds; both eased so a stop is not a snap. */
 	float target = fminf(fmaxf(speed_mps / (c->walk_speed * 0.5f), 0.0f), 1.0f);
-	c->blend += (target - c->blend) * fminf(1.0f, dt * 8.0f);
-	float walk_rate = fmaxf(speed_mps, c->walk_speed * 0.5f) / c->walk_speed;
+	float run_target = has_run ? fminf(fmaxf((speed_mps - c->walk_speed) /
+												 (c->run_speed - c->walk_speed), 0.0f), 1.0f)
+							   : 0.0f;
+	float ease = fminf(1.0f, dt * 8.0f);
+	c->blend += (target - c->blend) * ease;
+	c->run_blend += (run_target - c->run_blend) * ease;
+	/* The gait phase advances at the cadence of whichever clip dominates,
+	 * scaled so the feet cover the ground actually travelled: each clip at
+	 * its own speed plays at 1x. */
+	float walk_duration = clip_duration(scene, c->walk_clip);
+	float run_duration = has_run ? clip_duration(scene, c->run_clip) : walk_duration;
+	float pace = fmaxf(speed_mps, c->walk_speed * 0.5f);
+	float walk_hz = pace / c->walk_speed / walk_duration;
+	float run_hz = has_run ? pace / c->run_speed / run_duration : walk_hz;
+	c->gait_phase = fmodf(c->gait_phase + dt * (walk_hz + (run_hz - walk_hz) * c->run_blend), 1.0f);
 	c->idle_time = fmodf(c->idle_time + dt, clip_duration(scene, c->idle_clip));
-	c->walk_time = fmodf(c->walk_time + dt * walk_rate, clip_duration(scene, c->walk_clip));
 	gltf_scene_rest_pose(scene, c->pose);
-	gltf_scene_rest_pose(scene, c->walk_pose);
 	gltf_clip_sample(scene, c->idle_clip, c->idle_time, c->pose);
-	gltf_clip_sample(scene, c->walk_clip, c->walk_time, c->walk_pose);
-	float w = c->blend;
-	for (uint32_t n = 0; n < scene->node_count; ++n)
+	gltf_scene_rest_pose(scene, c->walk_pose);
+	gltf_clip_sample(scene, c->walk_clip, fmodf(c->gait_phase + c->walk_phase, 1.0f) * walk_duration,
+					 c->walk_pose);
+	if (has_run)
 	{
-		GltfTransform *a = &c->pose[n];
-		const GltfTransform *b = &c->walk_pose[n];
-		for (int k = 0; k < 3; ++k)
-		{
-			a->translation[k] += (b->translation[k] - a->translation[k]) * w;
-			a->scale[k] += (b->scale[k] - a->scale[k]) * w;
-		}
-		/* Normalised lerp, on the near hemisphere. */
-		float dot = 0.0f;
-		for (int k = 0; k < 4; ++k)
-			dot += a->rotation[k] * b->rotation[k];
-		float sign = dot < 0.0f ? -1.0f : 1.0f, length = 0.0f;
-		for (int k = 0; k < 4; ++k)
-		{
-			a->rotation[k] += (b->rotation[k] * sign - a->rotation[k]) * w;
-			length += a->rotation[k] * a->rotation[k];
-		}
-		length = sqrtf(length);
-		for (int k = 0; k < 4 && length > 0.0f; ++k)
-			a->rotation[k] /= length;
+		gltf_scene_rest_pose(scene, c->run_pose);
+		gltf_clip_sample(scene, c->run_clip, fmodf(c->gait_phase + c->run_phase, 1.0f) * run_duration,
+						 c->run_pose);
+		blend_pose(c->walk_pose, c->run_pose, scene->node_count, c->run_blend);
 	}
+	blend_pose(c->pose, c->walk_pose, scene->node_count, c->blend);
 	gltf_scene_world_matrices(scene, c->pose, c->world);
 	c->torch_matrix = gltf_scene_joint_matrix(scene, c->torch_skin, c->torch_node, c->world);
 	c->frame ^= 1u;
@@ -192,6 +225,7 @@ void game_character_destroy(Renderer *renderer, GameCharacter *character)
 	}
 	free(character->pose);
 	free(character->walk_pose);
+	free(character->run_pose);
 	free(character->world);
 	free(character->skinned);
 	if (character->loaded)

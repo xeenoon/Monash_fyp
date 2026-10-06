@@ -239,40 +239,20 @@ than raising the room lights is the whole point -- the door in front of the lock
 is already correctly lit, and brightening the room blows it out to fix a
 material that was never the room's fault.
 
-The second is where the fire is. Picking a lock moves the **carried torch**
-into the framing beside the mechanism -- mesh, flame billboard, flicker and
-point light all hanging off the one transform in `player_torch_transform`, so
-this is a torch the player has brought up to the lock rather than a hidden task
-light aimed at it. Its intensity drops from 16 to 6 while focused, because a
-flame 0.6 m from the lock is not the same fire as one across a room, and
-inverse-square does the rest.
+The second is where the light is. Picking a pin-tumbler lock moves the carried
+torch's **point light** beside the mechanism, where it has a clear oblique path
+into the cutaway. The imported torch mesh and animated flame billboard are
+suppressed for this close-up, so they cannot cover the mechanism or distract
+from the pin readout. The light still hangs off `player_torch_transform`, and
+its intensity drops from 16 to 6 while focused because it is much closer to the
+lock than it is during exploration.
 
-The standoff along the door normal has a ceiling that is invisible from the code
-that sets it:
-
-```
-focus camera trails DUNGEON_CAMERA_FOCUS_TRAILING = 1.0 m from the lock
-CAMERA_NEAR_PLANE                                 = 0.5 m
-=> a standoff of s leaves the flame (1 - s) m in front of the camera
-```
-
-At 0.55 the flame sat 0.45 m out and was clipped away *in its entirety* -- while
-its light went on arriving exactly as before, so the mechanism stayed lit by a
-fire that was nowhere on screen, and the placement looked like a depth-sorting
-or billboard bug. 0.40 leaves 0.6 m, clear of the plane with room for the
-quad's own lean toward the camera.
-
-That is not a comment's job to hold, so the lockpick script asserts it:
+The lockpick script holds both halves of that presentation contract:
 
 | check | what it refuses to let happen |
 | --- | --- |
-| `expect flame_framed` | the flame inside the near plane, or off the frame entirely |
-| `expect flame_clear_of_pins` | the flame standing in front of the pins it is lighting |
-
-Both work in angles and metres rather than pixels, because the window manager
-hands this process whatever window shape it likes; `flame_framed` derives the
-horizontal field of view from the aspect actually being presented, since only
-the vertical one is authored.
+| `expect torch_hidden` | the pin-tumbler close-up exposing the carried mesh or flame billboard |
+| `expect torch_lit` | hiding the visuals accidentally removing the point light too |
 
 ## Working it: which key does what
 

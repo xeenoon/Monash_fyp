@@ -12,8 +12,9 @@
  * tools/export_indiana_game.py), placed by his feet and turned to face where
  * he is walking.
  *
- * When the asset is skinned and carries "Idle" and "Walk" clips, he is
- * animated: both clips are sampled, blended by walking speed, and the mesh is
+ * When the asset is skinned and carries "Idle" and "Walk" clips (and
+ * optionally "Run"), he is animated: the clips are sampled, blended by ground
+ * speed on a shared gait phase, and the mesh is
  * skinned on the CPU (gltf_scene_skin) into one of two host-visible vertex
  * buffers that alternate frame to frame, so the GPU never reads a buffer the
  * CPU is writing. A static asset falls back to a body bob and sway. */
@@ -28,11 +29,14 @@ typedef struct
 	float torch_head[3]; /* bind-space centre of the torch's linen head */
 
 	bool animated;
-	uint32_t idle_clip, walk_clip;
-	uint32_t torch_node, torch_skin; /* the joint the torch is held by */
-	float walk_speed;				 /* m/s the Walk clip covers at 1x */
-	float idle_time, walk_time, blend;
-	GltfTransform *pose, *walk_pose;
+	uint32_t idle_clip, walk_clip, run_clip; /* run_clip may be GLTF_NO_NODE */
+	uint32_t torch_node, torch_skin;		  /* the joint the torch is held by */
+	float walk_speed, run_speed;			  /* m/s each gait clip covers at 1x */
+	float walk_phase, run_phase;			  /* where each clip's cycle starts */
+	/* One gait phase (0..1) shared by Walk and Run, so a cross-fade between
+	 * them never puts the legs out of step. */
+	float idle_time, gait_phase, blend, run_blend;
+	GltfTransform *pose, *walk_pose, *run_pose;
 	mat4s *world;
 	mat4s torch_matrix; /* current skinning matrix of the torch joint */
 	Vertex *skinned;	/* scratch, sized to the largest primitive */

@@ -452,6 +452,7 @@ add_executable(terrain_renderer
     src/dungeon_camera.c
     src/dungeon_harness.c
     src/dungeon_game.c
+    src/dungeon_guardian.c
     src/overworld.c
     src/game_character.c
     src/ui_draw.c
@@ -528,6 +529,7 @@ target_compile_definitions(terrain_renderer PRIVATE
     INDIANA_RUNTIME_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets/characters/indiana_jones/runtime"
     DUNGEON_PADLOCK_PATH="${CMAKE_CURRENT_SOURCE_DIR}/assets/dungeons/padlock/runtime/padlock.gltf"
     DUNGEON_TEXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/textures/dungeon/runtime"
+    DUNGEON_GUARDIAN_PATH="${CMAKE_CURRENT_SOURCE_DIR}/assets/characters/medusa/medusa.gltf"
     CGLM_FORCE_DEPTH_ZERO_TO_ONE)
 if(DEBUG_SHADER_DUMP)
     target_compile_definitions(terrain_renderer PRIVATE

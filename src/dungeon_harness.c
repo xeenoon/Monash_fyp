@@ -33,12 +33,6 @@ struct DungeonHarness
 	 * pick's clearance frame by frame. */
 	bool driving_prisms;
 	uint32_t prism_frames;
-	/* Width over height of the frame actually being presented, recorded each
-	 * frame because the window manager hands this process whatever shape it
-	 * likes: the vertical FOV is fixed, so the horizontal one -- and with it
-	 * whether something near the edge is on screen at all -- moves with the
-	 * window. Zero until the first frame has been presented. */
-	float aspect;
 	bool sweeping;
 	uint32_t sweep_frames, sweep_violations;
 	int sweep_direction;
@@ -188,54 +182,6 @@ static void solve_focused(DungeonHarness *harness, DungeonScene *scene)
 	}
 	else
 		check(harness, false, "solve: no lock is being picked");
-}
-
-/* How much clear air the carried flame has to keep between itself and the near
- * plane. The billboard is camera-facing, so the whole quad sits at one depth
- * and flicker never changes it -- but the quad's up axis tips toward a camera
- * looking down on it (FLAME_CAMERA_TILT), which pulls its top edge about four
- * centimetres nearer at the lock framing. The margin covers that lean. */
-#define FLAME_NEAR_MARGIN_M 0.06f
-
-/* Camera basis in world space: where it looks, and the screen right and up
- * that go with it. Same yaw/pitch convention as `aimed`; the camera has no
- * roll, so screen right is the level axis `pins_left_to_right` projects on. */
-static void camera_basis(const DungeonCamera *camera, float forward[3], float right[3],
-						 float up[3])
-{
-	const float to_radians = 3.14159265358979f / 180.0f;
-	float yaw = camera->camera.yaw * to_radians;
-	float pitch = camera->camera.pitch * to_radians;
-	forward[0] = cosf(yaw) * cosf(pitch);
-	forward[1] = sinf(pitch);
-	forward[2] = sinf(yaw) * cosf(pitch);
-	right[0] = -sinf(yaw);
-	right[1] = 0.0f;
-	right[2] = cosf(yaw);
-	up[0] = right[1] * forward[2] - right[2] * forward[1];
-	up[1] = right[2] * forward[0] - right[0] * forward[2];
-	up[2] = right[0] * forward[1] - right[1] * forward[0];
-}
-
-/* Where a world point lands for the camera, as the two angles off the view
- * axis and the distance along it -- the aspect-free way to talk about screen
- * position here, since the window manager hands this process whatever shape it
- * likes and a capture's pixels would move with it. */
-static void camera_angles(const DungeonCamera *camera, WorldPosition point, float *out_depth,
-						  float *out_right_degrees, float *out_up_degrees)
-{
-	float forward[3], right[3], up[3];
-	camera_basis(camera, forward, right, up);
-	float to_point[3] = {(float)(point.x - camera->camera.position.x),
-						 (float)(point.y - camera->camera.position.y),
-						 (float)(point.z - camera->camera.position.z)};
-	float depth = to_point[0] * forward[0] + to_point[1] * forward[1] + to_point[2] * forward[2];
-	float lateral = to_point[0] * right[0] + to_point[1] * right[1] + to_point[2] * right[2];
-	float rise = to_point[0] * up[0] + to_point[1] * up[1] + to_point[2] * up[2];
-	const float to_degrees = 180.0f / 3.14159265358979f;
-	*out_depth = depth;
-	*out_right_degrees = atan2f(lateral, depth) * to_degrees;
-	*out_up_degrees = atan2f(rise, depth) * to_degrees;
 }
 
 static void run_expect(DungeonHarness *harness, DungeonScene *scene, const DungeonCamera *camera,
@@ -399,86 +345,27 @@ static void run_expect(DungeonHarness *harness, DungeonScene *scene, const Dunge
 		check(harness, ok, "expect %s %.1f deg (yaw offset %.2f, pitch offset %.2f)", what,
 			  (double)wanted, (double)yaw, (double)pitch);
 	}
-	else if (!strcmp(what, "flame_framed"))
+	else if (!strcmp(what, "torch_hidden"))
 	{
-		/* Picking a lock brings the carried torch up beside it, and "beside
-		 * it" has two ways to fail without anything else noticing. Land the
-		 * flame nearer than the near plane and it is clipped away completely,
-		 * which is what a 0.55 m standoff did -- the light still arrived, so
-		 * only the picture showed it. Land it outside the frame and the same
-		 * thing happens for a different reason. Both are metres and angles. */
-		WorldPosition flame = {0};
-		float half_width = 0.0f, half_height = 0.0f;
-		dungeon_scene_player_flame(scene, &flame, &half_width, &half_height);
-		float depth = 0.0f, off_right = 0.0f, off_up = 0.0f;
-		camera_angles(camera, flame, &depth, &off_right, &off_up);
-		/* Only the vertical FOV is authored; the horizontal one follows the
-		 * window's shape. A tall window makes it narrower than the vertical
-		 * one, which is exactly when a torch held out at the side of the frame
-		 * leaves it -- so the horizontal bound is derived from the frame being
-		 * presented rather than assumed square. */
-		float half_fov = camera->vertical_fov_degrees * 0.5f;
-		const float to_radians = 3.14159265358979f / 180.0f;
-		const float to_degrees = 180.0f / 3.14159265358979f;
-		float aspect = harness->aspect > 0.0f ? harness->aspect : 1.0f;
-		float half_fov_wide = atanf(tanf(half_fov * to_radians) * aspect) * to_degrees;
-		/* The quad is what has to be on screen, not its centre: a torch at the
-		 * edge of the frame with its flame half in view is the shot. */
-		float visible_edge = fabsf(off_right) - atanf(half_width / fmaxf(depth, 1e-3f)) * to_degrees;
-		bool clears_near = depth >= CAMERA_NEAR_PLANE + FLAME_NEAR_MARGIN_M;
-		bool in_frame = visible_edge <= half_fov_wide && fabsf(off_up) <= half_fov;
-		check(harness, clears_near && in_frame,
-			  "expect flame_framed (%.2f m ahead, near plane %.2f+%.2f; %.1f deg right, %.1f up; "
-			  "half fov %.1f up, %.1f across at aspect %.2f)",
-			  (double)depth, (double)CAMERA_NEAR_PLANE, (double)FLAME_NEAR_MARGIN_M,
-			  (double)off_right, (double)off_up, (double)half_fov, (double)half_fov_wide,
-			  (double)aspect);
-	}
-	else if (!strcmp(what, "flame_clear_of_pins"))
-	{
-		/* The torch was moved into frame to light the mechanism, so a flame
-		 * standing in front of a pin lights it and hides it in the same move.
-		 * The billboard faces the camera, so it covers a pin exactly when the
-		 * pin lies further away and inside the quad's angular half-extents. */
-		WorldPosition flame = {0};
-		float half_width = 0.0f, half_height = 0.0f;
-		dungeon_scene_player_flame(scene, &flame, &half_width, &half_height);
-		float flame_depth = 0.0f, flame_right = 0.0f, flame_up = 0.0f;
-		camera_angles(camera, flame, &flame_depth, &flame_right, &flame_up);
-		const float to_degrees = 180.0f / 3.14159265358979f;
-		float wide = atanf(half_width / fmaxf(flame_depth, 1e-3f)) * to_degrees;
-		float tall = atanf(half_height / fmaxf(flame_depth, 1e-3f)) * to_degrees;
 		bool picking = session->phase == DUNGEON_PHASE_PIN_TUMBLER;
-		uint32_t door = session->focused_door;
-		uint32_t pin_count = picking ? session->doors[door].pins.pin_count : 0u;
-		uint32_t covered = pin_count;
-		float worst_gap = 1e9f;
-		for (uint32_t pin = 0; pin < pin_count; ++pin)
-		{
-			WorldPosition at = {0};
-			if (!dungeon_scene_pin_world(scene, door, pin, &at))
-				continue;
-			float depth = 0.0f, off_right = 0.0f, off_up = 0.0f;
-			camera_angles(camera, at, &depth, &off_right, &off_up);
-			if (depth <= flame_depth)
-				continue; /* In front of the fire: the fire cannot hide it. */
-			/* How far outside the quad this pin sits, on whichever axis clears
-			 * it -- a pin is covered only when neither axis does. */
-			float gap = fmaxf(fabsf(off_right - flame_right) - wide,
-							  fabsf(off_up - flame_up) - tall);
-			if (gap < worst_gap)
-			{
-				worst_gap = gap;
-				if (gap < 0.0f)
-					covered = pin;
-			}
-		}
-		check(harness, picking && covered == pin_count,
-			  "expect flame_clear_of_pins (flame %.1f deg right %.1f up, spans %.1fx%.1f deg; "
-			  "nearest pin clears by %.1f deg%s)",
-			  (double)flame_right, (double)flame_up, (double)(wide * 2.0f),
-			  (double)(tall * 2.0f), (double)worst_gap,
-			  covered == pin_count ? "" : " -- covered");
+		bool visible = dungeon_scene_player_torch_visuals_visible(scene);
+		check(harness, picking && !visible,
+			  "expect torch_hidden (phase %s, visuals %s)", phase_name(session->phase),
+			  visible ? "visible" : "hidden");
+	}
+	else if (!strcmp(what, "torch_lit"))
+	{
+		vec4s positions[DUNGEON_MAX_LIGHTS] = {0};
+		vec4s colors[DUNGEON_MAX_LIGHTS] = {0};
+		uint32_t count = dungeon_scene_write_lights(scene, camera->camera.position,
+											 positions, colors, DUNGEON_MAX_LIGHTS);
+		bool picking = session->phase == DUNGEON_PHASE_PIN_TUMBLER;
+		bool lit = count > 0u && positions[0].w > 0.0f && colors[0].w > 0.0f;
+		check(harness, picking && lit,
+			  "expect torch_lit (phase %s, lights %u, radius %.2f, intensity %.2f)",
+			  phase_name(session->phase), count,
+			  count ? (double)positions[0].w : 0.0,
+			  count ? (double)colors[0].w : 0.0);
 	}
 	else if (!strcmp(what, "focus"))
 	{
@@ -1076,7 +963,6 @@ void dungeon_harness_post_frame(DungeonHarness *harness, Renderer *renderer)
 {
 	if (!harness || !renderer)
 		return;
-	harness->aspect = renderer_aspect(renderer);
 	if (!harness->pending_capture[0])
 		return;
 	if (harness->capture_delay)

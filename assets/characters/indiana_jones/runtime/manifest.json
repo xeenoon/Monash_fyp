@@ -18,10 +18,14 @@
     0.59935
   ],
   "torch_bone": "hand_r",
-  "walk_speed": 2.291,
+  "walk_speed": 1.386,
+  "run_speed": 3.262,
+  "walk_phase": 0.0,
+  "run_phase": 0.5,
   "clips": [
     "Idle",
-    "Walk"
+    "Walk",
+    "Run"
   ],
   "front": "Blender -Y, which glTF calls +Z"
 }

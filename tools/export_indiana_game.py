@@ -29,6 +29,7 @@ import bmesh
 from mathutils import Quaternion
 import json
 import math
+import os
 import numpy as np
 from mathutils import Vector
 from pathlib import Path
@@ -88,6 +89,23 @@ high = bpy.context.view_layer.objects.active
 high.name = "Indiana_high"
 high_tris = sum(len(p.vertices) - 2 for p in high.data.polygons)
 log("high triangles", high_tris)
+# The 700-odd source objects are folded into `high` now; keep them out of
+# every later depsgraph evaluation (each frame change in the mocap retarget
+# would otherwise re-skin all of them).
+def find_layer(layer, name):
+    if layer.collection.name == name:
+        return layer
+    for child in layer.children:
+        found = find_layer(child, name)
+        if found:
+            return found
+    return None
+
+
+character_layer = find_layer(bpy.context.view_layer.layer_collection, character.name)
+if character_layer:
+    scene.collection.objects.link(rig)  # the rig stays in the view layer
+    character_layer.exclude = True
 
 # --- Low: decimated copy with a fresh atlas UV ------------------------------
 low = high.copy()
@@ -162,97 +180,108 @@ def bake(kind, image, samples=1, **kwargs):
     bpy.ops.object.bake(type=kind, **kwargs)
 
 
-bake("DIFFUSE", images["albedo"], pass_filter={"COLOR"})
-bake("NORMAL", images["normal"], normal_space="TANGENT")
-bake("ROUGHNESS", images["rough"])
-# Occlusion from the LOW mesh itself is enough for crease grime and is far
-# cheaper than tracing the 380k-triangle source.
-scene.render.bake.use_selected_to_active = False
-bake("AO", images["ao"], samples=48)
+def bake_textures():
+    bake("DIFFUSE", images["albedo"], pass_filter={"COLOR"})
+    bake("NORMAL", images["normal"], normal_space="TANGENT")
+    bake("ROUGHNESS", images["rough"])
+    # Occlusion from the LOW mesh itself is enough for crease grime and is far
+    # cheaper than tracing the 380k-triangle source.
+    scene.render.bake.use_selected_to_active = False
+    bake("AO", images["ao"], samples=48)
 
 
-def pixels(image):
-    data = np.empty(BAKE_SIZE * BAKE_SIZE * 4, dtype=np.float32)
-    image.pixels.foreach_get(data)
-    return data.reshape(BAKE_SIZE, BAKE_SIZE, 4)
+    def pixels(image):
+        data = np.empty(BAKE_SIZE * BAKE_SIZE * 4, dtype=np.float32)
+        image.pixels.foreach_get(data)
+        return data.reshape(BAKE_SIZE, BAKE_SIZE, 4)
 
 
-def blur(channel, radius):
-    """Separable box blur, repeated: a cheap Gaussian for grime masks."""
-    out = channel
-    for _ in range(3):
-        for axis in (0, 1):
-            kernel = np.ones(2 * radius + 1, dtype=np.float32) / (2 * radius + 1)
-            out = np.apply_along_axis(lambda row: np.convolve(row, kernel, mode="same"), axis, out)
-    return out
+    def blur(channel, radius):
+        """Separable box blur, repeated: a cheap Gaussian for grime masks."""
+        out = channel
+        for _ in range(3):
+            for axis in (0, 1):
+                kernel = np.ones(2 * radius + 1, dtype=np.float32) / (2 * radius + 1)
+                out = np.apply_along_axis(lambda row: np.convolve(row, kernel, mode="same"), axis, out)
+        return out
 
 
-def value_noise(size, cells, seed):
-    rng = np.random.default_rng(seed)
-    grid = rng.random((cells + 1, cells + 1)).astype(np.float32)
-    coords = np.linspace(0, cells, size, endpoint=False, dtype=np.float32)
-    i = coords.astype(int)
-    f = coords - i
-    f = f * f * (3 - 2 * f)
-    rows = grid[i][:, i] * (1 - f)[None, :] + grid[i][:, i + 1] * f[None, :]
-    rows_next = grid[i + 1][:, i] * (1 - f)[None, :] + grid[i + 1][:, i + 1] * f[None, :]
-    return rows * (1 - f)[:, None] + rows_next * f[:, None]
+    def value_noise(size, cells, seed):
+        rng = np.random.default_rng(seed)
+        grid = rng.random((cells + 1, cells + 1)).astype(np.float32)
+        coords = np.linspace(0, cells, size, endpoint=False, dtype=np.float32)
+        i = coords.astype(int)
+        f = coords - i
+        f = f * f * (3 - 2 * f)
+        rows = grid[i][:, i] * (1 - f)[None, :] + grid[i][:, i + 1] * f[None, :]
+        rows_next = grid[i + 1][:, i] * (1 - f)[None, :] + grid[i + 1][:, i + 1] * f[None, :]
+        return rows * (1 - f)[:, None] + rows_next * f[:, None]
 
 
-def grade_albedo(albedo, ao):
-    """Field-worn rather than costume-fresh, without crushing it: the costume
-    is dark leather and khaki, and the first grade multiplied enough
-    darkening steps together that it rendered near black in torchlight.
-    Values are the display-referred ones Blender stores for an sRGB image."""
-    rgb = albedo[..., :3]
-    weights = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
-    covered = rgb.max(axis=2) > 0.02  # atlas islands, not the empty margin
-    luma = rgb @ weights
-    # 1. Ease the saturation down a little: the studio colours read as toy.
-    rgb = luma[..., None] + (rgb - luma[..., None]) * 0.8
-    # 2. Gentle crease grime from occlusion.
-    occlusion = np.clip(blur(ao[..., 0], 2), 0.0, 1.0)
-    rgb *= (0.72 + 0.28 * occlusion)[..., None]
-    # 3. Blotchy dust and sweat staining, plus fine speckle.
-    big = value_noise(BAKE_SIZE, 9, 11)
-    mid = value_noise(BAKE_SIZE, 37, 23)
-    fine = value_noise(BAKE_SIZE, 260, 37)
-    rgb *= ((0.9 + 0.1 * (0.6 * big + 0.4 * mid)) * (0.95 + 0.05 * fine))[..., None]
-    # 4. Dust settles in a pale desert tint.
-    dust = np.array([0.66, 0.58, 0.47], dtype=np.float32)
-    dust_mask = np.clip((0.5 * big + 0.5 * mid - 0.4) * 0.6, 0.0, 0.2)
-    rgb = rgb * (1 - dust_mask[..., None]) + dust * dust_mask[..., None]
-    # 5. Level the whole costume so its median sits at a mid-dark value the
-    #    torches can actually show, keeping relative contrast.
-    median = float(np.median((rgb @ weights)[covered])) if covered.any() else 0.3
-    rgb = np.clip(rgb * (0.36 / max(median, 1e-3)), 0.0, 1.0)
-    out = albedo.copy()
-    out[..., :3] = rgb
-    out[..., 3] = 1.0
-    return out
+    def grade_albedo(albedo, ao):
+        """Field-worn rather than costume-fresh, without crushing it: the costume
+        is dark leather and khaki, and the first grade multiplied enough
+        darkening steps together that it rendered near black in torchlight.
+        Values are the display-referred ones Blender stores for an sRGB image."""
+        rgb = albedo[..., :3]
+        weights = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
+        covered = rgb.max(axis=2) > 0.02  # atlas islands, not the empty margin
+        luma = rgb @ weights
+        # 1. Ease the saturation down a little: the studio colours read as toy.
+        rgb = luma[..., None] + (rgb - luma[..., None]) * 0.8
+        # 2. Gentle crease grime from occlusion.
+        occlusion = np.clip(blur(ao[..., 0], 2), 0.0, 1.0)
+        rgb *= (0.72 + 0.28 * occlusion)[..., None]
+        # 3. Blotchy dust and sweat staining, plus fine speckle.
+        big = value_noise(BAKE_SIZE, 9, 11)
+        mid = value_noise(BAKE_SIZE, 37, 23)
+        fine = value_noise(BAKE_SIZE, 260, 37)
+        rgb *= ((0.9 + 0.1 * (0.6 * big + 0.4 * mid)) * (0.95 + 0.05 * fine))[..., None]
+        # 4. Dust settles in a pale desert tint.
+        dust = np.array([0.66, 0.58, 0.47], dtype=np.float32)
+        dust_mask = np.clip((0.5 * big + 0.5 * mid - 0.4) * 0.6, 0.0, 0.2)
+        rgb = rgb * (1 - dust_mask[..., None]) + dust * dust_mask[..., None]
+        # 5. Level the whole costume so its median sits at a mid-dark value the
+        #    torches can actually show, keeping relative contrast.
+        median = float(np.median((rgb @ weights)[covered])) if covered.any() else 0.3
+        rgb = np.clip(rgb * (0.36 / max(median, 1e-3)), 0.0, 1.0)
+        out = albedo.copy()
+        out[..., :3] = rgb
+        out[..., 3] = 1.0
+        return out
 
 
-albedo = grade_albedo(pixels(images["albedo"]), pixels(images["ao"]))
-images["albedo"].pixels.foreach_set(albedo.ravel())
+    albedo = grade_albedo(pixels(images["albedo"]), pixels(images["ao"]))
+    images["albedo"].pixels.foreach_set(albedo.ravel())
 
-rough = pixels(images["rough"])[..., 0]
-# Nothing on him should gloss like vinyl: matte the cloth and leather.
-rough = np.clip(0.35 + 0.65 * rough, 0.55, 1.0) * (0.95 + 0.05 * value_noise(BAKE_SIZE, 60, 5))
-orm = np.ones((BAKE_SIZE, BAKE_SIZE, 4), dtype=np.float32)
-orm[..., 1] = rough
-orm[..., 2] = 0.0
-images["orm"] = bpy.data.images.new("indiana_orm", BAKE_SIZE, BAKE_SIZE, alpha=False)
-images["orm"].colorspace_settings.name = "Non-Color"
-images["orm"].pixels.foreach_set(orm.ravel())
+    rough = pixels(images["rough"])[..., 0]
+    # Nothing on him should gloss like vinyl: matte the cloth and leather.
+    rough = np.clip(0.35 + 0.65 * rough, 0.55, 1.0) * (0.95 + 0.05 * value_noise(BAKE_SIZE, 60, 5))
+    orm = np.ones((BAKE_SIZE, BAKE_SIZE, 4), dtype=np.float32)
+    orm[..., 1] = rough
+    orm[..., 2] = 0.0
+    images["orm"] = bpy.data.images.new("indiana_orm", BAKE_SIZE, BAKE_SIZE, alpha=False)
+    images["orm"].colorspace_settings.name = "Non-Color"
+    images["orm"].pixels.foreach_set(orm.ravel())
 
-for name, filename, file_format in (("albedo", "indiana_albedo.jpg", "JPEG"),
-                                    ("normal", "indiana_normal.png", "PNG"),
-                                    ("orm", "indiana_orm.png", "PNG")):
-    image = images[name]
-    image.filepath_raw = str(OUT / filename)
-    image.file_format = file_format
-    image.save()
-    log("wrote", filename)
+    for name, filename, file_format in (("albedo", "indiana_albedo.jpg", "JPEG"),
+                                        ("normal", "indiana_normal.png", "PNG"),
+                                        ("orm", "indiana_orm.png", "PNG")):
+        image = images[name]
+        image.filepath_raw = str(OUT / filename)
+        image.file_format = file_format
+        image.save()
+        log("wrote", filename)
+
+
+
+# Rebaking costs minutes and the decimation/UV unwrap is deterministic, so
+# animation-only iterations can reuse the textures on disk:
+# INDIANA_REBAKE=0 blender ... skips straight to rigging and export.
+if os.environ.get("INDIANA_REBAKE", "1") != "0" or not (OUT / "indiana_albedo.jpg").exists():
+    bake_textures()
+else:
+    log("reusing baked textures")
 
 # --- Final material and export ----------------------------------------------
 nodes.clear()
@@ -352,6 +381,141 @@ def key_pose(frame, offsets, pelvis_lift=0.0):
         pb.keyframe_insert("location", frame=frame)
 
 
+# Mocap joint -> rig bone. Bones not listed keep the study's pose (the torch
+# arm and both hands' grips) and simply ride on their parents.
+MOCAP_MAP = {
+    "LowerBack": "spine_01", "Spine": "spine_02", "Spine1": "spine_03",
+    "Neck": "neck_01", "Head": "head",
+    "LeftUpLeg": "thigh_l", "LeftLeg": "calf_l", "LeftFoot": "foot_l", "LeftToeBase": "ball_l",
+    "RightUpLeg": "thigh_r", "RightLeg": "calf_r", "RightFoot": "foot_r", "RightToeBase": "ball_r",
+    "LeftShoulder": "clavicle_l", "LeftArm": "upperarm_l", "LeftForeArm": "lowerarm_l",
+}
+
+
+phase_offsets = {}
+
+
+def retarget_walk(path, clip_name="Walk"):
+    """Bake one in-place gait cycle of a BVH walk onto the rig as "Walk".
+
+    Direction retargeting: each mapped bone is swung so it points the way its
+    mocap counterpart points, which is indifferent to the two skeletons having
+    different rest poses (the BVH stands in a T, the study in an A). The pelvis
+    takes the mocap hips' full rotation plus their bob and sway; forward travel
+    and the walker's heading are removed so the clip plays in place facing the
+    character's front. Returns the clip's ground speed in m/s.
+    """
+    before = set(bpy.data.objects)
+    bpy.ops.import_anim.bvh(filepath=str(path), global_scale=1.0, axis_forward="-Z", axis_up="Y",
+                            update_scene_fps=False, update_scene_duration=False)
+    src = (set(bpy.data.objects) - before).pop()
+    action = src.animation_data.action
+    first, last = (int(v) for v in action.frame_range)
+
+    def joint(f, name, tail=True):
+        if scene.frame_current != f:
+            scene.frame_set(f)
+        pb = src.pose.bones[name]
+        return src.matrix_world @ (pb.tail if tail else pb.head)
+
+    to_rig = rig.matrix_world.to_3x3().inverted()
+
+    # Gait cycle from the feet: the left-minus-right foot separation along the
+    # direction of travel peaks once per cycle.
+    travel = (joint(last, "Hips", False) - joint(first, "Hips", False))
+    travel.z = 0
+    forward = travel.normalized()
+    signal = []
+    for f in range(first, last + 1):
+        signal.append(((joint(f, "LeftFoot", False) - joint(f, "RightFoot", False)) @ forward, f))
+    # Extremes of the separation: left foot furthest ahead (+) and right foot
+    # furthest ahead (-) alternate every half cycle. A cycle runs between two
+    # extremes of the same sign; prefer one that does not start on the very
+    # first extreme, where the walker may still be setting off.
+    extremes = []
+    for i in range(6, len(signal) - 6):
+        value, frame = signal[i]
+        window = [x[0] for x in signal[max(0, i - 25):i + 26]]
+        sign = 1 if value == max(window) and value > 0 else (-1 if value == min(window) and value < 0 else 0)
+        if sign and (not extremes or frame - extremes[-1][0] > 25):
+            extremes.append((frame, sign))
+    pairs = [(extremes[i][0], extremes[i + 2][0], extremes[i][1]) for i in range(len(extremes) - 2)
+             if extremes[i][1] == extremes[i + 2][1]]
+    peaks = [e[0] for e in extremes]
+    # Start on the left foot when the data allows, so clips share a phase.
+    left = [p_ for p_ in pairs if p_[2] > 0]
+    chosen = (left[1] if len(left) > 1 else left[0]) if left else (pairs[1] if len(pairs) > 1 else pairs[0])
+    start, end, start_sign = chosen
+    # 0 when the cycle starts with the left foot forward, 0.5 otherwise: the
+    # engine adds it to the shared gait phase so blended clips stay in step.
+    phase_offsets[clip_name] = 0.0 if start_sign > 0 else 0.5
+    log("mocap cycle frames", start, end, "of", first, last, "peaks", peaks)
+
+    # Scale by leg length, and a heading correction that turns the travel
+    # direction onto the character's front (Blender -Y).
+    src_leg = (joint(start, "LeftUpLeg", False) - joint(start, "LeftFoot", False)).length
+    rig_leg = (rig.data.bones["thigh_l"].head_local - rig.data.bones["foot_l"].head_local).length
+    scale = rig_leg / src_leg
+    heading = Quaternion((0, 0, 1), -math.atan2(forward.x, -forward.y))
+
+    step = 120.0 / scene.render.fps
+    frames = []
+    f = float(start)
+    while f < end - 1e-6:
+        frames.append(f)
+        f += step
+    duration = (end - start) / 120.0
+    distance = ((joint(end, "Hips", False) - joint(start, "Hips", False)) @ forward) * scale
+    hips_mean = sum((joint(int(round(x)), "Hips", False) for x in frames), Vector()) / len(frames)
+
+    rest = {b.name: b.matrix_local.copy() for b in rig.data.bones}
+    order = [b.name for b in rig.data.bones]  # parents precede children
+    src_rest_hips = src.data.bones["Hips"].matrix_local.to_quaternion()
+    make_action(clip_name)
+    for key, sf in enumerate(frames + [frames[0]]):  # repeat the first: a seamless loop
+        fi = int(round(sf))
+        scene.frame_set(fi)
+        posed = {}
+        for name in order:
+            bone = rig.data.bones[name]
+            pb = bones[name]
+            parent = bone.parent.name if bone.parent else None
+            # Where the bone would sit with an identity pose, given its posed parent.
+            if parent:
+                frame_mat = posed[parent] @ rest[parent].inverted() @ rest[name]
+            else:
+                frame_mat = rest[name].copy()
+            source = next((s_ for s_, t in MOCAP_MAP.items() if t == name), None)
+            if name == "pelvis":
+                hips = src.pose.bones["Hips"]
+                world_rot = (src.matrix_world.to_quaternion() @ hips.matrix.to_quaternion())
+                delta = heading @ world_rot @ (src.matrix_world.to_quaternion() @ src_rest_hips).inverted()
+                rot = rest[name].to_quaternion().inverted() @ delta @ rest[name].to_quaternion()
+                offset = heading @ ((src.matrix_world @ hips.head) - hips_mean)
+                offset = Vector((offset.x, 0.0, offset.z)) * scale  # no forward travel
+                local = rest[name].to_3x3().inverted() @ offset
+                pb.rotation_quaternion = rot
+                pb.location = local
+            elif source:
+                d = to_rig @ (heading @ (joint(fi, source) - joint(fi, source, tail=False)))
+                d_local = frame_mat.to_3x3().inverted() @ d
+                pb.rotation_quaternion = Vector((0, 1, 0)).rotation_difference(d_local.normalized())
+                pb.location = base[name][1]
+            else:
+                pb.rotation_quaternion = base[name][0]
+                pb.location = base[name][1]
+            basis = pb.rotation_quaternion.to_matrix().to_4x4()
+            basis.translation = pb.location
+            posed[name] = frame_mat @ basis
+            pb.keyframe_insert("rotation_quaternion", frame=key + 1)
+            pb.keyframe_insert("location", frame=key + 1)
+    bpy.data.objects.remove(src)
+    bpy.data.actions.remove(action)  # or it would export as a clip of its own
+    speed = distance / duration
+    log(clip_name, "cycle", len(frames), "keys,", round(duration, 3), "s,", round(distance, 3), "m")
+    return speed
+
+
 def make_action(name):
     action = bpy.data.actions.new(name)
     action.use_fake_user = True
@@ -359,29 +523,11 @@ def make_action(name):
     return action
 
 
-WALK_FRAMES = 24  # 0.8 s per stride cycle at 30 fps
-SWING = math.radians(30)
-make_action("Walk")
-for f in range(WALK_FRAMES + 1):
-    phase = 2 * math.pi * f / WALK_FRAMES
-    o = {}
-    for side, offset in (("l", 0.0), ("r", math.pi)):
-        p = phase + offset
-        swing = SWING * math.sin(p)
-        # Fold the knee while that leg swings through (moving forward).
-        bend = math.radians(6) + math.radians(55) * max(0.0, math.cos(p)) ** 1.5
-        o["thigh_" + side] = [(X, thigh_sign[side] * swing)]
-        o["calf_" + side] = [(X, knee_sign[side] * bend)]
-        # Keep the sole roughly level through the stride.
-        o["foot_" + side] = [(X, -thigh_sign[side] * swing * 0.5 + knee_sign[side] * bend * 0.35)]
-    o["pelvis"] = [(Y, math.radians(5) * math.sin(phase))]
-    o["spine_03"] = [(Y, -math.radians(6) * math.sin(phase)), (X, math.radians(3))]
-    o["head"] = [(Y, math.radians(3) * math.sin(phase))]
-    # The free arm swings against its leg; the torch arm only rides along.
-    o["upperarm_l"] = [(X, -arm_sign * math.radians(16) * math.sin(phase))]
-    o["lowerarm_l"] = [(X, math.radians(6) * (1 - math.cos(phase)) * 0.5)]
-    o["upperarm_r"] = [(X, math.radians(2.5) * math.sin(2 * phase))]
-    key_pose(f + 1, o, pelvis_lift=0.028 * math.cos(2 * phase))
+# Walk: one gait cycle of CMU motion capture (assets/animations), retargeted.
+MOCAP = ROOT.parents[1] / "animations" / "cmu_35_01_walk.bvh"
+walk_speed = retarget_walk(MOCAP, "Walk")
+run_speed = retarget_walk(ROOT.parents[1] / "animations" / "cmu_16_35_jog.bvh", "Run")
+log("run speed", run_speed)
 
 IDLE_FRAMES = 90  # 3 s breath
 make_action("Idle")
@@ -395,9 +541,6 @@ for f in range(0, IDLE_FRAMES + 1, 6):
     }
     key_pose(f + 1, o, pelvis_lift=0.004 * math.sin(phase))
 
-# Stride length for the speed match: how far a foot travels per cycle.
-leg = (world_point("thigh_l", tail=False) - world_point("foot_l", tail=False)).length
-walk_speed = 4.0 * leg * math.sin(SWING) / (WALK_FRAMES / scene.render.fps)
 log("walk speed", walk_speed)
 rig.animation_data.action = None
 if base_action:
@@ -436,7 +579,10 @@ manifest = {
     "torch_head": to_gltf(torch_head),
     "torch_bone": torch_bone,
     "walk_speed": round(walk_speed, 3),
-    "clips": ["Idle", "Walk"],
+    "run_speed": round(run_speed, 3),
+    "walk_phase": phase_offsets.get("Walk", 0.0),
+    "run_phase": phase_offsets.get("Run", 0.0),
+    "clips": ["Idle", "Walk", "Run"],
     "front": "Blender -Y, which glTF calls +Z",
 }
 (OUT / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")

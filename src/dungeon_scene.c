@@ -148,6 +148,17 @@ static DrawPushConstants torch_push(const LocalToWorldTransform *transform,
 	};
 }
 
+/* Midpoint of the two highest vertices on the imported torch's upper rim.
+ * Every separate wall-torch mesh uses this one model-space anchor for its
+ * flame and light; keeping another hand-authored wall offset is what made the
+ * flame float in front of the head when the fixture was viewed obliquely. */
+static const TileLocalPosition WALL_TORCH_HEAD_LOCAL = {0.0f, 1.5223f, -0.03492f};
+
+static WorldPosition wall_torch_head(const LocalToWorldTransform *transform)
+{
+	return coordinate_local_to_world(transform, WALL_TORCH_HEAD_LOCAL);
+}
+
 /* The source torch's handle starts at local Y=1.14289. Seat that
  * point on the cube top; its head and light share this transform. */
 static LocalToWorldTransform player_torch_transform(const DungeonScene *scene)
@@ -158,21 +169,11 @@ static LocalToWorldTransform player_torch_transform(const DungeonScene *scene)
 		scene->player.position.z + 0.06251 * scale});
 	for (int i = 0; i < 3; ++i) transform.rotation[i][i] = scale;
 
-	/* While working the pin tumbler, the player brings the torch up beside the
-	 * lock instead of leaving it behind at their walking position. Put the
-	 * flame just outside the right edge of the mechanism and slightly proud of
-	 * the door: it stays in frame, and its real point light has a clear oblique
-	 * path into the cutaway. The model, billboard and light all consume this
-	 * same transform, so this is a moved torch rather than a hidden task light.
-	 *
-	 * The standoff along the door normal has a hard ceiling that is not
-	 * obvious from here: the focus camera trails DUNGEON_CAMERA_FOCUS_TRAILING
-	 * (1.0 m) back from the lock, so a standoff of s leaves the flame 1 - s
-	 * ahead of it, and CAMERA_NEAR_PLANE is 0.5. At 0.55 the flame sat 0.45 m
-	 * out and was clipped away in its entirety -- while its light went on
-	 * arriving, so the mechanism stayed lit by a fire that was not on screen.
-	 * 0.40 leaves 0.6 m, clear of the plane with room for the billboard's own
-	 * lean. `expect flame_framed` in the lockpick script is what holds it. */
+	/* While working the pin tumbler, move the carried light beside the lock
+	 * instead of leaving it behind at the player's walking position. Its mesh
+	 * and flame billboard are deliberately hidden during this close-up, but the
+	 * common transform remains useful: it gives the point light a clear oblique
+	 * path into the cutaway without introducing a separate task-light position. */
 	if (scene->session.phase == DUNGEON_PHASE_PIN_TUMBLER &&
 		scene->session.focused_door < scene->session.door_count)
 	{
@@ -183,8 +184,7 @@ static LocalToWorldTransform player_torch_transform(const DungeonScene *scene)
 			origin.x + (double)across.x * 0.20 + (double)normal.x * 0.40,
 			(double)DUNGEON_LOCK_CENTRE_Y_M - 0.02,
 			origin.z + (double)across.z * 0.20 + (double)normal.z * 0.40};
-		WorldPosition current_head = coordinate_local_to_world(
-			&transform, (TileLocalPosition){0.0f, 1.5223f, -0.13f});
+		WorldPosition current_head = wall_torch_head(&transform);
 		transform.translation.x += desired_head.x - current_head.x;
 		transform.translation.y += desired_head.y - current_head.y;
 		transform.translation.z += desired_head.z - current_head.z;
@@ -221,11 +221,12 @@ static WorldPosition player_torch_head(const DungeonScene *scene)
 		return game_character_torch_head(scene->character, &body);
 	}
 	LocalToWorldTransform carried = player_torch_transform(scene);
-	/* Local Y 1.5223 is the top of the source mesh's bowl, not a round number
-	 * near it: seating the anchor five centimetres proud of the bowl, as an
-	 * earlier value did, leaves a visible gap under the carried flame -- the
-	 * one torch the camera ever gets close to. */
-	return coordinate_local_to_world(&carried, (TileLocalPosition){0.0f, 1.5223f, -0.13f});
+	return wall_torch_head(&carried);
+}
+
+bool dungeon_scene_player_torch_visuals_visible(const DungeonScene *scene)
+{
+	return scene && scene->session.phase != DUNGEON_PHASE_PIN_TUMBLER;
 }
 
 /* The carried torch is the one fixture with no entry in scene->lights, so it
@@ -332,33 +333,6 @@ static LocalToWorldTransform flame_billboard(WorldPosition anchor, WorldPosition
 		anchor.y + up[1] * (FLAME_HEIGHT_M * 0.5 - FLAME_BASE_DROP_M),
 		anchor.z + up[2] * (FLAME_HEIGHT_M * 0.5 - FLAME_BASE_DROP_M)};
 	return transform;
-}
-
-/* Where the carried flame is drawn and how big it is drawn, so a script can
- * ask whether the player can actually SEE it -- and whether it is standing in
- * front of the mechanism it was moved there to light.
- *
- * The centre is reported with a world-up lift rather than the billboard's own
- * tipped up axis: the two differ by the FLAME_CAMERA_TILT the quad takes when
- * the camera looks down on it, which at the near-level lock framing this is
- * asked about is a millimetre or two. Half-extents are the quad's, not the
- * shader's narrower bright core, so a caller asking "does this cover a pin"
- * gets the conservative answer. */
-void dungeon_scene_player_flame(const DungeonScene *scene, WorldPosition *out_centre,
-								float *out_half_width, float *out_half_height)
-{
-	if (!scene)
-		return;
-	if (out_centre)
-	{
-		WorldPosition head = player_torch_head(scene);
-		head.y += (double)FLAME_HEIGHT_M * 0.5 - (double)FLAME_BASE_DROP_M;
-		*out_centre = head;
-	}
-	if (out_half_width)
-		*out_half_width = FLAME_WIDTH_M * 0.5f;
-	if (out_half_height)
-		*out_half_height = FLAME_HEIGHT_M * 0.5f;
 }
 
 /* The standing torch (lab scene 2) is two pieces of generated geometry: a
@@ -633,17 +607,18 @@ static bool mount_torch(const DungeonLevel *level, const DungeonShadow *shadow, 
 	 * off-axis sample still seats the fixture square to the wall. */
 	mount = (DungeonPoint){light->position.x + direction[0] * nearest,
 						   light->position.z + direction[2] * nearest};
-	/* Moving back along the verified clear ray keeps the head outside. */
+	/* Moving back along the verified clear ray keeps the fixture outside. */
 	/* The source torch projects along local -Z. Keep its back plate just clear
-	   of the wall and put the point light at the head of the mesh. */
+	   of the wall, then derive the head from the same transform used to draw
+	   the mesh instead of maintaining a second, approximate wall offset. */
 	mount.x += inward.x * 0.01f;
 	mount.z += inward.z * 0.01f;
-	light->position =
-		(DungeonPoint){mount.x + inward.x * 0.18f, mount.z + inward.z * 0.18f};
-	light->height = level->floor_y + 1.58f;
 	double yaw = atan2(-(double)inward.x, -(double)inward.z);
 	*transform = coordinate_rotation_y(
 		yaw, (WorldPosition){mount.x, level->floor_y + 0.05f, mount.z});
+	WorldPosition head = wall_torch_head(transform);
+	light->position = (DungeonPoint){(float)head.x, (float)head.z};
+	light->height = (float)head.y;
 	return true;
 }
 
@@ -1461,6 +1436,13 @@ static bool scene_create(Renderer *renderer, DungeonScene *out, const uint32_t *
 		out->geometry.batches[DUNGEON_MESH_MOSS].vertex_count / 180u,
 		out->geometry.batches[DUNGEON_MESH_MOSS].index_count / 3u);
 	dungeon_player_init(&out->player, out->level.spawn);
+	if (!out->lab && !dungeon_guardian_load(renderer, &out->guardian))
+	{
+		if (error)
+			snprintf(error->message, sizeof(error->message), "could not load Medusa guardian");
+		dungeon_scene_destroy(renderer, out);
+		return false;
+	}
 	if (!dungeon_session_create(&out->session, &out->level))
 	{
 		if (error)
@@ -1559,7 +1541,8 @@ static bool scene_create(Renderer *renderer, DungeonScene *out, const uint32_t *
 static void append_flame_draws(DungeonScene *scene, WorldPosition camera_position,
 							   RendererDraw *out, uint32_t *count, uint32_t capacity)
 {
-	if (!scene->lab || scene->lab == DUNGEON_LAB_CARRIED)
+	if ((!scene->lab || scene->lab == DUNGEON_LAB_CARRIED) &&
+		dungeon_scene_player_torch_visuals_visible(scene))
 		append_flame_draw(scene, player_torch_head(scene), (const float[3]){1.0f, 1.0f, 1.0f},
 						  PLAYER_TORCH_PHASE,
 						  dungeon_light_flicker(PLAYER_TORCH_PHASE, scene->time), camera_position,
@@ -1656,6 +1639,8 @@ uint32_t dungeon_scene_draws(DungeonScene *scene, WorldPosition camera_position,
 		}
 	}
 	append_prop_draws(scene, camera_position, out, &draw_count, capacity);
+	draw_count += dungeon_guardian_draws(&scene->guardian, camera_position,
+		out + draw_count, capacity - draw_count);
 	if (scene->lab_pole_uploaded && draw_count < capacity)
 	{
 		out[draw_count++] = (RendererDraw){
@@ -1678,7 +1663,8 @@ uint32_t dungeon_scene_draws(DungeonScene *scene, WorldPosition camera_position,
 	}
 	/* Reserve the carried torch before optional wall fixtures. */
 	LocalToWorldTransform carried = player_torch_transform(scene);
-	bool carried_torch = (!scene->lab || scene->lab == DUNGEON_LAB_CARRIED) && !character_torch(scene);
+	bool carried_torch = (!scene->lab || scene->lab == DUNGEON_LAB_CARRIED) &&
+		!character_torch(scene) && dungeon_scene_player_torch_visuals_visible(scene);
 	for (uint32_t i = 0; i < scene->torch.primitive_count && draw_count < capacity && carried_torch;
 		 ++i)
 	{
@@ -1917,6 +1903,7 @@ void dungeon_scene_destroy(Renderer *renderer, DungeonScene *scene)
 		return;
 	free(scene->padlock_pose);
 	free(scene->padlock_world);
+	dungeon_guardian_destroy(renderer, &scene->guardian);
 	if (renderer)
 	{
 		gltf_scene_destroy(renderer, &scene->torch);

@@ -7,6 +7,7 @@
 #include "dungeon_padlock.h"
 #include "dungeon_padlock_pose.h"
 #include "dungeon_shadow.h"
+#include "dungeon_guardian.h"
 #include "dungeon_player.h"
 #include "dungeon_session.h"
 #include "game_character.h"
@@ -29,12 +30,13 @@
 	 DUNGEON_PADLOCK_MAX_PRIMITIVES)
 /* Torch fixtures cost their mesh primitives plus one additive flame billboard
  * each, and the carried torch is one more of both. */
-/* Game props (treasure chest, hidden gem, the guardian) are scaled, tinted
+/* Game props (treasure chest, hidden gem) are scaled, tinted
  * instances of the player's cube -- placeholder art until real models land. */
 #define DUNGEON_MAX_PROPS 24u
 #define DUNGEON_MAX_DRAWS                                                                          \
 	(DUNGEON_MESH_BATCH_COUNT + 5u * DUNGEON_MAX_LIGHTS + 2u +                                      \
-	 DUNGEON_MAX_DOORS * (1u + DUNGEON_MAX_LOCK_PIECES) + DUNGEON_MAX_PROPS)
+	 DUNGEON_MAX_DOORS * (1u + DUNGEON_MAX_LOCK_PIECES) + DUNGEON_MAX_PROPS +                         \
+	 DUNGEON_GUARDIAN_MAX_DRAWS)
 
 typedef struct
 {
@@ -107,6 +109,7 @@ typedef struct
 	/* Filled by the game layer (dungeon_game.c) each frame; drawn after the
 	 * level and included in the shadow pass. */
 	DungeonProp props[DUNGEON_MAX_PROPS];
+	DungeonGuardianArt guardian;
 	/* The player character, when the game supplies one (NULL draws the
 	 * placeholder cube and the separate carried torch, as the harness and the
 	 * torch lab expect). Borrowed, not owned. */
@@ -178,13 +181,10 @@ bool dungeon_scene_padlock_pin_travel(DungeonScene *scene, uint32_t door, uint32
  * actually moved it, rather than somebody checking by eye. */
 bool dungeon_scene_padlock_pick_world(DungeonScene *scene, uint32_t door, WorldPosition *out);
 
-/* Centre and half-extents of the carried torch's flame billboard, in world
- * metres. The carried torch is moved into the framing while a lock is being
- * picked, and "moved into the framing" is a claim about where it lands
- * relative to the near plane and to the pins -- both of which this lets a
- * script assert instead of somebody looking at the picture. */
-void dungeon_scene_player_flame(const DungeonScene *scene, WorldPosition *out_centre,
-								float *out_half_width, float *out_half_height);
+/* False while the pin-tumbler close-up is active: its carried torch mesh and
+ * flame billboard are presentation-only and are hidden there, while the point
+ * light remains active so the mechanism is still readable. */
+bool dungeon_scene_player_torch_visuals_visible(const DungeonScene *scene);
 
 uint32_t dungeon_scene_write_lights(const DungeonScene *scene, WorldPosition camera_position,
 								   vec4s *positions, vec4s *colors, uint32_t capacity);
