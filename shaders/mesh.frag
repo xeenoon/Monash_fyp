@@ -14,7 +14,12 @@
 layout(early_fragment_tests) in;
 
 layout(location = 0) in vec2 uv;
-layout(location = 1) in vec3 normal;
+layout(location = 1) in vec3 vertex_normal;
+/* The shading normal's raw input, facing-corrected in main() for draws that
+   mark themselves double-sided (draw.geometry.w < 0): open cloth shells such
+   as the player character's garments have no consistent outside, and their
+   back faces otherwise light as if facing away from everything. */
+vec3 normal;
 layout(location = 2) in vec4 tangent;
 layout(location = 3) in vec3 camera_relative_position;
 layout(location = 4) in vec4 current_clip;
@@ -71,6 +76,7 @@ mat3 tangent_frame(vec3 interpolated_normal, vec4 interpolated_tangent) {
    through the asset's own unwrapped UVs. Lighting matches the terrain forward
    pass so the two stay visually consistent. */
 void main() {
+    normal = (draw.geometry.w < 0.0 && !gl_FrontFacing) ? -vertex_normal : vertex_normal;
     vec4 base_color_sample = texture(albedo_map, uv);
     vec3 base_color = base_color_sample.rgb * draw.geometry.rgb;
     vec3 orm = texture(orm_map, uv).rgb;

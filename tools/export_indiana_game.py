@@ -84,6 +84,15 @@ ratio = min(1.0, TARGET_TRIANGLES / max(high_tris, 1))
 decimate = low.modifiers.new("decimate", "DECIMATE")
 decimate.ratio = ratio
 bpy.ops.object.modifier_apply(modifier=decimate.name)
+# The study's garments are separate shells with mixed winding; welded and
+# decimated, a third of the faces ended up pointing inward (the engine dump
+# showed the hat top with normals facing the floor, so it rendered black, and
+# the selected-to-active bake cast its rays the wrong way there too). Make the
+# winding consistent and outward before anything is baked along it.
+bpy.ops.object.mode_set(mode="EDIT")
+bpy.ops.mesh.select_all(action="SELECT")
+bpy.ops.mesh.normals_make_consistent(inside=False)
+bpy.ops.object.mode_set(mode="OBJECT")
 low.data.materials.clear()
 for layer in list(low.data.uv_layers):
     low.data.uv_layers.remove(layer)
@@ -169,28 +178,32 @@ def value_noise(size, cells, seed):
 
 
 def grade_albedo(albedo, ao):
-    """Field-worn rather than costume-fresh. Everything here works in the
-    display-referred values Blender stores for an sRGB image."""
+    """Field-worn rather than costume-fresh, without crushing it: the costume
+    is dark leather and khaki, and the first grade multiplied enough
+    darkening steps together that it rendered near black in torchlight.
+    Values are the display-referred ones Blender stores for an sRGB image."""
     rgb = albedo[..., :3]
-    luma = rgb @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
-    # 1. Pull saturation down: the studio colours read as toy plastic.
-    rgb = luma[..., None] + (rgb - luma[..., None]) * 0.72
-    # 2. Crease grime from occlusion, softened so it reads as dirt, not shadow.
+    weights = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
+    covered = rgb.max(axis=2) > 0.02  # atlas islands, not the empty margin
+    luma = rgb @ weights
+    # 1. Ease the saturation down a little: the studio colours read as toy.
+    rgb = luma[..., None] + (rgb - luma[..., None]) * 0.8
+    # 2. Gentle crease grime from occlusion.
     occlusion = np.clip(blur(ao[..., 0], 2), 0.0, 1.0)
-    rgb *= (0.55 + 0.45 * occlusion)[..., None]
-    # 3. Large blotchy dust and sweat staining, plus fine speckle.
+    rgb *= (0.72 + 0.28 * occlusion)[..., None]
+    # 3. Blotchy dust and sweat staining, plus fine speckle.
     big = value_noise(BAKE_SIZE, 9, 11)
     mid = value_noise(BAKE_SIZE, 37, 23)
     fine = value_noise(BAKE_SIZE, 260, 37)
-    stain = 0.82 + 0.18 * (0.6 * big + 0.4 * mid)
-    speck = 0.93 + 0.07 * fine
-    rgb *= (stain * speck)[..., None]
-    # 4. A dusty desert tint, strongest where the cloth is already pale.
-    dust = np.array([0.62, 0.55, 0.44], dtype=np.float32)
-    dust_mask = np.clip((0.5 * big + 0.5 * mid - 0.35) * 0.9, 0.0, 0.35) * np.clip(luma * 2.0, 0.2, 1.0)
+    rgb *= ((0.9 + 0.1 * (0.6 * big + 0.4 * mid)) * (0.95 + 0.05 * fine))[..., None]
+    # 4. Dust settles in a pale desert tint.
+    dust = np.array([0.66, 0.58, 0.47], dtype=np.float32)
+    dust_mask = np.clip((0.5 * big + 0.5 * mid - 0.4) * 0.6, 0.0, 0.2)
     rgb = rgb * (1 - dust_mask[..., None]) + dust * dust_mask[..., None]
-    # 5. Overall a little darker and lower contrast: torchlit, not studio-lit.
-    rgb = np.clip(rgb * 0.9, 0.0, 1.0)
+    # 5. Level the whole costume so its median sits at a mid-dark value the
+    #    torches can actually show, keeping relative contrast.
+    median = float(np.median((rgb @ weights)[covered])) if covered.any() else 0.3
+    rgb = np.clip(rgb * (0.36 / max(median, 1e-3)), 0.0, 1.0)
     out = albedo.copy()
     out[..., :3] = rgb
     out[..., 3] = 1.0

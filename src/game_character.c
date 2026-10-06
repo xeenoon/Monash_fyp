@@ -90,8 +90,9 @@ uint32_t game_character_draws(const GameCharacter *character, const LocalToWorld
 			.push = {
 				.local_to_camera_relative =
 					coordinate_local_to_camera_relative(transform, camera),
+				/* w < 0: double-sided -- the garments are open shells (mesh.frag). */
 				.geometry = {{material->base_color_factor[0], material->base_color_factor[1],
-							  material->base_color_factor[2], material->base_color_factor[3]}},
+							  material->base_color_factor[2], -1.0f}},
 				.elevation_uv = {{material->roughness_factor, material->normal_scale,
 								  material->occlusion_strength, 0.0f}},
 				.material = {{material->metallic_factor, 1.0f, 1.0f, 1.0f}},

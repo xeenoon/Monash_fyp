@@ -452,10 +452,17 @@ int main(int argc, char *argv[])
 			settings.quadtree.max_cpu_bytes = UINT64_C(512) * 1024u * 1024u;
 			settings.quadtree.max_gpu_bytes = UINT64_C(1024) * 1024u * 1024u;
 			settings.skirt_ratio = 0.01f;
-			terrain = terrain_runtime_create(&renderer, TRN_DIR, &settings);
-			if (!terrain || !overworld_create(&renderer, &overworld, TRN_DIR, session_seed))
+			/* The overworld is the terrain scene's own map: the graded 16 km
+			 * Alps set (alps-data, linked from the terrain_gen checkout),
+			 * browsable over the area around the terrain scene's default
+			 * viewpoint. OVERWORLD_DATASET overrides the dataset. */
+			const char *overworld_root = getenv("OVERWORLD_DATASET") ? getenv("OVERWORLD_DATASET")
+																	 : GRADED_ALPS_DIR;
+			terrain = terrain_runtime_create(&renderer, overworld_root, &settings);
+			if (!terrain || !overworld_create(&renderer, &overworld, overworld_root, session_seed,
+											  TERRAIN_START_POS_X, TERRAIN_START_POS_Z, 1600.0))
 			{
-				fprintf(stderr, "Could not build the overworld from %s\n", TRN_DIR);
+				fprintf(stderr, "Could not build the overworld from %s\n", overworld_root);
 				return EXIT_FAILURE;
 			}
 			OverworldGround grounds[DUNGEON_GAME_LEVELS];

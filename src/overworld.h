@@ -54,7 +54,8 @@ typedef struct
 	/* World-space height grid over the whole dataset (finest level). Sample
 	 * (i, j) sits at origin + i * axis_u + j * axis_v. */
 	float *heights;
-	float *grass; /* 0..1 grass coverage per sample, from the imagery alpha */
+	float *grass; /* 0..1 green-pasture estimate per sample, from the imagery colour */
+	float *snow;  /* 0..1 bright-and-neutral estimate: snow or ice */
 	uint32_t samples_u, samples_v;
 	double origin[3], axis_u[3], axis_v[3];
 	float min_height, max_height;
@@ -78,7 +79,11 @@ typedef struct
 /* Loads the dataset's finest tiles for heights, picks three well-spaced
  * hillside sites on three different kinds of ground (random per `seed`), and
  * builds the entrance geometry. */
-bool overworld_create(Renderer *renderer, Overworld *out, const char *dataset_root, uint32_t seed);
+/* Only the square region of half-size `half_extent_m` around (centre_x,
+ * centre_z) is loaded and browsable; the terrain renderer still draws the
+ * whole dataset around it. */
+bool overworld_create(Renderer *renderer, Overworld *out, const char *dataset_root, uint32_t seed,
+					  double centre_x, double centre_z, double half_extent_m);
 void overworld_destroy(Renderer *renderer, Overworld *world);
 
 /* Ground height at world (x, z); NAN off the map. */

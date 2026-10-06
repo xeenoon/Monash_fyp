@@ -1,6 +1,6 @@
 /build*/
 /trn/
-/alps-data/
+/alps-data
 # Pre-overlay backup of alps-data/trn-alps-16km/imagery (already covered by
 # /alps-data/ above; listed explicitly since it's a generated backup, not data).
 /alps-data/trn-alps-16km-imagery-backup/

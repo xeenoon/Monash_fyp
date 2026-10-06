@@ -36,9 +36,19 @@ TERRAIN_SCENE=dungeon ./build/terrain_renderer
 ```
 
 This launches the full game (`src/dungeon_game.c`): a title screen, How to
-Play, and a level select of three dungeons whose biomes (wall tint and torch
-colour) and layouts are re-rolled every launch (`DUNGEON_SESSION_SEED` pins
-them). In a dungeon, the treasure chest at the exit completes the level; a
+Play, and an overworld map (`src/overworld.c`) -- the graded 16 km Swiss Alps
+terrain, browsed Google Earth style (drag to pan, scroll to zoom, right-drag to
+rotate) around the terrain scene's default viewpoint. Three hobbit-hole doors,
+built from the dungeon textures, are placed on sunlit hillsides each launch;
+click a pin, then Descend. Each dungeon's biome (wall tint and torch colour)
+follows the ground its door stands on -- snow, cliff, meadow, valley or scree,
+classified from the heights and imagery -- and layouts are re-rolled every
+launch (`DUNGEON_SESSION_SEED` pins them). The map needs the Alps dataset at
+`alps-data/` (git-ignored): link the terrain_gen checkout's copy with
+`ln -s /home/ccw100/terrain_gen/alps-data alps-data`, or point
+`OVERWORLD_DATASET` at any tile set. The player underground is the Indiana
+Jones character study baked to a runtime asset by
+`tools/export_indiana_game.py`. In a dungeon, the treasure chest at the exit completes the level; a
 guardian patrols behind the first locked door and chases on sight, and being
 caught is game over. Stars: one for finishing, one for never being spotted,
 one for the hidden gem. **Esc** pauses, **R** restarts. Menus and HUD are

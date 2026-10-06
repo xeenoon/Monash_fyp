@@ -15,7 +15,7 @@
 
 #define WALK_SPEED 4.5f
 #define RUN_SPEED 9.0f
-#define ENTRANCE_SPACING_M 220.0f
+#define ENTRANCE_SPACING_M 650.0f
 #define PI_F 3.14159265f
 
 /* --- Height grid ------------------------------------------------------------ */
@@ -36,29 +36,63 @@ static void sample_world(const TerrainTile *tile, uint32_t x, uint32_t y, double
 	out[2] = w.z;
 }
 
-static bool load_heights(Overworld *world, const char *root)
+/* Reads "extent": [west, south, east, north] from the dataset manifest. */
+static bool manifest_extent(const char *root, double extent[4])
 {
-	/* The finest level present: try 4, 3, 2 ... */
+	char path[1024];
+	snprintf(path, sizeof(path), "%s/manifest.json", root);
+	FILE *file = fopen(path, "rb");
+	if (!file)
+		return false;
+	char text[16384] = {0};
+	size_t n = fread(text, 1, sizeof(text) - 1, file);
+	fclose(file);
+	text[n] = '\0';
+	const char *at = strstr(text, "\"extent\"");
+	if (!at || !(at = strchr(at, '[')))
+		return false;
+	return sscanf(at, "[ %lf , %lf , %lf , %lf ]", &extent[0], &extent[1], &extent[2],
+				  &extent[3]) == 4;
+}
+
+/* Loads the finest tile level under the square region centred on
+ * (centre_x, centre_z) into one height grid, plus a grass and a snow estimate
+ * per sample from the same tiles' imagery. World X is easting and world Z is
+ * minus northing; tile y = 0 is the dataset's north edge. */
+static bool load_heights(Overworld *world, const char *root, double centre_x, double centre_z,
+						 double half_extent)
+{
 	int level = -1;
 	char path[1024];
-	for (int l = 6; l >= 0 && level < 0; --l)
+	for (int l = 8; l >= 0 && level < 0; --l)
 	{
-		snprintf(path, sizeof(path), "%s/tiles/%d/0/0.trn", root, l);
-		FILE *f = fopen(path, "rb");
-		if (f)
+		snprintf(path, sizeof(path), "%s/tiles/%d", root, l);
+		FILE *probe = fopen(path, "rb");
+		if (probe)
 		{
-			fclose(f);
+			fclose(probe);
 			level = l;
 		}
 	}
-	if (level < 0)
+	double extent[4];
+	if (level < 0 || !manifest_extent(root, extent))
 		return false;
 	uint32_t tiles = 1u << (uint32_t)level;
+	double tile_w = (extent[2] - extent[0]) / tiles, tile_h = (extent[3] - extent[1]) / tiles;
+	double northing = -centre_z;
+	int tx0 = (int)floor((centre_x - half_extent - extent[0]) / tile_w);
+	int tx1 = (int)floor((centre_x + half_extent - extent[0]) / tile_w);
+	int ty0 = (int)floor((extent[3] - (northing + half_extent)) / tile_h);
+	int ty1 = (int)floor((extent[3] - (northing - half_extent)) / tile_h);
+	tx0 = tx0 < 0 ? 0 : tx0;
+	ty0 = ty0 < 0 ? 0 : ty0;
+	tx1 = tx1 >= (int)tiles ? (int)tiles - 1 : tx1;
+	ty1 = ty1 >= (int)tiles ? (int)tiles - 1 : ty1;
 	uint32_t cells = 0;
-	for (uint32_t ty = 0; ty < tiles; ++ty)
-		for (uint32_t tx = 0; tx < tiles; ++tx)
+	for (int ty = ty0; ty <= ty1; ++ty)
+		for (int tx = tx0; tx <= tx1; ++tx)
 		{
-			snprintf(path, sizeof(path), "%s/tiles/%d/%u/%u.trn", root, level, tx, ty);
+			snprintf(path, sizeof(path), "%s/tiles/%d/%d/%d.trn", root, level, tx, ty);
 			TerrainTile tile = {0};
 			if (terrain_tile_load(path, &tile) != TERRAIN_TILE_OK)
 			{
@@ -69,26 +103,33 @@ static bool load_heights(Overworld *world, const char *root)
 			if (!world->heights)
 			{
 				cells = tile_cells;
-				world->samples_u = world->samples_v = tiles * cells + 1u;
-				size_t n = (size_t)world->samples_u * world->samples_v;
-				world->heights = malloc(sizeof(float) * n);
-				world->grass = calloc(n, sizeof(float));
-				if (!world->heights || !world->grass)
+				world->samples_u = (uint32_t)(tx1 - tx0 + 1) * cells + 1u;
+				world->samples_v = (uint32_t)(ty1 - ty0 + 1) * cells + 1u;
+				size_t count = (size_t)world->samples_u * world->samples_v;
+				world->heights = malloc(sizeof(float) * count);
+				world->grass = calloc(count, sizeof(float));
+				world->snow = calloc(count, sizeof(float));
+				if (!world->heights || !world->grass || !world->snow)
 				{
 					terrain_tile_unload(&tile);
 					return false;
 				}
-				for (size_t i = 0; i < n; ++i)
+				for (size_t i = 0; i < count; ++i)
 					world->heights[i] = NAN;
 			}
+			snprintf(path, sizeof(path), "%s/imagery/%d/%d/%d.png", root, level, tx, ty);
+			int iw = 0, ih = 0, channels = 0;
+			unsigned char *rgb = stbi_load(path, &iw, &ih, &channels, 3);
 			for (uint32_t y = 0; y <= cells; ++y)
 				for (uint32_t x = 0; x <= cells; ++x)
 				{
 					double p[3];
 					sample_world(&tile, x, y, p);
-					uint32_t gu = tx * cells + x, gv = ty * cells + y;
-					world->heights[(size_t)gv * world->samples_u + gu] = (float)p[1];
-					if (tx == 0 && ty == 0 && y == 0 && x <= 1)
+					uint32_t gu = (uint32_t)(tx - tx0) * cells + x;
+					uint32_t gv = (uint32_t)(ty - ty0) * cells + y;
+					size_t index = (size_t)gv * world->samples_u + gu;
+					world->heights[index] = (float)p[1];
+					if (tx == tx0 && ty == ty0 && y == 0 && x <= 1)
 					{
 						if (x == 0)
 							memcpy(world->origin, p, sizeof(p));
@@ -96,10 +137,39 @@ static bool load_heights(Overworld *world, const char *root)
 							for (int k = 0; k < 3; ++k)
 								world->axis_u[k] = p[k] - world->origin[k];
 					}
-					if (tx == 0 && ty == 0 && x == 0 && y == 1)
+					if (tx == tx0 && ty == ty0 && x == 0 && y == 1)
 						for (int k = 0; k < 3; ++k)
 							world->axis_v[k] = p[k] - world->origin[k];
+					if (rgb && iw > 2 && ih > 2)
+					{
+						/* One-texel gutter; average a 5x5 patch so a single
+						 * rock or tree does not decide the ground. */
+						int cx = 1 + (int)((float)x / (float)cells * (float)(iw - 3));
+						int cy = 1 + (int)((float)y / (float)cells * (float)(ih - 3));
+						float r = 0, g = 0, b = 0;
+						int n = 0;
+						for (int dy = -2; dy <= 2; ++dy)
+							for (int dx = -2; dx <= 2; ++dx)
+							{
+								int sx = cx + dx, sy = cy + dy;
+								if (sx < 0 || sy < 0 || sx >= iw || sy >= ih)
+									continue;
+								const unsigned char *t = rgb + ((size_t)sy * (size_t)iw + (size_t)sx) * 3u;
+								r += t[0];
+								g += t[1];
+								b += t[2];
+								++n;
+							}
+						r /= 255.0f * n;
+						g /= 255.0f * n;
+						b /= 255.0f * n;
+						float hi = fmaxf(r, fmaxf(g, b)), lo = fminf(r, fminf(g, b));
+						world->grass[index] = fminf(1.0f, fmaxf(0.0f, (g - fmaxf(r, b)) * 12.0f));
+						world->snow[index] =
+							fminf(1.0f, fmaxf(0.0f, (hi - 0.62f) * 4.0f)) * (hi - lo < 0.12f ? 1.0f : 0.0f);
+					}
 				}
+			stbi_image_free(rgb);
 			terrain_tile_unload(&tile);
 		}
 	world->axis_u[1] = world->axis_v[1] = 0.0;
@@ -111,27 +181,9 @@ static bool load_heights(Overworld *world, const char *root)
 			world->min_height = fminf(world->min_height, world->heights[i]);
 			world->max_height = fmaxf(world->max_height, world->heights[i]);
 		}
-	/* Grass coverage from the root imagery's alpha (the rock/grass classifier). */
-	snprintf(path, sizeof(path), "%s/imagery/0/0/0.png", root);
-	int w = 0, h = 0, channels = 0;
-	unsigned char *rgba = stbi_load(path, &w, &h, &channels, 4);
-	if (rgba && w > 2 && h > 2)
-	{
-		for (uint32_t v = 0; v < world->samples_v; ++v)
-			for (uint32_t u = 0; u < world->samples_u; ++u)
-			{
-				/* One-texel gutter around the imagery. */
-				int px = 1 + (int)((float)u / (float)(world->samples_u - 1u) * (float)(w - 3));
-				int py = 1 + (int)((float)v / (float)(world->samples_v - 1u) * (float)(h - 3));
-				world->grass[(size_t)v * world->samples_u + u] =
-					rgba[((size_t)py * (size_t)w + (size_t)px) * 4u + 3u] / 255.0f;
-			}
-	}
-	stbi_image_free(rgba);
-	printf("Overworld: %ux%u height samples (level %d), %.0f..%.0f m, axes u=(%.2f,%.2f) "
-		   "v=(%.2f,%.2f)\n",
-		   world->samples_u, world->samples_v, level, world->min_height, world->max_height,
-		   world->axis_u[0], world->axis_u[2], world->axis_v[0], world->axis_v[2]);
+	printf("Overworld: level %d tiles x %d..%d y %d..%d, %ux%u samples, %.0f..%.0f m\n", level,
+		   tx0, tx1, ty0, ty1, world->samples_u, world->samples_v, world->min_height,
+		   world->max_height);
 	return true;
 }
 
@@ -218,11 +270,12 @@ static OverworldGround classify(const Overworld *world, double x, double z)
 	float elevation = (h - world->min_height) / relief;
 	float slope = slope_at(world, x, z, NULL);
 	float grass = grid_sample(world, world->grass, u, v);
-	if (elevation > 0.78f)
+	float snow = grid_sample(world, world->snow, u, v);
+	if (snow > 0.5f || elevation > 0.85f)
 		return OVERWORLD_GROUND_SNOW;
 	if (slope > 0.75f)
 		return OVERWORLD_GROUND_CLIFF;
-	if (grass > 0.30f)
+	if (grass > 0.35f)
 		return OVERWORLD_GROUND_MEADOW;
 	if (elevation < 0.25f)
 		return OVERWORLD_GROUND_VALLEY;
@@ -253,13 +306,19 @@ static void place_entrances(Overworld *world, uint32_t seed)
 			float min_slope = pass < 2 ? 0.22f : 0.08f, max_slope = pass < 2 ? 0.7f : 1.2f;
 			if (!isfinite(slope) || slope < min_slope || slope > max_slope)
 				continue;
+			/* Doors that look away from the sun sit in their own hill's shadow
+			 * all day. The default sun (main.c sun_presets[0]) lies toward
+			 * (+0.4, +0.3) in XZ; on the first two passes insist the door
+			 * faces broadly into it. */
+			if (pass < 2 && cosf(downhill - atan2f(0.3f, 0.4f)) < 0.35f)
+				continue;
 			/* The doorstep itself must be walkable: flat enough just in front. */
 			double fx = x + cos(downhill) * 3.0, fz = z + sin(downhill) * 3.0;
 			float front_slope = slope_at(world, fx, fz, NULL);
 			if (!isfinite(front_slope) || front_slope > 0.9f)
 				continue;
 			double distance_from_centre = hypot(x - cx, z - cz);
-			if (distance_from_centre < 70.0 || distance_from_centre > 380.0)
+			if (distance_from_centre < 250.0 || distance_from_centre > 1350.0)
 				continue;
 			bool crowded = false;
 			for (uint32_t i = 0; i < placed; ++i)
@@ -563,10 +622,11 @@ static bool build_entrance_meshes(Renderer *renderer, Overworld *world)
 		free(knob.v), free(knob.i), free(step.v), free(step.i);
 		return false;
 	}
-	upload(renderer, world, OVERWORLD_MESH_MOUND, &mound, DUNGEON_TEXTURE_DIR "/wall_albedo.jpg",
+	/* Turf over the top (the dungeons' moss), dressed stone round the door. */
+	upload(renderer, world, OVERWORLD_MESH_MOUND, &mound, DUNGEON_TEXTURE_DIR "/moss.jpeg", NULL,
+		   NULL);
+	upload(renderer, world, OVERWORLD_MESH_RING, &ring, DUNGEON_TEXTURE_DIR "/wall_albedo.jpg",
 		   DUNGEON_TEXTURE_DIR "/wall_orm.png", DUNGEON_TEXTURE_DIR "/wall_normal.png");
-	upload(renderer, world, OVERWORLD_MESH_RING, &ring, DUNGEON_TEXTURE_DIR "/floor_albedo.jpg",
-		   DUNGEON_TEXTURE_DIR "/floor_orm.png", DUNGEON_TEXTURE_DIR "/floor_normal.png");
 	upload(renderer, world, OVERWORLD_MESH_DOOR, &door, DUNGEON_TEXTURE_DIR "/exit_albedo.jpg",
 		   DUNGEON_TEXTURE_DIR "/exit_orm.png", DUNGEON_TEXTURE_DIR "/exit_normal.png");
 	upload(renderer, world, OVERWORLD_MESH_KNOB, &knob, DUNGEON_TEXTURE_DIR "/lock_albedo.jpg",
@@ -578,10 +638,11 @@ static bool build_entrance_meshes(Renderer *renderer, Overworld *world)
 
 /* --- Lifecycle ------------------------------------------------------------------ */
 
-bool overworld_create(Renderer *renderer, Overworld *out, const char *dataset_root, uint32_t seed)
+bool overworld_create(Renderer *renderer, Overworld *out, const char *dataset_root, uint32_t seed,
+					  double centre_x, double centre_z, double half_extent_m)
 {
 	*out = (Overworld){0};
-	if (!load_heights(out, dataset_root))
+	if (!load_heights(out, dataset_root, centre_x, centre_z, half_extent_m))
 	{
 		fprintf(stderr, "Overworld: no terrain tiles under %s\n", dataset_root);
 		overworld_destroy(NULL, out);
@@ -590,7 +651,7 @@ bool overworld_create(Renderer *renderer, Overworld *out, const char *dataset_ro
 	place_entrances(out, seed);
 	out->pitch = -58.0f;
 	out->yaw = -90.0f;
-	out->distance = 950.0f;
+	out->distance = (float)half_extent_m * 1.6f;
 	if (!build_entrance_meshes(renderer, out))
 	{
 		overworld_destroy(renderer, out);
@@ -611,13 +672,14 @@ void overworld_destroy(Renderer *renderer, Overworld *world)
 		}
 	free(world->heights);
 	free(world->grass);
+	free(world->snow);
 	*world = (Overworld){0};
 }
 
 /* --- Map camera ----------------------------------------------------------------- */
 
 #define MIN_DISTANCE 18.0f
-#define MAX_DISTANCE 1400.0f
+#define MAX_DISTANCE 4200.0f
 
 static void clamp_focus(Overworld *world)
 {
@@ -743,15 +805,32 @@ uint32_t overworld_draws(Overworld *world, WorldPosition camera, RendererDraw *o
 		 * rotation_y(a) sends +Z to (sin a, cos a), so a = pi/2 - facing. */
 		LocalToWorldTransform transform =
 			coordinate_rotation_y(PI_F * 0.5 - entrance->facing,
-								  (WorldPosition){entrance->position.x, entrance->position.y - 0.12,
+								  (WorldPosition){entrance->position.x, entrance->position.y - 0.15,
 												  entrance->position.z});
+		const double scale = 1.4; /* big enough to read from the map */
+		for (int c = 0; c < 3; ++c)
+			for (int r = 0; r < 3; ++r)
+				transform.rotation[c][r] *= scale;
+		/* Albedo tints: a painted green door, a polished brass knob, and turf
+		 * a shade greener than the cave moss it borrows. */
+		static const float tints[OVERWORLD_MESH_COUNT][3] = {
+			[OVERWORLD_MESH_MOUND] = {0.85f, 1.05f, 0.7f},
+			[OVERWORLD_MESH_RING] = {1.1f, 1.05f, 1.0f},
+			[OVERWORLD_MESH_DOOR] = {0.55f, 1.25f, 0.6f},
+			[OVERWORLD_MESH_KNOB] = {1.8f, 1.4f, 0.6f},
+			[OVERWORLD_MESH_STEP] = {1.1f, 1.05f, 1.0f},
+		};
 		for (int m = 0; m < OVERWORLD_MESH_COUNT && count < capacity; ++m)
 		{
 			if (!world->uploaded[m])
 				continue;
+			DrawPushConstants push = entrance_push(&transform, camera);
+			push.geometry = (vec4s){{tints[m][0], tints[m][1], tints[m][2], 1.0f}};
+			if (m == OVERWORLD_MESH_MOUND || m == OVERWORLD_MESH_DOOR)
+				push.material.x = 0.0f; /* turf and paint are never metal */
 			out[count++] = (RendererDraw){.mesh = &world->meshes[m],
 										  .material_set = world->meshes[m].material_set,
-										  .push = entrance_push(&transform, camera),
+										  .push = push,
 										  .static_mesh = true};
 		}
 	}

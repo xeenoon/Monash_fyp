@@ -88,7 +88,7 @@
 		{
 			"bufferView":0,
 			"componentType":5126,
-			"count":34129,
+			"count":33693,
 			"max":[
 				0.3647507131099701,
 				2.152298927307129,
@@ -104,26 +104,26 @@
 		{
 			"bufferView":1,
 			"componentType":5126,
-			"count":34129,
+			"count":33693,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":2,
 			"componentType":5126,
-			"count":34129,
+			"count":33693,
 			"type":"VEC2"
 		},
 		{
 			"bufferView":3,
 			"componentType":5121,
-			"count":34129,
+			"count":33693,
 			"normalized":true,
 			"type":"VEC4"
 		},
 		{
 			"bufferView":4,
 			"componentType":5123,
-			"count":34129,
+			"count":33693,
 			"normalized":true,
 			"type":"VEC4"
 		},
@@ -137,38 +137,38 @@
 	"bufferViews":[
 		{
 			"buffer":0,
-			"byteLength":409548,
+			"byteLength":404316,
 			"byteOffset":0,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":409548,
-			"byteOffset":409548,
+			"byteLength":404316,
+			"byteOffset":404316,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":273032,
-			"byteOffset":819096,
+			"byteLength":269544,
+			"byteOffset":808632,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":136516,
-			"byteOffset":1092128,
+			"byteLength":134772,
+			"byteOffset":1078176,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":273032,
-			"byteOffset":1228644,
+			"byteLength":269544,
+			"byteOffset":1212948,
 			"target":34962
 		},
 		{
 			"buffer":0,
 			"byteLength":227472,
-			"byteOffset":1501676,
+			"byteOffset":1482492,
 			"target":34963
 		}
 	],
@@ -180,7 +180,7 @@
 	],
 	"buffers":[
 		{
-			"byteLength":1729148,
+			"byteLength":1709964,
 			"uri":"indiana.bin"
 		}
 	]
