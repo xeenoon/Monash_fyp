@@ -8,9 +8,19 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <zlib.h>
 #include <vulkan/vulkan_core.h>
+
+typedef struct RendererMaterialCacheEntry
+{
+	char *albedo_path, *orm_path, *normal_path, *occlusion_path;
+	bool orm_is_occlusion;
+	Texture albedo, orm, normal, occlusion;
+	VkDescriptorSet descriptor_set;
+	struct RendererMaterialCacheEntry *next;
+} RendererMaterialCacheEntry;
 
 #ifdef DEBUG_SHADER_DUMP
 #include <libgen.h>
@@ -313,6 +323,115 @@ VkDescriptorSet renderer_allocate_pbr5_set(Renderer *r, const Texture *albedo, c
 	}
 	vkUpdateDescriptorSets(r->device, 6, writes, 0, NULL);
 	return set;
+}
+
+static bool same_optional_path(const char *a, const char *b)
+{
+	return (!a && !b) || (a && b && strcmp(a, b) == 0);
+}
+
+static char *copy_optional_path(const char *path)
+{
+	if (!path)
+		return NULL;
+	char *copy = malloc(strlen(path) + 1u);
+	if (!copy)
+	{
+		fprintf(stderr, "Out of memory caching material path\n");
+		exit(EXIT_FAILURE);
+	}
+	strcpy(copy, path);
+	return copy;
+}
+
+VkDescriptorSet renderer_acquire_file_material(Renderer *r, const char *albedo_path,
+										const char *orm_path, const char *normal_path,
+										const char *occlusion_path, bool orm_is_occlusion,
+										Texture *out_albedo, Texture *out_orm,
+										Texture *out_normal, Texture *out_occlusion)
+{
+	RendererMaterialCacheEntry *entry = r->material_cache;
+	for (; entry; entry = entry->next)
+		if (entry->orm_is_occlusion == orm_is_occlusion &&
+			same_optional_path(entry->albedo_path, albedo_path) &&
+			same_optional_path(entry->orm_path, orm_path) &&
+			same_optional_path(entry->normal_path, normal_path) &&
+			same_optional_path(entry->occlusion_path, occlusion_path))
+			break;
+
+	if (!entry)
+	{
+		entry = calloc(1, sizeof(*entry));
+		if (!entry)
+		{
+			fprintf(stderr, "Out of memory caching material\n");
+			exit(EXIT_FAILURE);
+		}
+		entry->albedo_path = copy_optional_path(albedo_path);
+		entry->orm_path = copy_optional_path(orm_path);
+		entry->normal_path = copy_optional_path(normal_path);
+		entry->occlusion_path = copy_optional_path(occlusion_path);
+		entry->orm_is_occlusion = orm_is_occlusion;
+		if (albedo_path)
+			texture_load(r->device, r->allocator, r->upload, &entry->albedo, albedo_path,
+						 r->max_anisotropy);
+		if (orm_path)
+			texture_load_linear(r->device, r->allocator, r->upload, &entry->orm, orm_path,
+								r->max_anisotropy);
+		if (normal_path)
+			texture_load_linear(r->device, r->allocator, r->upload, &entry->normal, normal_path,
+								r->max_anisotropy);
+		if (occlusion_path)
+			texture_load_linear(r->device, r->allocator, r->upload, &entry->occlusion,
+								occlusion_path, r->max_anisotropy);
+
+		const Texture *albedo = entry->albedo.image ? &entry->albedo : &r->fallback_texture;
+		const Texture *orm = entry->orm.image ? &entry->orm : &r->fallback_linear_texture;
+		const Texture *normal =
+			entry->normal.image ? &entry->normal : &r->fallback_normal_texture;
+		const Texture *occlusion = entry->occlusion.image
+			? &entry->occlusion
+			: orm_is_occlusion && entry->orm.image ? &entry->orm : &r->fallback_linear_texture;
+		entry->descriptor_set = renderer_allocate_pbr5_set(
+			r, albedo, orm, normal, occlusion, &r->fallback_linear_texture);
+		entry->next = r->material_cache;
+		r->material_cache = entry;
+	}
+
+	if (out_albedo)
+		*out_albedo = entry->albedo;
+	if (out_orm)
+		*out_orm = entry->orm;
+	if (out_normal)
+		*out_normal = entry->normal;
+	if (out_occlusion)
+		*out_occlusion = entry->occlusion;
+	return entry->descriptor_set;
+}
+
+static void destroy_material_cache(Renderer *r)
+{
+	RendererMaterialCacheEntry *entry = r->material_cache;
+	while (entry)
+	{
+		RendererMaterialCacheEntry *next = entry->next;
+		renderer_free_material_set(r, entry->descriptor_set);
+		if (entry->albedo.image)
+			texture_destroy(r->device, r->allocator, &entry->albedo);
+		if (entry->orm.image)
+			texture_destroy(r->device, r->allocator, &entry->orm);
+		if (entry->normal.image)
+			texture_destroy(r->device, r->allocator, &entry->normal);
+		if (entry->occlusion.image)
+			texture_destroy(r->device, r->allocator, &entry->occlusion);
+		free(entry->albedo_path);
+		free(entry->orm_path);
+		free(entry->normal_path);
+		free(entry->occlusion_path);
+		free(entry);
+		entry = next;
+	}
+	r->material_cache = NULL;
 }
 
 void renderer_free_material_set(Renderer *r, VkDescriptorSet set)
@@ -3503,6 +3622,7 @@ void renderer_shutdown(Renderer *r)
 	gpu_buffer_destroy(r->device, r->allocator, &r->point_shadow_buffer);
 	gpu_buffer_destroy(r->device, r->allocator, &r->environment_ubo);
 	vkDestroyCommandPool(r->device, r->command_pool, NULL);
+	destroy_material_cache(r);
 	vkDestroyDescriptorPool(r->device, r->descriptor_pool, NULL);
 	vkDestroyDescriptorSetLayout(r->device, r->atmosphere_set_layout, NULL);
 	vkDestroyDescriptorSetLayout(r->device, r->temporal_set_layout, NULL);

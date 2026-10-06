@@ -174,6 +174,8 @@ typedef struct
 
 typedef struct { const char *environment_path; ShadowQualitySettings shadow_quality; } RendererConfig;
 
+struct RendererMaterialCacheEntry;
+
 typedef struct Renderer
 {
 	SDL_Window *window;
@@ -193,6 +195,10 @@ typedef struct Renderer
 	/* Reusable GPU resource infrastructure, shared by every subsystem. */
 	GpuAllocator *allocator;
 	UploadContext *upload;
+	/* File-backed static materials are immutable and commonly shared by many
+	 * meshes and successive dungeon scenes. The renderer owns them until
+	 * shutdown; meshes only borrow their texture handles and descriptor set. */
+	struct RendererMaterialCacheEntry *material_cache;
 
 	VkSwapchainKHR swapchain;
 	VkFormat swapchain_format;
@@ -376,6 +382,11 @@ VkDescriptorSet renderer_allocate_pbr4_set(Renderer *r, const Texture *albedo, c
 VkDescriptorSet renderer_allocate_pbr5_set(Renderer *r, const Texture *albedo, const Texture *orm,
 									   const Texture *normal_map, const Texture *occlusion,
 									   const Texture *cavity);
+VkDescriptorSet renderer_acquire_file_material(Renderer *r, const char *albedo_path,
+										const char *orm_path, const char *normal_path,
+										const char *occlusion_path, bool orm_is_occlusion,
+										Texture *out_albedo, Texture *out_orm,
+										Texture *out_normal, Texture *out_occlusion);
 VkDescriptorSet renderer_allocate_terrain_set(Renderer *r, VkImageView albedo_view,
 												  VkSampler albedo_sampler, VkImageView elevation_view,
 												  VkSampler elevation_sampler, VkImageView parent_albedo_view,

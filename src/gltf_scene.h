@@ -103,6 +103,7 @@ typedef struct {
     VkDescriptorSet descriptor_set;
     char *base_color_path, *metallic_roughness_path, *normal_path, *occlusion_path;
     Texture base_color, metallic_roughness, normal, occlusion;
+	bool material_cached;
 } GltfMaterial;
 
 /* An imported scene is in ONE of two shapes, decided by whether the file has

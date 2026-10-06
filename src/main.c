@@ -161,11 +161,44 @@ static_material_push(LocalToWorldTransform transform, WorldPosition camera_posit
  * keyboard: up/down/left/right/confirm/escape/interact/restart, walk <fwd>
  * <right> (held until the next walk), teleport chest|gem|guard|spawn|door<N>,
  * select <N> (map), mouse <u> <v>, click, wheel <notches>, drag <dx> <dy>, capture
- * <png>, quit. The harness (DUNGEON_SCRIPT) remains the tool for the bare
+ * <png>, expect_screen title|overworld|loading|playing|paused|over|complete,
+ * quit. The harness (DUNGEON_SCRIPT) remains the tool for the bare
  * scene; this is only for the game layer on top of it. */
+static const char *game_screen_name(DungeonGameScreen screen)
+{
+	switch (screen)
+	{
+	case DUNGEON_GAME_TITLE: return "title";
+	case DUNGEON_GAME_HOW_TO_PLAY: return "how_to_play";
+	case DUNGEON_GAME_OVERWORLD: return "overworld";
+	case DUNGEON_GAME_LOADING: return "loading";
+	case DUNGEON_GAME_PLAYING: return "playing";
+	case DUNGEON_GAME_PAUSED: return "paused";
+	case DUNGEON_GAME_OVER: return "over";
+	case DUNGEON_GAME_COMPLETE: return "complete";
+	}
+	return "unknown";
+}
+
+static void game_pointer_canvas(const Renderer *renderer, const Input *input, float *x, float *y)
+{
+	int window_w = 1, window_h = 1;
+	SDL_GetWindowSize(renderer->window, &window_w, &window_h);
+	float fit = renderer_aspect(renderer) /
+		((float)RENDERER_UI_WIDTH / (float)RENDERER_UI_HEIGHT);
+	float pointer_u = input->mouse_x / (float)window_w - 0.5f;
+	float pointer_v = input->mouse_y / (float)window_h - 0.5f;
+	if (fit > 1.0f)
+		pointer_u *= fit;
+	else
+		pointer_v /= fit;
+	*x = (pointer_u + 0.5f) * (float)RENDERER_UI_WIDTH;
+	*y = (pointer_v + 0.5f) * (float)RENDERER_UI_HEIGHT;
+}
+
 static void game_script_step(const char *script, uint64_t frame, Input *input, DungeonGame *game,
 							 DungeonScene *scene, Overworld *overworld, Renderer *renderer,
-							 bool *running,
+							 bool *running, bool *failed,
 							 float walk[2], const char **capture)
 {
 	*capture = NULL;
@@ -256,6 +289,18 @@ static void game_script_step(const char *script, uint64_t frame, Input *input, D
 			snprintf(path, sizeof(path), "%s", argument);
 			*capture = path;
 		}
+		else if (!strcmp(command, "expect_screen"))
+		{
+			const char *actual = game_screen_name(game->screen);
+			if (strcmp(actual, argument) != 0)
+			{
+				fprintf(stderr,
+						"DUNGEON_GAME_SCRIPT frame %lu: expected screen %s, got %s\n",
+						when, argument, actual);
+				*failed = true;
+				*running = false;
+			}
+		}
 		else
 			fprintf(stderr, "DUNGEON_GAME_SCRIPT: unknown command '%s'\n", command);
 	}
@@ -305,6 +350,7 @@ int main(int argc, char *argv[])
 	 * scene, exactly as before. */
 	bool use_dungeon_game = use_dungeon && !use_torch_lab && !getenv("DUNGEON_SCRIPT") &&
 							!getenv("DUNGEON_MAP");
+	bool start_dungeon_playing = use_dungeon_game && getenv("DUNGEON_START_PLAYING");
 #ifdef DEBUG_SHADER_DUMP
 	const char *scene_name =
 		use_terrain ? "terrain"
@@ -375,6 +421,7 @@ int main(int argc, char *argv[])
 	GltfLoadError gltf_error = {0};
 	MaterialStabilityDemo demo = {0};
 	DungeonScene dungeon = {0};
+	bool dungeon_loaded = false;
 	DungeonGame game = {0};
 	Overworld overworld = {0};
 	GameCharacter indiana = {0};
@@ -472,14 +519,18 @@ int main(int argc, char *argv[])
 			game.overworld = &overworld;
 			game_character_load(&renderer, &indiana, INDIANA_RUNTIME_DIR);
 		}
-		if (use_dungeon_game
-				? !dungeon_scene_create_seeded(&renderer, &dungeon, game.levels[0].seed,
-											   &dungeon_error)
-				: !dungeon_scene_create(&renderer, &dungeon, &dungeon_error))
+		bool load_initial_dungeon = !use_dungeon_game || start_dungeon_playing;
+		if (load_initial_dungeon &&
+			(use_dungeon_game
+				 ? !dungeon_scene_create_seeded(&renderer, &dungeon, game.levels[0].seed,
+												&dungeon_error)
+				 : !dungeon_scene_create(&renderer, &dungeon, &dungeon_error)))
 		{
 			fprintf(stderr, "Could not load dungeon: %s\n", dungeon_error.message);
 			load_result = GLTF_LOAD_INVALID;
 		}
+		else
+			dungeon_loaded = load_initial_dungeon;
 	}
 	else if (use_quarry)
 		load_result = quarry_create(&renderer, &quarry, QUARRY_DIR) ? GLTF_LOAD_OK
@@ -551,22 +602,19 @@ int main(int argc, char *argv[])
 	DungeonHarness *harness = use_dungeon ? dungeon_harness_create(&harness_script_error) : NULL;
 	if (harness_script_error)
 		return 1;
-	if (use_dungeon)
+	if (use_dungeon && dungeon_loaded)
 	{
 		dungeon_camera_init(&dungeon_camera, dungeon.level.spawn);
 		camera = dungeon_camera.camera;
 	}
 	if (use_dungeon_game)
 	{
-		/* Level 0 is loaded as the title screen's backdrop. */
-		dungeon.character = &indiana;
-		dungeon_game_begin_level(&game, &dungeon, 0);
 		game.screen = DUNGEON_GAME_TITLE;
 		game.in_overworld = true;
-		if (getenv("DUNGEON_START_PLAYING"))
+		if (start_dungeon_playing)
 		{
-			game.screen = DUNGEON_GAME_PLAYING;
-			game.in_overworld = false;
+			dungeon.character = &indiana;
+			dungeon_game_begin_level(&game, &dungeon, 0);
 		}
 		else if (getenv("DUNGEON_START_OVERWORLD"))
 			game.screen = DUNGEON_GAME_OVERWORLD;
@@ -697,6 +745,7 @@ int main(int argc, char *argv[])
 	AtmosphereParameters atmosphere = atmosphere_earth();
 	bool running = true;
 	const char *game_script = getenv("DUNGEON_GAME_SCRIPT");
+	bool game_script_failed = false;
 	bool previous_overworld_frame = false;
 	float map_drag_travel = 0.0f;
 	uint64_t game_frame = 0;
@@ -754,7 +803,21 @@ int main(int argc, char *argv[])
 		const char *game_capture = NULL;
 		if (use_dungeon_game && game_script)
 			game_script_step(game_script, game_frame++, &input, &game, &dungeon, &overworld, &renderer,
-							 &running, game_walk, &game_capture);
+							 &running, &game_script_failed, game_walk, &game_capture);
+		if (use_dungeon_game && game.screen != DUNGEON_GAME_OVERWORLD)
+		{
+			float canvas_x = 0.0f, canvas_y = 0.0f;
+			game_pointer_canvas(&renderer, &input, &canvas_x, &canvas_y);
+			if (dungeon_game_menu_pointer(&game, canvas_x, canvas_y,
+										 input.mouse_left_released))
+				input.puzzle_confirm = true;
+		}
+		/* An edge-triggered input belongs to the world where its frame began.
+		 * Without this boundary, Enter used on "Leave Dungeon" reaches the
+		 * newly-active overworld later in the same frame and immediately descends
+		 * through the selected door again. */
+		bool began_frame_in_overworld = game.in_overworld;
+		DungeonGameScreen began_frame_screen = game.screen;
 #ifdef DEBUG_SHADER_DUMP
 		/* Input is polled before the draw, so whether this frame should dump is
 		   known in time to flip frame.shader_dump.x before renderer_draw_frame.
@@ -892,8 +955,12 @@ int main(int argc, char *argv[])
 				else if (action == DUNGEON_GAME_ACTION_LOAD)
 				{
 					uint64_t load_start = SDL_GetTicksNS();
-					renderer_wait_idle(&renderer);
-					dungeon_scene_destroy(&renderer, &dungeon);
+					if (dungeon_loaded)
+					{
+						renderer_wait_idle(&renderer);
+						dungeon_scene_destroy(&renderer, &dungeon);
+						dungeon_loaded = false;
+					}
 					DungeonLevelError load_error = {0};
 					uint32_t level = game.load_level;
 					if (!dungeon_scene_create_seeded(&renderer, &dungeon,
@@ -904,6 +971,7 @@ int main(int argc, char *argv[])
 						running = false;
 						continue;
 					}
+					dungeon_loaded = true;
 					dungeon.character = &indiana;
 					dungeon_game_begin_level(&game, &dungeon, level);
 					dungeon_camera_init(&dungeon_camera, dungeon.level.spawn);
@@ -927,6 +995,8 @@ int main(int argc, char *argv[])
 		{
 			/* On the surface: a map to browse, Google Earth style. */
 			bool browsing = game.screen == DUNGEON_GAME_OVERWORLD;
+			bool accepting_input = browsing && began_frame_in_overworld &&
+				began_frame_screen == DUNGEON_GAME_OVERWORLD;
 			int window_w = 1, window_h = 1;
 			SDL_GetWindowSize(window, &window_w, &window_h);
 			/* A click is a press and release that did not become a drag. */
@@ -935,11 +1005,13 @@ int main(int argc, char *argv[])
 			if (input.mouse_left)
 				map_drag_travel += fabsf(input.mouse_dx) + fabsf(input.mouse_dy);
 			bool click = input.mouse_left_released && map_drag_travel < 6.0f;
-			overworld_update(&overworld, browsing && input.mouse_left ? input.mouse_dx : 0.0f,
-							 browsing && input.mouse_left ? input.mouse_dy : 0.0f,
-							 browsing && input.mouse_right ? input.mouse_dx : 0.0f,
-							 browsing ? input.wheel : 0.0f, browsing ? input.move_forward : 0.0f,
-							 browsing ? input.move_right : 0.0f, (float)window_h, dt,
+			overworld_update(&overworld,
+							 accepting_input && input.mouse_left ? input.mouse_dx : 0.0f,
+							 accepting_input && input.mouse_left ? input.mouse_dy : 0.0f,
+							 accepting_input && input.mouse_right ? input.mouse_dx : 0.0f,
+							 accepting_input ? input.wheel : 0.0f,
+							 accepting_input ? input.move_forward : 0.0f,
+							 accepting_input ? input.move_right : 0.0f, (float)window_h, dt,
 							 !(game.screen == DUNGEON_GAME_TITLE ||
 							   (game.screen == DUNGEON_GAME_HOW_TO_PLAY &&
 								game.return_screen == DUNGEON_GAME_TITLE)));
@@ -967,8 +1039,9 @@ int main(int argc, char *argv[])
 				pointer_v /= fit;
 			dungeon_game_overworld_pointer(&game, (pointer_u + 0.5f) * (float)RENDERER_UI_WIDTH,
 										   (pointer_v + 0.5f) * (float)RENDERER_UI_HEIGHT,
-										   browsing && click, browsing && input.tab,
-										   browsing && (input.puzzle_confirm || input.interact));
+										   accepting_input && click, accepting_input && input.tab,
+										   accepting_input &&
+											   (input.puzzle_confirm || input.interact));
 			if (game.fly_request >= 0)
 			{
 				overworld_fly_to(&overworld, (uint32_t)game.fly_request);
@@ -1507,7 +1580,8 @@ int main(int argc, char *argv[])
 		terrain_runtime_destroy(terrain);
 	else if (use_dungeon)
 	{
-		dungeon_scene_destroy(&renderer, &dungeon);
+		if (dungeon_loaded)
+			dungeon_scene_destroy(&renderer, &dungeon);
 		dungeon_game_destroy(&game);
 		if (use_dungeon_game)
 		{
@@ -1529,5 +1603,5 @@ int main(int argc, char *argv[])
 	SDL_DestroyWindow(window);
 	SDL_Quit();
 	/* A scripted run's exit status is its verdict, so it can be used as a test. */
-	return harness_status ? EXIT_FAILURE : EXIT_SUCCESS;
+	return harness_status || game_script_failed ? EXIT_FAILURE : EXIT_SUCCESS;
 }

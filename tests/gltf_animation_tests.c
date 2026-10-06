@@ -26,6 +26,10 @@ void texture_destroy(VkDevice d, GpuAllocator *a, Texture *t) { (void)d; (void)a
 VkDescriptorSet renderer_allocate_pbr5_set(Renderer *r, const Texture *a, const Texture *b,
 										   const Texture *c, const Texture *d, const Texture *e)
 { (void)r; (void)a; (void)b; (void)c; (void)d; (void)e; return VK_NULL_HANDLE; }
+VkDescriptorSet renderer_acquire_file_material(Renderer *r, const char *a, const char *o,
+	const char *n, const char *x, bool oi, Texture *ta, Texture *to, Texture *tn, Texture *tx)
+{ (void)r; (void)a; (void)o; (void)n; (void)x; (void)oi; (void)ta; (void)to; (void)tn; (void)tx;
+  assert(!"upload from a CPU-only test"); return VK_NULL_HANDLE; }
 void renderer_free_material_set(Renderer *r, VkDescriptorSet s) { (void)r; (void)s; }
 void mesh_upload(Renderer *r, Mesh *m) { (void)r; (void)m; }
 void mesh_destroy(Renderer *r, Mesh *m) { (void)r; (void)m; }
