@@ -25,9 +25,10 @@ The mask is dilated to take verges, walls and cast shadows with it.
 from __future__ import annotations
 
 import numpy as np
+from PIL import Image, ImageDraw
 from scipy.ndimage import (binary_closing, binary_dilation, binary_fill_holes, binary_opening,
-                           distance_transform_edt, find_objects, label, maximum_filter,
-                           uniform_filter)
+                           convolve, distance_transform_edt, find_objects, gaussian_filter, label,
+                           maximum_filter, sobel, uniform_filter)
 
 LUMA = np.array((0.299, 0.587, 0.114), np.float32)
 
@@ -35,6 +36,45 @@ LUMA = np.array((0.299, 0.587, 0.114), np.float32)
 def disk(radius: int) -> np.ndarray:
     y, x = np.mgrid[-radius:radius + 1, -radius:radius + 1]
     return x * x + y * y <= radius * radius
+
+
+def _line_kernel(theta: float, length: int) -> np.ndarray:
+    k = np.zeros((length, length), np.float32)
+    c = length // 2
+    for t in np.linspace(-c, c, length * 2):
+        k[int(round(c + t * np.sin(theta))), int(round(c + t * np.cos(theta)))] = 1.0
+    return k
+
+
+def straight_edge_density(lum: np.ndarray, px: float, edge_threshold: float = 0.025,
+                          bins: int = 8) -> tuple[np.ndarray, np.ndarray]:
+    """Local density (per 20 m) of long straight edges, and of straight edges
+    that come in PERPENDICULAR pairs. Measured on the calibration tiles:
+
+        perpendicular pairs   stations 0.08-0.13, huts 0.065, gallery 0.027
+                              rock bedding, scree, snow, forest, streams,
+                              limestone <= 0.023
+        straight (one way)    stations 0.18-0.22, gallery 0.13, huts 0.09
+                              natural p90 <= 0.046
+
+    Rock bedding is straight but runs one way; nature rarely makes right
+    angles. Built complexes are made of them."""
+    length = max(5, int(round(15 * px)) | 1)  # 7.5 m runs
+    window = max(3, int(41 * px) | 1)
+    smooth = gaussian_filter(lum, max(0.5, px))
+    gx, gy = sobel(smooth, axis=1) / 8.0, sobel(smooth, axis=0) / 8.0
+    edges = np.hypot(gx, gy) > edge_threshold
+    theta = (np.arctan2(gy, gx) + np.pi / 2) % np.pi
+    b = np.floor(theta / np.pi * bins).astype(int) % bins
+    dens = []
+    for k in range(bins):
+        near = (edges & ((b == k) | (b == (k + 1) % bins) | (b == (k - 1) % bins))).astype(np.float32)
+        run = convolve(near, _line_kernel((k + 0.5) * np.pi / bins, length), mode="constant")
+        straight = (edges & (b == k)) & (run >= 0.7 * length)
+        dens.append(uniform_filter(straight.astype(np.float32), window, mode="nearest"))
+    dens = np.stack(dens)
+    orth = np.max(np.minimum(dens, np.roll(dens, bins // 2, axis=0)), axis=0)
+    return orth, dens.max(axis=0)
 
 
 def local_std(values: np.ndarray, window: int) -> np.ndarray:
@@ -106,6 +146,7 @@ def infrastructure_mask(rgb: np.ndarray, *, metres_per_pixel: float = 0.5,
                                       for w in (window, wide, wider)])
     lum_around = uniform_filter(lum, window, mode="nearest")
     deficit = green_around - exg
+    orth, straightness = straight_edge_density(lum, px)
 
     # Neutral against green surroundings, and not a hole of deep shadow.
     neutral_cut = (deficit > 0.07) & (exg < 0.05) & (green_around > 0.05) & (lum > 0.16)
@@ -169,7 +210,10 @@ def infrastructure_mask(rgb: np.ndarray, *, metres_per_pixel: float = 0.5,
         road |= keep[labels]
 
     # --- Buildings: thick, smooth, box-filling blobs --------------------------
-    roofish = binary_closing(light | dim | warm_roof, iterations=2)
+    # Every neutral cut counts as roof evidence: the shaded plane of a pitched
+    # roof is neither "light" nor grey enough for "dim", but it is still a
+    # neutral surface cut into the pasture.
+    roofish = binary_closing(neutral_cut | light | dim | warm_roof, iterations=2)
     thick = binary_opening(roofish, structure=disk(max(1, int(round(4 * px)))))
     building = np.zeros_like(light)
     labels, count, area, width, length = component_form(thick)
@@ -190,7 +234,14 @@ def infrastructure_mask(rgb: np.ndarray, *, metres_per_pixel: float = 0.5,
         np.minimum.at(nearest, labels.ravel(), road_distance.ravel())
         # A clearly red, box-shaped roof needs no road to vouch for it:
         # nothing natural here is that colour AND that shape.
-        served = (nearest <= 60.0) | ((redness > 0.08) & (rectangularity(labels, count, area) > 0.6))
+        rect = rectangularity(labels, count, area)
+        # Huts reached only by a footpath have no detected road. A crisp
+        # rectangle that is smooth and stands alone is a roof anyway; pale
+        # limestone is ragged and comes in crowds.
+        crowd = component_mean(labels, count,
+                               uniform_filter(roofish.astype(np.float32), max(3, int(121 * px) | 1),
+                                              mode="nearest"))
+        served = (nearest <= 60.0) | ((redness > 0.08) & (rect > 0.6))
         keep = (area >= 160 * px * px) & (area <= 40000 * px * px) & (texture < 0.055) & \
             (rectangularity(labels, count, area) > 0.5) & served
         # Built-up ground (yards, platforms, car parks) right beside a road.
@@ -203,29 +254,155 @@ def infrastructure_mask(rgb: np.ndarray, *, metres_per_pixel: float = 0.5,
         keep[0] = False
         building = binary_fill_holes(keep[labels])
 
-    # --- Built-up areas: stations, villages, depots --------------------------
-    # In a big complex the buildings, yards, tracks and car parks are each
-    # odd shapes, but together they cover most of the ground and leave no
-    # green. Take any area that dense in man-made candidates whole.
-    candidates = (neutral_cut | light | dim | warm_roof | road | building).astype(np.float32)
-    density = uniform_filter(candidates, max(3, int(61 * px) | 1), mode="nearest")
-    local_green = uniform_filter(exg, max(3, int(41 * px) | 1), mode="nearest")
-    built = (density > 0.30) & (local_green < 0.06)
-    built = binary_opening(built, structure=disk(max(1, int(round(6 * px)))))
-    labels, count, area, width, length = component_form(built)
+        # Lone huts reached only by a footpath have no detected road. Judge
+        # them on a harder opening (3.5 m) that strips the paths and lean-tos
+        # fused to them: a crisp, smooth rectangle standing alone is a roof;
+        # pale limestone is ragged and comes in crowds.
+        core_body = binary_opening(roofish, structure=disk(max(1, int(round(7 * px)))))
+        labels, count, area, width, length = component_form(core_body)
+        if count:
+            interior = core_body & ~binary_dilation(~core_body, iterations=1)
+            texture = component_mean(labels, count, np.where(interior, local_std(lum, 3), 0.0)) / \
+                np.maximum(component_mean(labels, count, interior.astype(np.float32)), 1e-6)
+            crowd = component_mean(labels, count, uniform_filter(
+                roofish.astype(np.float32), max(3, int(121 * px) | 1), mode="nearest"))
+            # Measured: hut bodies 105-550 m2 here, loose limestone blocks
+            # under 100 m2 at the same rectangularity. Size is the separator.
+            lone = (rectangularity(labels, count, area) > 0.62) & (texture < 0.045) & \
+                (crowd < 0.15) & (area >= 420 * px * px) & (area <= 4000 * px * px)
+            lone[0] = False
+            # Take the whole roof back: the thick blob each lone body sits in.
+            lone_px = lone[labels]
+            tl, tc = label(thick, structure=np.ones((3, 3)))
+            hit = np.unique(tl[lone_px])
+            building |= binary_fill_holes(np.isin(tl, hit[hit > 0]))
+
+    # --- Context-free structures: in rock, scree and forest too --------------
+    # Where there is no green to cut, colour context says nothing. Form still
+    # does: nature makes no long ribbon of constant width (roads, rail lines,
+    # galleries, ski tows) and no large crisp rectangle (halls, sheds).
+    contrast_window = max(3, int(31 * px) | 1)
+    lum_mid = uniform_filter(lum, contrast_window, mode="nearest")
+    plain = (chroma < 0.12) & (exg < 0.06) & (lum < 0.88)  # not snow-white, not green
+    raised = plain & (lum > lum_mid + 0.05)
+    raised = binary_opening(binary_closing(raised, structure=disk(max(1, int(round(2 * px))))),
+                            iterations=1)
+    labels, count, area, width, length = component_form(raised)
     if count:
-        # A built-up area must contain a detected building. A field of pale
-        # limestone is just as dense and as bare -- and may well have a road
-        # running past it -- but no roof stands in it.
-        anchors = binary_dilation(building, iterations=max(1, int(round(4 * px))))
-        anchored = np.bincount(labels[anchors & built], minlength=count + 1) >= 40 * px * px
-        keep = (area >= 2000 * px * px) & anchored  # 500 m2: a station, not a road
+        spread = width_spread(raised, labels, count)
+        ribbon = (length >= 200 * px) & (width >= 3 * px) & (width <= 36 * px) & (spread <= 0.30)
+        ribbon[0] = False
+        road |= ribbon[labels]
+    # White structures (galleries, concrete, white roofs) are as bright as
+    # snow, so the snow guard above hides them. Snow and ice are ragged
+    # (width spread 0.5-1.6 measured); a gallery holds its width (0.35).
+    # White stream gravel holds its width too but is 1.5-2 m across, so a
+    # minimum width of 5 m keeps streams out.
+    white = binary_opening(binary_closing((lum > 0.55) & (chroma < 0.12), iterations=2), iterations=1)
+    labels, count, area, width, length = component_form(white)
+    if count:
+        # ...and a gallery stands alone; a strip of glacier ice lies among
+        # more snow and ice.
+        white_around = component_mean(labels, count, uniform_filter(
+            white.astype(np.float32), max(3, int(121 * px) | 1), mode="nearest"))
+        keep = (length >= 150 * px) & (width >= 10 * px) & (width <= 60 * px) & \
+            (width_spread(white, labels, count) <= 0.40) & (white_around < 0.25)
         keep[0] = False
-        built = binary_fill_holes(keep[labels])
-        # Grow to the candidates it is made of, so its edge buildings come too.
-        built = binary_dilation(built, iterations=max(1, int(round(4 * px)))) & \
-            binary_dilation(candidates > 0, iterations=1) | built
-        building |= built
+        building |= keep[labels]
+    # Bright and dark flat-topped blocks: halls, sheds, platforms.
+    # A big hall roof is its own 15 m neighbourhood and never stands out
+    # against it; judge blocks against the wider 60 m surroundings too.
+    lum_wide = uniform_filter(lum, max(3, int(121 * px) | 1), mode="nearest")
+    brighter = (lum > lum_mid + 0.10) | (lum > lum_wide + 0.12)
+    darker = (lum < lum_mid - 0.10) | (lum < lum_wide - 0.12)
+    for block in (plain & brighter, plain & darker & (lum > 0.08)):
+        block = binary_opening(binary_closing(block, iterations=2), structure=disk(max(1, int(round(3 * px)))))
+        labels, count, area, width, length = component_form(block)
+        if not count:
+            continue
+        interior = block & ~binary_dilation(~block, iterations=1)
+        texture = component_mean(labels, count, np.where(interior, local_std(lum, 3), 0.0)) / \
+            np.maximum(component_mean(labels, count, interior.astype(np.float32)), 1e-6)
+        # Loose limestone blocks reach rectangularity 0.77 but stay under
+        # ~100 m2; a hall is several hundred and far crisper.
+        # Rock fractures into box-like slabs too; a building's outline is
+        # made of long straight edges, a slab's is not.
+        edge_support = component_mean(labels, count, binary_dilation(block, iterations=3).astype(np.float32) * straightness)
+        keep = (area >= 600 * px * px) & (area <= 60000 * px * px) & \
+            (rectangularity(labels, count, area) > 0.70) & (texture < 0.04) & \
+            (component_mean(labels, count, straightness) > 0.04)
+        keep[0] = False
+        building |= binary_fill_holes(keep[labels])
+    plain_raised = raised
+
+    # --- Rectilinear structure: what colour cannot see ------------------------
+    # Grey roofs, platforms and rail yards on grey rock pass every colour test
+    # as rock. Their geometry does not: dense straight edges at right angles.
+    seeds = orth > 0.06  # stations 0.08-0.13, huts 0.065; nature <= 0.023
+    grown = (orth > 0.025) | (straightness > 0.08)
+    labels, count = label(grown, structure=np.ones((3, 3)))
+    if count:
+        seeded = np.zeros(count + 1, bool)
+        seeded[np.unique(labels[seeds])] = True
+        seeded[0] = False
+        rectilinear = binary_fill_holes(seeded[labels])
+        rectilinear = binary_opening(rectilinear, structure=disk(max(1, int(round(4 * px)))))
+        labels, count, area, width, length = component_form(rectilinear)
+        if count:
+            # Forest shadows and crevassed ice make straight edges too, but a
+            # structure is mostly built surface: neither green nor snow-white.
+            built_surface = (exg < 0.03) & (lum < 0.80) & (lum > 0.08)
+            surface_share = component_mean(labels, count, built_surface.astype(np.float32))
+            keep = (area >= 300 * px * px) & (surface_share > 0.55)
+            keep[0] = False
+            building |= keep[labels]
+
+    # --- Built-up areas: stations, villages, depots --------------------------
+    # The yards, platforms and lanes between buildings are each odd shapes,
+    # but they lie INSIDE a group of buildings. Group buildings standing
+    # within ~60 m of one another; for any group of two or more, take the
+    # convex hull of the group -- but only its non-green ground, so pasture
+    # between scattered huts is left alone.
+    # Link buildings at 60 m, then -- for groups whose hull would be mostly
+    # empty (a chain of huts along a valley) -- relink that group at 30 m
+    # and then 15 m, so a dense station inside a long chain is still found.
+    from scipy.spatial import ConvexHull
+    # Not green, not snow, not blue glacier ice.
+    bare_ground = (exg < 0.05) & (lum < 0.80) & ((f[..., 2] - f[..., 0]) < 0.03)
+    blabels, _ = label(building, structure=np.ones((3, 3)))
+    seed = building.copy()
+    for reach_m in (30.0, 15.0, 7.5):
+        groups, gcount = label(binary_dilation(seed, iterations=max(1, int(round(reach_m / metres_per_pixel))),
+                                               structure=np.ones((3, 3), bool)), structure=np.ones((3, 3)))
+        if not gcount:
+            break
+        pairs = np.unique(np.stack([groups[seed], blabels[seed]], 1), axis=0)
+        members = np.bincount(pairs[:, 0], minlength=gcount + 1)
+        unresolved = np.zeros_like(seed)
+        for g in np.nonzero(members >= 2)[0]:
+            if g == 0:
+                continue
+            ys, xs = np.nonzero(seed & (groups == g))
+            points = np.stack([xs, ys], 1)
+            try:
+                hull = points[ConvexHull(points).vertices]
+            except Exception:
+                continue
+            x0, y0 = points.min(0)
+            x1, y1 = points.max(0)
+            canvas = Image.new("1", (int(x1 - x0 + 1), int(y1 - y0 + 1)), 0)
+            ImageDraw.Draw(canvas).polygon([(int(x - x0), int(y - y0)) for x, y in hull], fill=1)
+            inside = np.asarray(canvas, bool)
+            # A real complex is mostly built: its hull a few times its roofs
+            # (the stations measured ~4x).
+            if inside.sum() > 6 * len(points) or inside.sum() > 200000 * px * px:
+                unresolved |= seed & (groups == g)
+                continue
+            region = (slice(int(y0), int(y1) + 1), slice(int(x0), int(x1) + 1))
+            building[region] |= inside & bare_ground[region]
+        seed = unresolved
+        if not seed.any():
+            break
 
     # --- Water: blue-dominant, smooth, mid-dark, and sizeable ---------------
     # Lakes read blue over grey (B-R ~ +0.07); grass, rock and gravel are
@@ -295,7 +472,8 @@ def infrastructure_mask(rgb: np.ndarray, *, metres_per_pixel: float = 0.5,
               "donor_exclude": binary_dilation(water, iterations=max(1, int(round(80 * px)))) & (exg < 0.04),
               "water": water, "beach": beach}
     if return_layers:
-        result.update(light=light, dim=dim, deficit=deficit)
+        result.update(light=light, dim=dim, deficit=deficit, warm_roof=warm_roof,
+                      roofish=roofish, thick=thick, neutral_cut=neutral_cut)
     return result
 
 

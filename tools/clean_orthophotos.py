@@ -15,13 +15,15 @@ Stages, each parallel and each resumable (finished outputs are skipped unless
 
   1. cache     every tile box-resampled once to --work-res (default 0.5 m:
                fine enough to see a farm track, small enough to be quick)
-  2. clean     per tile, with a --margin-m border borrowed from whichever
+  2. detect    per tile, with a --margin-m (150 m) border borrowed from whichever
                neighbours exist so features crossing tile edges are caught
                whole and fills continue across seams:
                  detect  tools/infrastructure_colour_mask.py (colour + form,
                          no vector data)
-                 fill    tools/infrastructure_fill.py (exemplar mosaic from
-                         untouched terrain within ~40 m)
+  3. clean     per tile, the union of its own detection and what each
+               neighbour's run detected over the same ground (so both sides
+               of a tile edge agree), filled by tools/infrastructure_fill.py
+               (exemplar mosaic from untouched terrain within ~40 m)
 
 Outputs under --out:
   cache/<E>-<N>.npy          working-resolution RGB
@@ -146,6 +148,49 @@ def padded(name: str, cache_dir: Path, margin: int) -> tuple[np.ndarray, np.ndar
     return canvas, real
 
 
+def detect_tile(name: str, out: str, work_res: float, margin_m: float, force: bool) -> str:
+    """Detection over the tile plus its margin; the whole canvas mask is kept
+    so neighbours can use what this run saw in their area."""
+    out_dir = Path(out)
+    dest = out_dir / "detect" / f"{name}.npz"
+    if dest.exists() and not force:
+        return name
+    margin = int(round(margin_m / work_res))
+    canvas, real = padded(name, out_dir / "cache", margin)
+    result = infrastructure_mask(canvas, metres_per_pixel=work_res)
+    np.savez_compressed(dest, mask=result["mask"] & real, road=result["road"],
+                        building=result["building"], water=result["water"] | result["beach"],
+                        donor_exclude=result["donor_exclude"], margin=margin)
+    return name
+
+
+def merged_mask(name: str, out_dir: Path, margin: int, size: int) -> dict[str, np.ndarray]:
+    """This tile's canvas-sized masks, OR-ed with what each neighbour's run
+    detected over the same ground. A complex straddling a tile edge is then
+    judged identically from both sides."""
+    e, n = (int(v) for v in name.split("-"))
+    own = np.load(out_dir / "detect" / f"{name}.npz")
+    merged = {k: own[k].copy() for k in ("mask", "road", "building", "water", "donor_exclude")}
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            if (dx, dy) == (0, 0):
+                continue
+            path = out_dir / "detect" / f"{e + dx}-{n - dy}.npz"
+            if not path.exists():
+                continue
+            other = np.load(path)
+            # Neighbour canvas origin relative to ours, in pixels.
+            oy, ox = dy * size, dx * size
+            for k in merged:
+                src = other[k]
+                y0, x0 = max(0, oy), max(0, ox)
+                y1 = min(merged[k].shape[0], oy + src.shape[0])
+                x1 = min(merged[k].shape[1], ox + src.shape[1])
+                if y1 > y0 and x1 > x0:
+                    merged[k][y0:y1, x0:x1] |= src[y0 - oy:y1 - oy, x0 - ox:x1 - ox]
+    return merged
+
+
 def clean_tile(name: str, out: str, work_res: float, margin_m: float, force: bool) -> dict:
     out_dir = Path(out)
     dest = out_dir / "clean" / f"{name}.png"
@@ -154,15 +199,16 @@ def clean_tile(name: str, out: str, work_res: float, margin_m: float, force: boo
         return json.loads(stats_path.read_text())
     margin = int(round(margin_m / work_res))
     canvas, real = padded(name, out_dir / "cache", margin)
-    result = infrastructure_mask(canvas, metres_per_pixel=work_res)
-    mask = result["mask"] & real
+    size = canvas.shape[0] - 2 * margin
+    det = merged_mask(name, out_dir, margin, size)
+    mask = det["mask"] & real
     filled, _ = exemplar_fill(canvas, mask, metres_per_pixel=work_res,
-                              donor_exclude=result["donor_exclude"])
+                              donor_exclude=det["donor_exclude"])
     core = (slice(margin, canvas.shape[0] - margin), slice(margin, canvas.shape[1] - margin))
     raw, clean, cmask = canvas[core], filled[core], mask[core]
     Image.fromarray(clean).save(dest)
     Image.fromarray((cmask * 255).astype(np.uint8)).save(out_dir / "mask" / f"{name}.png")
-    view = {k: v[core] for k, v in result.items() if k != "donor_exclude"}
+    view = {"mask": cmask, "building": det["building"][core]}
     review = np.concatenate([raw, overlay(raw, view), clean], axis=1)
     Image.fromarray(review).resize((review.shape[1] // 2, review.shape[0] // 2),
                                    Image.LANCZOS).save(out_dir / "review" / f"{name}.jpg", quality=88)
@@ -172,8 +218,8 @@ def clean_tile(name: str, out: str, work_res: float, margin_m: float, force: boo
     (out_dir / "clean" / f"{name}.pgw").write_text(
         f"{work_res}\n0\n0\n{-work_res}\n{e * 1000 + work_res / 2}\n{n * 1000 + size_m - work_res / 2}\n")
     stats = {"tile": name, "masked": float(cmask.mean()),
-             "road": float(view["road"].mean()), "building": float(view["building"].mean()),
-             "water": float((view["water"] | view["beach"]).mean())}
+             "road": float(det["road"][core].mean()), "building": float(det["building"][core].mean()),
+             "water": float(det["water"][core].mean())}
     stats_path.write_text(json.dumps(stats))
     return stats
 
@@ -200,14 +246,14 @@ def main() -> None:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 2) // 2))
     parser.add_argument("--work-res", type=float, default=0.5, help="metres per pixel")
-    parser.add_argument("--margin-m", type=float, default=40.0,
+    parser.add_argument("--margin-m", type=float, default=150.0,
                         help="neighbour context around each tile")
     parser.add_argument("--preview", type=int, default=0, metavar="N",
                         help="also write an NxN stitched preview of every tile")
     parser.add_argument("--force", action="store_true", help="redo finished outputs")
     args = parser.parse_args()
 
-    for sub in ("cache", "clean", "mask", "review", "stats"):
+    for sub in ("cache", "detect", "clean", "mask", "review", "stats"):
         (args.out / sub).mkdir(parents=True, exist_ok=True)
     tiles = discover(args.inputs)
     if not tiles:
@@ -216,6 +262,10 @@ def main() -> None:
     with ProcessPoolExecutor(args.jobs) as pool:
         names = list(pool.map(cache_tile, tiles.values(), [str(args.out / "cache")] * len(tiles),
                               [args.work_res] * len(tiles), [args.force] * len(tiles)))
+        print("detecting", flush=True)
+        list(pool.map(detect_tile, names, [str(args.out)] * len(names),
+                      [args.work_res] * len(names), [args.margin_m] * len(names),
+                      [args.force] * len(names)))
         print("cleaning", flush=True)
         stats = []
         for done, s in enumerate(pool.map(clean_tile, names, [str(args.out)] * len(names),
