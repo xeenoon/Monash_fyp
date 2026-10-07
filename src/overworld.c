@@ -15,7 +15,8 @@
 
 #define WALK_SPEED 4.5f
 #define RUN_SPEED 9.0f
-#define ENTRANCE_SPACING_M 650.0f
+#define MIN_DISTANCE 18.0f
+#define MAX_DISTANCE 4200.0f
 #define PI_F 3.14159265f
 
 /* --- Height grid ------------------------------------------------------------ */
@@ -80,10 +81,12 @@ static bool load_heights(Overworld *world, const char *root, double centre_x, do
 	uint32_t tiles = 1u << (uint32_t)level;
 	double tile_w = (extent[2] - extent[0]) / tiles, tile_h = (extent[3] - extent[1]) / tiles;
 	double northing = -centre_z;
-	int tx0 = (int)floor((centre_x - half_extent - extent[0]) / tile_w);
-	int tx1 = (int)floor((centre_x + half_extent - extent[0]) / tile_w);
-	int ty0 = (int)floor((extent[3] - (northing + half_extent)) / tile_h);
-	int ty1 = (int)floor((extent[3] - (northing - half_extent)) / tile_h);
+	int tx0 = half_extent > 0.0 ? (int)floor((centre_x - half_extent - extent[0]) / tile_w) : 0;
+	int tx1 = half_extent > 0.0 ? (int)floor((centre_x + half_extent - extent[0]) / tile_w)
+								 : (int)tiles - 1;
+	int ty0 = half_extent > 0.0 ? (int)floor((extent[3] - (northing + half_extent)) / tile_h) : 0;
+	int ty1 = half_extent > 0.0 ? (int)floor((extent[3] - (northing - half_extent)) / tile_h)
+								 : (int)tiles - 1;
 	tx0 = tx0 < 0 ? 0 : tx0;
 	ty0 = ty0 < 0 ? 0 : ty0;
 	tx1 = tx1 >= (int)tiles ? (int)tiles - 1 : tx1;
@@ -282,70 +285,90 @@ static OverworldGround classify(const Overworld *world, double x, double z)
 	return OVERWORLD_GROUND_SCREE;
 }
 
-static void place_entrances(Overworld *world, uint32_t seed)
+static bool place_entrances(Overworld *world, uint32_t seed)
 {
 	uint32_t state = seed * 2654435761u + 17u;
 	double centre_u = (world->samples_u - 1) * 0.5, centre_v = (world->samples_v - 1) * 0.5;
 	double cx, cz;
 	from_grid(world, centre_u, centre_v, &cx, &cz);
-	bool used[OVERWORLD_GROUND_COUNT] = {0};
 	uint32_t placed = 0;
-	/* Rejection sampling, relaxing the rules if a map refuses: first demand a
-	 * hillside (a hole needs a hill), different ground for every door and
-	 * proper spacing; then let the ground repeat; then take any slope. */
-	for (int pass = 0; pass < 3 && placed < OVERWORLD_ENTRANCES; ++pass)
-		for (int attempt = 0; attempt < 6000 && placed < OVERWORLD_ENTRANCES; ++attempt)
+	/* Mitchell-style best-candidate blue noise. Terrain height is the only
+	 * validity rule: every iteration samples the full map and retains the point
+	 * farthest from its nearest existing entrance. This produces Voronoi-like,
+	 * nearly equidistant sites without pushing mountains or glaciers aside. */
+	while (placed < OVERWORLD_ENTRANCES)
+	{
+		OverworldEntrance best = {0};
+		double best_score = -1.0;
+		for (int attempt = 0; attempt < 30000; ++attempt)
 		{
-			/* Within the middle of the map, where the player starts. */
-			double u = (0.12 + 0.76 * random01(&state)) * (world->samples_u - 1);
-			double v = (0.12 + 0.76 * random01(&state)) * (world->samples_v - 1);
+			/* A two-percent rim keeps interpolation inside the height grid while
+			 * still using effectively the entire visible dataset. */
+			double u = (0.02 + 0.96 * random01(&state)) * (world->samples_u - 1);
+			double v = (0.02 + 0.96 * random01(&state)) * (world->samples_v - 1);
 			double x, z;
 			from_grid(world, u, v, &x, &z);
+			float elevation = overworld_height(world, x, z);
+			if (!isfinite(elevation))
+				continue;
 			float downhill = 0.0f;
-			float slope = slope_at(world, x, z, &downhill);
-			float min_slope = pass < 2 ? 0.22f : 0.08f, max_slope = pass < 2 ? 0.7f : 1.2f;
-			if (!isfinite(slope) || slope < min_slope || slope > max_slope)
-				continue;
-			/* Doors that look away from the sun sit in their own hill's shadow
-			 * all day. The default sun (main.c sun_presets[0]) lies toward
-			 * (+0.4, +0.3) in XZ; on the first two passes insist the door
-			 * faces broadly into it. */
-			if (pass < 2 && cosf(downhill - atan2f(0.3f, 0.4f)) < 0.35f)
-				continue;
-			/* The doorstep itself must be walkable: flat enough just in front. */
-			double fx = x + cos(downhill) * 3.0, fz = z + sin(downhill) * 3.0;
-			float front_slope = slope_at(world, fx, fz, NULL);
-			if (!isfinite(front_slope) || front_slope > 0.9f)
-				continue;
-			double distance_from_centre = hypot(x - cx, z - cz);
-			if (distance_from_centre < 250.0 || distance_from_centre > 1350.0)
-				continue;
-			bool crowded = false;
-			for (uint32_t i = 0; i < placed; ++i)
-				crowded |= hypot(x - world->entrances[i].position.x,
-								 z - world->entrances[i].position.z) < ENTRANCE_SPACING_M;
-			if (crowded)
-				continue;
-			OverworldGround ground = classify(world, x, z);
-			if (pass == 0 && used[ground])
-				continue;
-			used[ground] = true;
-			world->entrances[placed++] = (OverworldEntrance){
-				.position = {x, overworld_height(world, x, z), z},
-				.facing = downhill,
-				.ground = ground,
-				.elevation_m = overworld_height(world, x, z),
-			};
+			if (!isfinite(slope_at(world, x, z, &downhill)))
+				downhill = 2.0f * PI_F * random01(&state);
+
+			double nearest2 = 0.0;
+			if (placed)
+			{
+				nearest2 = 1e30;
+				for (uint32_t i = 0; i < placed; ++i)
+				{
+					double dx = x - world->entrances[i].position.x;
+					double dz = z - world->entrances[i].position.z;
+					nearest2 = fmin(nearest2, dx * dx + dz * dz);
+				}
+			}
+			if (nearest2 > best_score)
+			{
+				best = (OverworldEntrance){
+					.position = {x, elevation, z},
+					.facing = downhill,
+					.ground = classify(world, x, z),
+					.elevation_m = elevation,
+				};
+				best_score = nearest2;
+			}
 		}
+		if (best_score < 0.0)
+		{
+			fprintf(stderr, "Overworld: placed only %u of %u dungeon entrances\n", placed,
+					OVERWORLD_ENTRANCES);
+			return false;
+		}
+		world->entrances[placed++] = best;
+	}
 	/* Open on the whole map: centred, high, looking north-ish. */
 	world->focus_x = cx;
 	world->focus_z = cz;
 	static const char *ground_names[] = {"snow", "cliff", "meadow", "valley", "scree"};
+	double min_x = world->entrances[0].position.x, max_x = min_x;
+	double min_z = world->entrances[0].position.z, max_z = min_z;
+	double nearest = 1e30;
 	for (uint32_t i = 0; i < placed; ++i)
+	{
 		printf("Overworld: entrance %u at (%.1f, %.1f, %.1f) on %s ground, %.0f m from centre\n", i,
 			   world->entrances[i].position.x, world->entrances[i].position.y,
 			   world->entrances[i].position.z, ground_names[world->entrances[i].ground],
 			   hypot(world->entrances[i].position.x - cx, world->entrances[i].position.z - cz));
+		min_x = fmin(min_x, world->entrances[i].position.x);
+		max_x = fmax(max_x, world->entrances[i].position.x);
+		min_z = fmin(min_z, world->entrances[i].position.z);
+		max_z = fmax(max_z, world->entrances[i].position.z);
+		for (uint32_t j = 0; j < i; ++j)
+			nearest = fmin(nearest, hypot(world->entrances[i].position.x - world->entrances[j].position.x,
+									  world->entrances[i].position.z - world->entrances[j].position.z));
+	}
+	printf("Overworld: entrance spread %.0f x %.0f m, nearest pair %.0f m\n", max_x - min_x,
+		   max_z - min_z, nearest);
+	return true;
 }
 
 /* --- Entrance geometry --------------------------------------------------------- */
@@ -648,10 +671,17 @@ bool overworld_create(Renderer *renderer, Overworld *out, const char *dataset_ro
 		overworld_destroy(NULL, out);
 		return false;
 	}
-	place_entrances(out, seed);
+	if (!place_entrances(out, seed))
+	{
+		overworld_destroy(NULL, out);
+		return false;
+	}
 	out->pitch = -58.0f;
 	out->yaw = -90.0f;
-	out->distance = (float)half_extent_m * 1.6f;
+	/* Begin with the expanded campaign in view; players can still zoom or fly
+	 * down to an individual entrance. */
+	out->distance = half_extent_m > 0.0 ? fminf(MAX_DISTANCE, (float)half_extent_m * 2.5f)
+									 : MAX_DISTANCE;
 	if (!build_entrance_meshes(renderer, out))
 	{
 		overworld_destroy(renderer, out);
@@ -677,9 +707,6 @@ void overworld_destroy(Renderer *renderer, Overworld *world)
 }
 
 /* --- Map camera ----------------------------------------------------------------- */
-
-#define MIN_DISTANCE 18.0f
-#define MAX_DISTANCE 4200.0f
 
 static void clamp_focus(Overworld *world)
 {

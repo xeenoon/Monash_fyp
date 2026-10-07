@@ -43,6 +43,19 @@ static bool dungeon_cache_path(uint32_t dungeon_id, char *out, size_t capacity)
 	return written > 0 && (size_t)written < capacity;
 }
 
+static bool dungeon_progress_path(char *out, size_t capacity)
+{
+	const char *directory = getenv("DUNGEON_CACHE_DIR");
+	if (!directory || !*directory)
+		directory = SDL_GetBasePath();
+	if (!directory || !*directory || !out || !capacity)
+		return false;
+	size_t length = strlen(directory);
+	const char *separator = length && directory[length - 1u] == '/' ? "" : "/";
+	int written = snprintf(out, capacity, "%s%sdungeon_progress", directory, separator);
+	return written > 0 && (size_t)written < capacity;
+}
+
 /* Compile-time terrain start camera. These are absolute WORLD coordinates (the
    `camera pos=` value printed in a shader dump / replay hint), NOT tile-local.
    Override any of them on the CMake command line, e.g.
@@ -593,8 +606,9 @@ int main(int argc, char *argv[])
 			if (getenv("DUNGEON_SEED"))
 				dungeon_game_set_level_seed(
 					&game, 0u, (uint32_t)strtoul(getenv("DUNGEON_SEED"), NULL, 10));
-			/* The overworld is the generated 1 km Alps tile set, drawn by the
-			 * same TerrainRuntime as the terrain scene. */
+			char progress_path[1024];
+			if (dungeon_progress_path(progress_path, sizeof(progress_path)))
+				dungeon_game_set_progress_path(&game, progress_path);
 			TerrainRuntimeSettings settings = terrain_runtime_default_settings();
 			settings.quadtree.split_threshold_px = 2.5f;
 			settings.quadtree.merge_threshold_px = 1.75f;
@@ -605,13 +619,13 @@ int main(int argc, char *argv[])
 			settings.skirt_ratio = 0.01f;
 			/* The overworld is the terrain scene's own map: the graded 16 km
 			 * Alps set (alps-data, linked from the terrain_gen checkout),
-			 * browsable over the area around the terrain scene's default
-			 * viewpoint. OVERWORLD_DATASET overrides the dataset. */
+			 * browsable across its complete extent. OVERWORLD_DATASET overrides
+			 * the dataset. */
 			const char *overworld_root = getenv("OVERWORLD_DATASET") ? getenv("OVERWORLD_DATASET")
 																	 : GRADED_ALPS_DIR;
 			terrain = terrain_runtime_create(&renderer, overworld_root, &settings);
 			if (!terrain || !overworld_create(&renderer, &overworld, overworld_root, session_seed,
-											  TERRAIN_START_POS_X, TERRAIN_START_POS_Z, 1600.0))
+											  TERRAIN_START_POS_X, TERRAIN_START_POS_Z, 0.0))
 			{
 				fprintf(stderr, "Could not build the overworld from %s\n", overworld_root);
 				return EXIT_FAILURE;
@@ -1407,10 +1421,11 @@ int main(int argc, char *argv[])
 		}
 		if (overworld_frame)
 		{
-			/* Terrain, then the three doors, in both the main
+			/* Terrain, then the dungeon doors, in both the main
 			 * and the shadow list: one allocation, main list first. */
-			RendererDraw extras[64];
-			uint32_t extra_count = overworld_draws(&overworld, camera.position, extras, 64u);
+			RendererDraw extras[OVERWORLD_MAX_DRAWS];
+			uint32_t extra_count = overworld_draws(&overworld, camera.position, extras,
+											 OVERWORLD_MAX_DRAWS);
 			allocated_draws = calloc((size_t)terrain_draw_count + terrain_shadow_draw_count +
 										 2u * extra_count + 1u,
 									 sizeof(*allocated_draws));

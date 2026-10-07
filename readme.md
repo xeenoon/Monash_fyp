@@ -38,16 +38,18 @@ TERRAIN_SCENE=dungeon ./build/terrain_renderer
 This launches the full game (`src/dungeon_game.c`): a title screen, How to
 Play, and an overworld map (`src/overworld.c`) -- the graded 16 km Swiss Alps
 terrain, browsed Google Earth style (drag to pan, scroll to zoom, right-drag to
-rotate) around the terrain scene's default viewpoint. Three hobbit-hole doors,
-built from the dungeon textures, are placed on sunlit hillsides each launch;
-click a pin, then Descend. Each dungeon's biome (wall tint and torch colour)
+rotate) across the complete 16 km dataset. Twenty hobbit-hole doors,
+built from the dungeon textures, are distributed across the entire terrain;
+click a numbered pin to descend. Each dungeon's biome (wall tint and torch colour)
 follows the ground its door stands on -- snow, cliff, meadow, valley or scree,
-classified from the heights and imagery. The first visit writes the complete
-compiled levels beside the executable as `dungeon1`, `dungeon2`, and
-`dungeon3`; later launches read those versioned, checksummed files before
+classified from the heights and imagery. The first visit to each entrance writes
+its complete compiled level beside the executable as `dungeon1` through
+`dungeon20`; later launches read those versioned, checksummed files before
 generating anything. `DUNGEON_SESSION_SEED` or `DUNGEON_SEED` remains an
 explicit override and replaces a cache whose seed differs. Set
-`DUNGEON_CACHE_DIR` to put the same files in another directory. The map needs the Alps dataset at
+`DUNGEON_CACHE_DIR` to put the same files in another directory. Completion and
+best-star records are saved immediately in `dungeon_progress` in that directory.
+The map needs the Alps dataset at
 `alps-data/` (git-ignored): link the terrain_gen checkout's copy with
 `ln -s /home/ccw100/terrain_gen/alps-data alps-data`, or point
 `OVERWORLD_DATASET` at any tile set. The player underground is the Indiana

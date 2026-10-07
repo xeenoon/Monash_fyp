@@ -2,6 +2,7 @@
 
 #include "camera.h"
 #include "coordinate.h"
+#include "dungeon_campaign.h"
 #include "input.h"
 #include "mesh.h"
 #include "renderer.h"
@@ -9,8 +10,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* The overworld: the 1 km generated Swiss Alps terrain tile set, walked on
- * foot, with the game's three dungeons set into its hillsides as round,
+/* The overworld: the complete generated terrain tile set, walked on
+ * foot, with the game's dungeons set into its hillsides as round,
  * hobbit-hole doors built from the dungeons' own stone and wood.
  *
  * The terrain itself is drawn by TerrainRuntime as in the terrain scene; this
@@ -18,7 +19,10 @@
  * (for walking and for placing the entrances), the entrance geometry, the
  * player's position on the map, and the follow camera. */
 
-#define OVERWORLD_ENTRANCES 3u
+#define OVERWORLD_ENTRANCES DUNGEON_CAMPAIGN_LEVELS
+/* Five exterior pieces per entrance, with spare room for active entrance
+ * effects supplied by richer overworld renderers. */
+#define OVERWORLD_MAX_DRAWS (OVERWORLD_ENTRANCES * 5u + 64u)
 
 /* What the ground at an entrance is, which decides the dungeon's biome. */
 typedef enum
@@ -76,12 +80,11 @@ typedef struct
 	float time;
 } Overworld;
 
-/* Loads the dataset's finest tiles for heights, picks three well-spaced
- * hillside sites on three different kinds of ground (random per `seed`), and
- * builds the entrance geometry. */
-/* Only the square region of half-size `half_extent_m` around (centre_x,
- * centre_z) is loaded and browsable; the terrain renderer still draws the
- * whole dataset around it. */
+/* Loads the dataset's finest tiles for heights, distributes entrances over
+ * the terrain (deterministically per `seed`), and builds their geometry. */
+/* With a positive `half_extent_m`, only that square around (centre_x,
+ * centre_z) is loaded and browsable. A non-positive value loads the complete
+ * dataset, matching the terrain renderer's full visible map. */
 bool overworld_create(Renderer *renderer, Overworld *out, const char *dataset_root, uint32_t seed,
 					  double centre_x, double centre_z, double half_extent_m);
 void overworld_destroy(Renderer *renderer, Overworld *world);

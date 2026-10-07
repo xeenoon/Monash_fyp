@@ -1,5 +1,6 @@
 #pragma once
 
+#include "dungeon_campaign.h"
 #include "dungeon_scene.h"
 #include "input.h"
 #include "overworld.h"
@@ -17,13 +18,13 @@
  * lock puzzles, collision and rendering are unchanged, and the scripted test
  * harness still drives the bare scene with none of this running. */
 
-#define DUNGEON_GAME_LEVELS 3u
+#define DUNGEON_GAME_LEVELS DUNGEON_CAMPAIGN_LEVELS
 
 typedef enum
 {
 	DUNGEON_GAME_TITLE,
 	DUNGEON_GAME_HOW_TO_PLAY,
-	DUNGEON_GAME_OVERWORLD, /* walking the Alps between the three entrances */
+	DUNGEON_GAME_OVERWORLD, /* walking the Alps between the dungeon entrances */
 	DUNGEON_GAME_LOADING,
 	DUNGEON_GAME_PLAYING,
 	DUNGEON_GAME_DIALOGUE,
@@ -96,6 +97,7 @@ typedef struct
 	float ui_time, screen_time;
 	uint32_t session_seed;
 	DungeonGameLevel levels[DUNGEON_GAME_LEVELS];
+	char progress_path[1024]; /* completion stars, separate from generated-level caches */
 	uint32_t current;
 	/* Conversation memory survives dungeon reloads for this game session. */
 	Dialogue monk_dialogue;
@@ -126,9 +128,14 @@ typedef struct
 void dungeon_game_init(DungeonGame *game, uint32_t session_seed);
 void dungeon_game_destroy(DungeonGame *game);
 
+/* Load completion and best-star records from `path`; subsequent completions
+ * are saved there immediately through an atomic replace. Missing files start
+ * a fresh campaign. */
+void dungeon_game_set_progress_path(DungeonGame *game, const char *path);
+
 uint32_t dungeon_game_level_seed(const DungeonGame *game, uint32_t level);
-/* Restores the seed recorded by a persistent dungeon cache and keeps the
- * seed-derived display name in sync with the loaded layout. */
+/* Restores the seed recorded by a persistent dungeon cache. The authored
+ * campaign name remains tied to the entrance slot. */
 void dungeon_game_set_level_seed(DungeonGame *game, uint32_t level, uint32_t seed);
 /* Theme each level from the ground its entrance stands on. */
 void dungeon_game_assign_grounds(DungeonGame *game, const OverworldGround grounds[DUNGEON_GAME_LEVELS]);

@@ -34,10 +34,15 @@ static const DungeonBiome biomes[] = {
 };
 #define BIOME_COUNT (sizeof(biomes) / sizeof(biomes[0]))
 
-static const char *name_first[] = {"Forgotten", "Silent", "Hollow", "Sunless", "Whispering",
-								   "Shattered", "Drowned", "Gilded", "Cursed", "Nameless"};
-static const char *name_second[] = {"Halls", "Labyrinth", "Crypt", "Sanctum", "Warrens",
-									"Reliquary", "Depths", "Passages", "Vaults", "Chambers"};
+static const char *const campaign_names[DUNGEON_GAME_LEVELS] = {
+	"The Ashen Crown",       "The Frozen Reliquary", "The Mossbound Temple",
+	"The Sunken Archive",    "The Obsidian Chapel",  "The Gilded Sepulchre",
+	"The Hollow Bastion",    "The Whispering Vault", "The Drowned Labyrinth",
+	"The Cinder Warrens",    "The Ivory Catacomb",   "The Shattered Sanctum",
+	"The Moonlit Crypt",     "The Nameless Halls",   "The Thorned Depths",
+	"The Silent Ossuary",    "The Iron Passages",    "The Buried Observatory",
+	"The Serpent Chambers",  "The Last Necropolis",
+};
 
 static const UiColor WHITE = {240, 232, 214, 255};
 static const UiColor GOLD = {255, 200, 80, 255};
@@ -70,8 +75,8 @@ void dungeon_game_init(DungeonGame *game, uint32_t session_seed)
 	*game = (DungeonGame){0};
 	monk_dialogue_init(&game->monk_dialogue);
 	game->session_seed = session_seed ? session_seed : 1u;
-	/* A fresh pick of biomes every session: three different ones, each with
-	 * its own random layout. */
+	/* A fresh, balanced rotation of biomes every session. There are more
+	 * dungeons than biome families, but every dungeon has its own layout. */
 	uint32_t order[BIOME_COUNT];
 	for (uint32_t i = 0; i < BIOME_COUNT; ++i)
 		order[i] = i;
@@ -85,12 +90,9 @@ void dungeon_game_init(DungeonGame *game, uint32_t session_seed)
 	for (uint32_t i = 0; i < DUNGEON_GAME_LEVELS; ++i)
 	{
 		DungeonGameLevel *level = &game->levels[i];
-		level->biome = order[i];
+		level->biome = order[i % BIOME_COUNT];
 		level->seed = 1u + game_random(game) % 99991u;
-		uint32_t h = hash_u32(level->seed);
-		snprintf(level->name, sizeof(level->name), "The %s %s",
-				 name_first[h % (sizeof(name_first) / sizeof(name_first[0]))],
-				 name_second[(h >> 8) % (sizeof(name_second) / sizeof(name_second[0]))]);
+		snprintf(level->name, sizeof(level->name), "%s", campaign_names[i]);
 	}
 	game->screen = DUNGEON_GAME_TITLE;
 	game->in_overworld = true;
@@ -99,9 +101,9 @@ void dungeon_game_init(DungeonGame *game, uint32_t session_seed)
 
 void dungeon_game_assign_grounds(DungeonGame *game, const OverworldGround grounds[DUNGEON_GAME_LEVELS])
 {
-	/* Ground to biome. Scree is generic broken rock, so it takes whichever of
-	 * the two rock biomes the session's dice give it. */
-	bool used[BIOME_COUNT] = {0};
+	/* Ground to biome. With twenty entrances, repeating a terrain-appropriate
+	 * family is preferable to forcing an unrelated theme merely for uniqueness.
+	 * Scree is generic broken rock, so it alternates Ember and Sandstone. */
 	for (uint32_t i = 0; i < DUNGEON_GAME_LEVELS; ++i)
 	{
 		uint32_t want;
@@ -111,12 +113,8 @@ void dungeon_game_assign_grounds(DungeonGame *game, const OverworldGround ground
 		case OVERWORLD_GROUND_CLIFF: want = 4; break;	/* Obsidian Deep */
 		case OVERWORLD_GROUND_MEADOW: want = 2; break;	/* Verdant Ruins */
 		case OVERWORLD_GROUND_VALLEY: want = 5; break;	/* Sunken Grotto */
-		default: want = game_random(game) & 1u ? 0u : 3u; break; /* Ember / Sandstone */
+		default: want = i & 1u ? 0u : 3u; break; /* Ember / Sandstone */
 		}
-		/* Never two doors to the same biome. */
-		for (uint32_t k = 0; used[want] && k < BIOME_COUNT; ++k)
-			want = (want + 1u) % BIOME_COUNT;
-		used[want] = true;
 		game->levels[i].biome = want;
 	}
 }
@@ -145,6 +143,71 @@ void dungeon_game_destroy(DungeonGame *game)
 	game->queue = NULL;
 }
 
+static bool save_progress(const DungeonGame *game)
+{
+	if (!game->progress_path[0])
+		return false;
+	char temporary[sizeof(game->progress_path) + 8u];
+	int written = snprintf(temporary, sizeof(temporary), "%s.tmp", game->progress_path);
+	if (written < 0 || (size_t)written >= sizeof(temporary))
+		return false;
+	FILE *file = fopen(temporary, "wb");
+	if (!file)
+		return false;
+	bool ok = fprintf(file, "DUNGEON_PROGRESS 1 %u\n", DUNGEON_GAME_LEVELS) > 0;
+	for (uint32_t i = 0; ok && i < DUNGEON_GAME_LEVELS; ++i)
+		ok = fprintf(file, "%u %u %u\n", i, game->levels[i].completed ? 1u : 0u,
+					 game->levels[i].best_stars) > 0;
+	ok = fclose(file) == 0 && ok;
+	if (ok)
+		ok = rename(temporary, game->progress_path) == 0;
+	if (!ok)
+		remove(temporary);
+	return ok;
+}
+
+void dungeon_game_set_progress_path(DungeonGame *game, const char *path)
+{
+	if (!game || !path || !*path)
+		return;
+	snprintf(game->progress_path, sizeof(game->progress_path), "%s", path);
+	FILE *file = fopen(game->progress_path, "rb");
+	if (!file)
+		return;
+	unsigned version = 0, count = 0;
+	bool ok = fscanf(file, "DUNGEON_PROGRESS %u %u", &version, &count) == 2 && version == 1u &&
+			  count == DUNGEON_GAME_LEVELS;
+	for (uint32_t expected = 0; ok && expected < DUNGEON_GAME_LEVELS; ++expected)
+	{
+		unsigned id = 0, completed = 0, stars = 0;
+		ok = fscanf(file, "%u %u %u", &id, &completed, &stars) == 3 && id == expected &&
+			 completed <= 1u && stars <= 3u && (!completed || stars > 0u);
+		if (ok)
+		{
+			game->levels[expected].completed = completed != 0u;
+			game->levels[expected].best_stars = stars;
+		}
+	}
+	fclose(file);
+	if (!ok)
+	{
+		for (uint32_t i = 0; i < DUNGEON_GAME_LEVELS; ++i)
+		{
+			game->levels[i].completed = false;
+			game->levels[i].best_stars = 0;
+		}
+		fprintf(stderr, "Dungeon progress: ignored invalid file %s\n", game->progress_path);
+	}
+	else
+	{
+		uint32_t completed = 0;
+		for (uint32_t i = 0; i < DUNGEON_GAME_LEVELS; ++i)
+			completed += game->levels[i].completed ? 1u : 0u;
+		printf("Dungeon progress: loaded %u / %u completed from %s\n", completed,
+			   DUNGEON_GAME_LEVELS, game->progress_path);
+	}
+}
+
 uint32_t dungeon_game_level_seed(const DungeonGame *game, uint32_t level)
 {
 	return game->levels[level % DUNGEON_GAME_LEVELS].seed;
@@ -152,12 +215,10 @@ uint32_t dungeon_game_level_seed(const DungeonGame *game, uint32_t level)
 
 void dungeon_game_set_level_seed(DungeonGame *game, uint32_t level, uint32_t seed)
 {
-	DungeonGameLevel *entry = &game->levels[level % DUNGEON_GAME_LEVELS];
+	uint32_t index = level % DUNGEON_GAME_LEVELS;
+	DungeonGameLevel *entry = &game->levels[index];
 	entry->seed = seed;
-	uint32_t h = hash_u32(seed);
-	snprintf(entry->name, sizeof(entry->name), "The %s %s",
-			 name_first[h % (sizeof(name_first) / sizeof(name_first[0]))],
-			 name_second[(h >> 8) % (sizeof(name_second) / sizeof(name_second[0]))]);
+	snprintf(entry->name, sizeof(entry->name), "%s", campaign_names[index]);
 }
 
 bool dungeon_game_playing(const DungeonGame *game)
@@ -654,6 +715,8 @@ bool dungeon_game_interact(DungeonGame *game, DungeonScene *scene)
 	level->completed = true;
 	if (game->stars > level->best_stars)
 		level->best_stars = game->stars;
+	if (game->progress_path[0] && !save_progress(game))
+		fprintf(stderr, "Dungeon progress: could not save %s\n", game->progress_path);
 	return true;
 }
 
@@ -1239,21 +1302,32 @@ static void draw_pin(DungeonGame *game, UiCanvas *c, uint32_t i)
 	char number[12];
 	snprintf(number, sizeof(number), "%u", i + 1u);
 	ui_text(c, UI_FONT_BODY, x, y - 46 - 15, UI_ALIGN_CENTRE, (UiColor){20, 14, 10, 255}, number);
+	/* Earned stars stay visible on the map even when the full label is folded. */
+	if (level->best_stars)
+		for (uint32_t s = 0; s < 3; ++s)
+			ui_star(c, (float)(x - 12 + (int)s * 12), (float)(y - 18), 5.0f, GOLD,
+					s < level->best_stars);
+	/* Twenty full labels would bury the map. Keep the numbered pins compact and
+	 * expand only the one the player is inspecting. */
+	if (!hot)
+		return;
 	/* Label to the right of the head. */
-	const char *name = biomes[level->biome].name;
+	const char *name = level->name;
 	int w = ui_text_width(UI_FONT_SMALL, name) + 16;
 	ui_fill_rect(c, x + 20, y - 58, w, 46, (UiColor){0, 0, 0, hot ? 170 : 120});
 	ui_text(c, UI_FONT_SMALL, x + 28, y - 56, UI_ALIGN_LEFT, hot ? GOLD : WHITE, name);
-	for (uint32_t s = 0; s < 3; ++s)
-		ui_star(c, (float)(x + 36 + (int)s * 18), (float)(y - 24), 7.0f, GOLD, s < level->best_stars);
 }
 
 static void draw_overworld_hud(DungeonGame *game, UiCanvas *c)
 {
 	ui_fill_rect(c, 0, 0, W, 44, (UiColor){0, 0, 0, 110});
-	ui_text(c, UI_FONT_BODY, 16, 7, UI_ALIGN_LEFT, GOLD, "The Swiss Alps");
-	ui_text(c, UI_FONT_SMALL, W - 16, 12, UI_ALIGN_RIGHT, WHITE,
-			"Three dungeons lie under these hills. Choose one.");
+	uint32_t completed = 0;
+	for (uint32_t i = 0; i < DUNGEON_GAME_LEVELS; ++i)
+		completed += game->levels[i].completed ? 1u : 0u;
+	char progress[96];
+	snprintf(progress, sizeof(progress), "%u dungeons lie under these hills.  %u / %u complete.",
+			 DUNGEON_GAME_LEVELS, completed, DUNGEON_GAME_LEVELS);
+	ui_text(c, UI_FONT_SMALL, W - 16, 12, UI_ALIGN_RIGHT, WHITE, progress);
 	for (uint32_t i = 0; i < DUNGEON_GAME_LEVELS; ++i)
 		if ((int)i != game->selected && (int)i != game->hovered)
 			draw_pin(game, c, i);
