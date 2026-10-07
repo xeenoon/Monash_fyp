@@ -1,0 +1,382 @@
+{
+  "asset": {
+    "version": "2.0",
+    "generator": "Gameport detailed vegetation"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "meadow_flowers_lod1"
+    }
+  ],
+  "meshes": [
+    {
+      "name": "meadow_flowers_lod1",
+      "primitives": [
+        {
+          "material": 0,
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2,
+            "TANGENT": 3
+          },
+          "indices": 4
+        },
+        {
+          "material": 1,
+          "attributes": {
+            "POSITION": 5,
+            "NORMAL": 6,
+            "TEXCOORD_0": 7,
+            "TANGENT": 8
+          },
+          "indices": 9
+        },
+        {
+          "material": 2,
+          "attributes": {
+            "POSITION": 10,
+            "NORMAL": 11,
+            "TEXCOORD_0": 12,
+            "TANGENT": 13
+          },
+          "indices": 14
+        }
+      ]
+    }
+  ],
+  "materials": [
+    {
+      "name": "Meadow grass",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 1,
+        "baseColorTexture": {
+          "index": 0
+        },
+        "metallicRoughnessTexture": {
+          "index": 1
+        }
+      },
+      "doubleSided": false,
+      "normalTexture": {
+        "index": 2,
+        "scale": 0.55
+      },
+      "occlusionTexture": {
+        "index": 1
+      }
+    },
+    {
+      "name": "Ivory flower petals",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.78,
+          0.75,
+          0.58,
+          1
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 0.7
+      },
+      "doubleSided": false
+    },
+    {
+      "name": "Golden pollen",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.65,
+          0.35,
+          0.035,
+          1
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 0.7
+      },
+      "doubleSided": false
+    }
+  ],
+  "images": [
+    {
+      "uri": "../textures/grass_albedo.png"
+    },
+    {
+      "uri": "../textures/grass_orm.png"
+    },
+    {
+      "uri": "../textures/grass_normal.png"
+    }
+  ],
+  "textures": [
+    {
+      "source": 0,
+      "sampler": 0
+    },
+    {
+      "source": 1,
+      "sampler": 0
+    },
+    {
+      "source": 2,
+      "sampler": 0
+    }
+  ],
+  "samplers": [
+    {
+      "magFilter": 9729,
+      "minFilter": 9987,
+      "wrapS": 10497,
+      "wrapT": 10497
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 2685,
+      "type": "VEC3",
+      "min": [
+        -0.570850670337677,
+        -0.0034257329534739256,
+        -0.4968421161174774
+      ],
+      "max": [
+        0.4184754192829132,
+        0.40073028206825256,
+        0.534827470779419
+      ]
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 2685,
+      "type": "VEC3",
+      "min": [
+        -0.9985297322273254,
+        -0.9996671676635742,
+        -0.9999995827674866
+      ],
+      "max": [
+        0.9985297322273254,
+        0.9996671676635742,
+        0.9999741911888123
+      ]
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 2685,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5126,
+      "count": 2685,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 4,
+      "componentType": 5125,
+      "count": 9252,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 5,
+      "componentType": 5126,
+      "count": 1500,
+      "type": "VEC3",
+      "min": [
+        -0.2823457717895508,
+        0.20592479407787323,
+        -0.2732534408569336
+      ],
+      "max": [
+        0.28939932584762573,
+        0.41604986786842346,
+        0.24836547672748566
+      ]
+    },
+    {
+      "bufferView": 6,
+      "componentType": 5126,
+      "count": 1500,
+      "type": "VEC3",
+      "min": [
+        -0.9976503849029541,
+        -0.9989939332008362,
+        -0.9985071420669556
+      ],
+      "max": [
+        0.9976503849029541,
+        0.9989939332008362,
+        0.9985071420669556
+      ]
+    },
+    {
+      "bufferView": 7,
+      "componentType": 5126,
+      "count": 1500,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 8,
+      "componentType": 5126,
+      "count": 1500,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 9,
+      "componentType": 5125,
+      "count": 4800,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 10,
+      "componentType": 5126,
+      "count": 660,
+      "type": "VEC3",
+      "min": [
+        -0.2590755224227905,
+        0.2109438180923462,
+        -0.2544260621070862
+      ],
+      "max": [
+        0.2696540653705597,
+        0.40967267751693726,
+        0.22242993116378784
+      ]
+    },
+    {
+      "bufferView": 11,
+      "componentType": 5126,
+      "count": 660,
+      "type": "VEC3",
+      "min": [
+        -0.8458770513534546,
+        -1.0,
+        -0.9750262498855591
+      ],
+      "max": [
+        0.84592604637146,
+        1.0,
+        0.9773232936859131
+      ]
+    },
+    {
+      "bufferView": 12,
+      "componentType": 5126,
+      "count": 660,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 13,
+      "componentType": 5126,
+      "count": 660,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 14,
+      "componentType": 5125,
+      "count": 2160,
+      "type": "SCALAR"
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 32220
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 32220,
+      "byteLength": 32220
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 64440,
+      "byteLength": 21480
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 85920,
+      "byteLength": 42960
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 128880,
+      "byteLength": 37008
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 165888,
+      "byteLength": 18000
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 183888,
+      "byteLength": 18000
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 201888,
+      "byteLength": 12000
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 213888,
+      "byteLength": 24000
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 237888,
+      "byteLength": 19200
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 257088,
+      "byteLength": 7920
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 265008,
+      "byteLength": 7920
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 272928,
+      "byteLength": 5280
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 278208,
+      "byteLength": 10560
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 288768,
+      "byteLength": 8640
+    }
+  ],
+  "buffers": [
+    {
+      "uri": "meadow_flowers_lod1.bin",
+      "byteLength": 297408
+    }
+  ]
+}

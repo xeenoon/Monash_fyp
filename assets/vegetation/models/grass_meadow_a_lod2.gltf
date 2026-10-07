@@ -1,0 +1,184 @@
+{
+  "asset": {
+    "version": "2.0",
+    "generator": "Gameport detailed vegetation"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "grass_meadow_a_lod2"
+    }
+  ],
+  "meshes": [
+    {
+      "name": "grass_meadow_a_lod2",
+      "primitives": [
+        {
+          "material": 0,
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2,
+            "TANGENT": 3
+          },
+          "indices": 4
+        }
+      ]
+    }
+  ],
+  "materials": [
+    {
+      "name": "Meadow grass",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 1,
+        "baseColorTexture": {
+          "index": 0
+        },
+        "metallicRoughnessTexture": {
+          "index": 1
+        }
+      },
+      "doubleSided": false,
+      "normalTexture": {
+        "index": 2,
+        "scale": 0.55
+      },
+      "occlusionTexture": {
+        "index": 1
+      }
+    }
+  ],
+  "images": [
+    {
+      "uri": "../textures/grass_albedo.png"
+    },
+    {
+      "uri": "../textures/grass_orm.png"
+    },
+    {
+      "uri": "../textures/grass_normal.png"
+    }
+  ],
+  "textures": [
+    {
+      "source": 0,
+      "sampler": 0
+    },
+    {
+      "source": 1,
+      "sampler": 0
+    },
+    {
+      "source": 2,
+      "sampler": 0
+    }
+  ],
+  "samplers": [
+    {
+      "magFilter": 9729,
+      "minFilter": 9987,
+      "wrapS": 10497,
+      "wrapT": 10497
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 624,
+      "type": "VEC3",
+      "min": [
+        -0.6634429693222046,
+        -0.005464497953653336,
+        -0.9330517053604126
+      ],
+      "max": [
+        0.5387024879455566,
+        1.0280344486236572,
+        0.5275146961212158
+      ]
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 624,
+      "type": "VEC3",
+      "min": [
+        -0.9977105259895325,
+        -0.9619194269180298,
+        -0.9964342713356018
+      ],
+      "max": [
+        0.9977105259895325,
+        0.9619194269180298,
+        0.9964342713356018
+      ]
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 624,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5126,
+      "count": 624,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 4,
+      "componentType": 5125,
+      "count": 1872,
+      "type": "SCALAR"
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 7488
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 7488,
+      "byteLength": 7488
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 14976,
+      "byteLength": 4992
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 19968,
+      "byteLength": 9984
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 29952,
+      "byteLength": 7488
+    }
+  ],
+  "buffers": [
+    {
+      "uri": "grass_meadow_a_lod2.bin",
+      "byteLength": 37440
+    }
+  ]
+}

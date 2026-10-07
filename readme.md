@@ -37,8 +37,8 @@ TERRAIN_SCENE=dungeon ./build/terrain_renderer
 
 This launches the full game (`src/dungeon_game.c`): a title screen, How to
 Play, and an overworld map (`src/overworld.c`) -- the graded 16 km Swiss Alps
-terrain, browsed Google Earth style (drag to pan, scroll to zoom, right-drag to
-rotate) across the complete 16 km dataset. Twenty hobbit-hole doors,
+terrain, browsed with WASD to pan, the arrow keys to rotate/tilt, and minus or
+equal to zoom across the complete 16 km dataset. Twenty hobbit-hole doors,
 built from the dungeon textures, are distributed across the entire terrain;
 click a numbered pin to descend. Each dungeon's biome (wall tint and torch colour)
 follows the ground its door stands on -- snow, cliff, meadow, valley or scree,

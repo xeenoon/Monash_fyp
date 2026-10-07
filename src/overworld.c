@@ -12,12 +12,23 @@
 #ifndef DUNGEON_TEXTURE_DIR
 #define DUNGEON_TEXTURE_DIR "textures/dungeon"
 #endif
+#ifndef DUNGEON_TORCH_PATH
+#define DUNGEON_TORCH_PATH "assets/dungeons/torch/walltorch.gltf"
+#endif
 
 #define WALK_SPEED 4.5f
 #define RUN_SPEED 9.0f
 #define MIN_DISTANCE 18.0f
 #define MAX_DISTANCE 4200.0f
 #define PI_F 3.14159265f
+
+static const Vertex DESCENT_FLAME_VERTICES[4] = {
+	{{-0.5f, -0.5f, 0}, {0, 0, 1}, {0, 0}, 0, {1, 0, 0, 1}},
+	{{0.5f, -0.5f, 0}, {0, 0, 1}, {1, 0}, 0, {1, 0, 0, 1}},
+	{{0.5f, 0.5f, 0}, {0, 0, 1}, {1, 1}, 0, {1, 0, 0, 1}},
+	{{-0.5f, 0.5f, 0}, {0, 0, 1}, {0, 1}, 0, {1, 0, 0, 1}},
+};
+static const uint32_t DESCENT_FLAME_INDICES[6] = {0, 1, 2, 0, 2, 3};
 
 /* --- Height grid ------------------------------------------------------------ */
 
@@ -609,6 +620,67 @@ static bool build_box(Builder *b, float x0, float y0, float z0, float x1, float 
 	return true;
 }
 
+static bool append_surface(Builder *b, const float p[4][3], const float n[3], int u_axis,
+						   int v_axis, float uv_scale)
+{
+	if (!reserve(b, 4, 6))
+		return false;
+	uint32_t index[4];
+	for (int i = 0; i < 4; ++i)
+		index[i] = vert(b, p[i][0], p[i][1], p[i][2], n[0], n[1], n[2],
+						p[i][u_axis] * uv_scale, p[i][v_axis] * uv_scale);
+	quad(b, index[0], index[1], index[2], index[3]);
+	return true;
+}
+
+/* A real, textured dungeon throat is built with the overworld because it must
+ * already exist before the procedural dungeon is generated. It uses exactly
+ * the dungeon wall/floor PBR sets and the normal mesh pipeline. */
+static bool build_descent(Builder *walls, Builder *stairs)
+{
+	const int steps = 32, arch_segments = 14;
+	const float run = 1.25f, rise = 0.43f, half = 2.25f, spring = 2.25f;
+	for (int i = 0; i < steps; ++i)
+	{
+		float z0 = -(float)i * run, z1 = -(float)(i + 1) * run;
+		float y0 = -(float)i * rise, y1 = -(float)(i + 1) * rise;
+		const float tread[4][3] = {{-half, y0, z0}, {half, y0, z0},
+									 {half, y0, z1}, {-half, y0, z1}};
+		const float riser[4][3] = {{-half, y1, z1}, {half, y1, z1},
+									 {half, y0, z1}, {-half, y0, z1}};
+		const float left[4][3] = {{-half, y0, z0}, {-half, y1, z1},
+								  {-half, y1 + spring, z1}, {-half, y0 + spring, z0}};
+		const float right[4][3] = {{half, y0, z0}, {half, y0 + spring, z0},
+								   {half, y1 + spring, z1}, {half, y1, z1}};
+		if (!append_surface(stairs, tread, (const float[3]){0, 1, 0}, 0, 2, 0.55f) ||
+			!append_surface(stairs, riser, (const float[3]){0, 0, 1}, 0, 1, 0.55f) ||
+			!append_surface(walls, left, (const float[3]){1, 0, 0}, 2, 1, 0.55f) ||
+			!append_surface(walls, right, (const float[3]){-1, 0, 0}, 2, 1, 0.55f))
+			return false;
+		for (int segment = 0; segment < arch_segments; ++segment)
+		{
+			float a0 = (float)segment / arch_segments * PI_F;
+			float a1 = (float)(segment + 1) / arch_segments * PI_F;
+			float x0 = cosf(a0) * half, x1 = cosf(a1) * half;
+			float h0 = spring + sinf(a0) * half, h1 = spring + sinf(a1) * half;
+			const float ceiling[4][3] = {{x0, y0 + h0, z0}, {x1, y0 + h1, z0},
+									   {x1, y1 + h1, z1}, {x0, y1 + h0, z1}};
+			float middle = (a0 + a1) * 0.5f;
+			const float normal[3] = {-cosf(middle), -sinf(middle), 0};
+			if (!append_surface(walls, ceiling, normal, 0, 2, 0.55f))
+				return false;
+		}
+	}
+	/* Close the far end so first-time generation freezes on masonry rather than
+	 * a view through the back of the transition set. */
+	float bottom = -(float)steps * rise;
+	float end_z = -(float)steps * run;
+	const float end[4][3] = {{-half, bottom, end_z}, {half, bottom, end_z},
+								{half, bottom + spring * 2.0f, end_z},
+								{-half, bottom + spring * 2.0f, end_z}};
+	return append_surface(walls, end, (const float[3]){0, 0, 1}, 0, 1, 0.55f);
+}
+
 static bool upload(Renderer *renderer, Overworld *world, int which, Builder *b, const char *albedo,
 				   const char *orm, const char *normal)
 {
@@ -630,7 +702,8 @@ static bool upload(Renderer *renderer, Overworld *world, int which, Builder *b, 
 
 static bool build_entrance_meshes(Renderer *renderer, Overworld *world)
 {
-	Builder mound = {0}, ring = {0}, door = {0}, knob = {0}, step = {0};
+	Builder mound = {0}, ring = {0}, door = {0}, knob = {0}, step = {0}, portal = {0},
+			walls = {0}, stairs = {0};
 	/* Door: a round plank disc, its centre 1.05 m up so it meets the ground. */
 	const float door_radius = 1.05f, door_cy = 1.0f;
 	bool ok = build_mound(&mound) &&
@@ -638,11 +711,16 @@ static bool build_entrance_meshes(Renderer *renderer, Overworld *world)
 							door_cy, 0.55f) &&
 			  build_annulus(&door, 0.0f, door_radius, -0.08f, 0.0f, door_cy, 0.6f) &&
 			  build_box(&knob, -0.07f, door_cy - 0.07f, 0.0f, 0.07f, door_cy + 0.07f, 0.16f, 2.0f) &&
-			  build_box(&step, -1.3f, -0.6f, 0.3f, 1.3f, 0.06f, 1.5f, 0.6f);
+			  build_box(&step, -1.3f, -0.6f, 0.3f, 1.3f, 0.06f, 1.5f, 0.6f) &&
+			  build_annulus(&portal, 0.0f, door_radius - 0.01f, -0.18f, -0.16f, door_cy,
+						0.6f) &&
+			  build_descent(&walls, &stairs);
 	if (!ok)
 	{
 		free(mound.v), free(mound.i), free(ring.v), free(ring.i), free(door.v), free(door.i);
 		free(knob.v), free(knob.i), free(step.v), free(step.i);
+		free(portal.v), free(portal.i);
+		free(walls.v), free(walls.i), free(stairs.v), free(stairs.i);
 		return false;
 	}
 	/* Turf over the top (the dungeons' moss), dressed stone round the door. */
@@ -656,6 +734,35 @@ static bool build_entrance_meshes(Renderer *renderer, Overworld *world)
 		   DUNGEON_TEXTURE_DIR "/lock_orm.png", DUNGEON_TEXTURE_DIR "/lock_normal.png");
 	upload(renderer, world, OVERWORLD_MESH_STEP, &step, DUNGEON_TEXTURE_DIR "/floor_albedo.jpg",
 		   DUNGEON_TEXTURE_DIR "/floor_orm.png", DUNGEON_TEXTURE_DIR "/floor_normal.png");
+	/* A near-black disc immediately behind the leaf makes the doorway a true
+	 * portal while outdoor terrain is still being rendered. Without it, the
+	 * hillside occupying the tunnel volume is visible through the open door. */
+	upload(renderer, world, OVERWORLD_MESH_PORTAL, &portal, NULL, NULL, NULL);
+	upload(renderer, world, OVERWORLD_MESH_TUNNEL_WALL, &walls,
+		   DUNGEON_TEXTURE_DIR "/wall_albedo.jpg", DUNGEON_TEXTURE_DIR "/wall_orm.png",
+		   DUNGEON_TEXTURE_DIR "/wall_normal.png");
+	upload(renderer, world, OVERWORLD_MESH_TUNNEL_STAIRS, &stairs,
+		   DUNGEON_TEXTURE_DIR "/floor_albedo.jpg", DUNGEON_TEXTURE_DIR "/floor_orm.png",
+		   DUNGEON_TEXTURE_DIR "/floor_normal.png");
+	/* The dungeon surface shader's fourth sampler is its moss detail. Reuse the
+	 * already-cached moss texture from the mound so the passage follows the
+	 * exact same descriptor and shader contract as generated walls and floors. */
+	VkDescriptorImageInfo moss = {
+		.sampler = world->meshes[OVERWORLD_MESH_MOUND].texture.sampler,
+		.imageView = world->meshes[OVERWORLD_MESH_MOUND].texture.view,
+		.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+	};
+	VkWriteDescriptorSet writes[2] = {0};
+	for (uint32_t i = 0; i < 2u; ++i)
+		writes[i] = (VkWriteDescriptorSet){
+			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.dstSet = world->meshes[OVERWORLD_MESH_TUNNEL_WALL + i].material_set,
+			.dstBinding = 3,
+			.descriptorCount = 1,
+			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			.pImageInfo = &moss,
+		};
+	vkUpdateDescriptorSets(renderer->device, 2, writes, 0, NULL);
 	return true;
 }
 
@@ -687,11 +794,35 @@ bool overworld_create(Renderer *renderer, Overworld *out, const char *dataset_ro
 		overworld_destroy(renderer, out);
 		return false;
 	}
+	GltfLoadError torch_error = {0};
+	if (gltf_scene_create(renderer, DUNGEON_TORCH_PATH,
+						  &(GltfLoadOptions){.placement =
+											 coordinate_identity_transform((WorldPosition){0})},
+						  &out->descent_torch, &torch_error) != GLTF_LOAD_OK)
+	{
+		fprintf(stderr, "Overworld: could not load descent torch: %s\n", torch_error.message);
+		overworld_destroy(renderer, out);
+		return false;
+	}
+	out->descent_torch_loaded = true;
+	out->descent_flame = (Mesh){
+		.local_to_world = coordinate_identity_transform((WorldPosition){0}),
+		.vertices = DESCENT_FLAME_VERTICES,
+		.vertex_count = 4,
+		.indices = DESCENT_FLAME_INDICES,
+		.index_count = 6,
+	};
+	mesh_upload(renderer, &out->descent_flame);
+	out->descent_flame_uploaded = true;
 	return true;
 }
 
 void overworld_destroy(Renderer *renderer, Overworld *world)
 {
+	if (world->descent_flame_uploaded && renderer)
+		mesh_destroy(renderer, &world->descent_flame);
+	if (world->descent_torch_loaded)
+		gltf_scene_destroy(renderer, &world->descent_torch);
 	for (int i = 0; i < OVERWORLD_MESH_COUNT; ++i)
 		if (world->uploaded[i])
 		{
@@ -718,11 +849,12 @@ static void clamp_focus(Overworld *world)
 	from_grid(world, u, v, &world->focus_x, &world->focus_z);
 }
 
-void overworld_update(Overworld *world, float drag_dx, float drag_dy, float rotate_dx, float zoom,
-					  float pan_forward, float pan_right, float viewport_height_px, float dt,
-					  bool controls)
+void overworld_update(Overworld *world, float pan_forward, float pan_right, float rotate_yaw,
+					  float rotate_pitch, float zoom, float dt, bool controls)
 {
 	world->time += dt;
+	if (world->descending)
+		return;
 	if (!controls)
 	{
 		world->yaw += dt * 3.0f; /* a slow turn behind the menus */
@@ -732,23 +864,17 @@ void overworld_update(Overworld *world, float drag_dx, float drag_dy, float rota
 	float yaw = world->yaw * PI_F / 180.0f;
 	float fx = cosf(yaw), fz = sinf(yaw); /* ground-plane forward */
 	float rx = -fz, rz = fx;			  /* ground-plane right */
-	bool user_moved = drag_dx != 0.0f || drag_dy != 0.0f || zoom != 0.0f || rotate_dx != 0.0f ||
+	bool user_moved = zoom != 0.0f || rotate_yaw != 0.0f || rotate_pitch != 0.0f ||
 					  pan_forward != 0.0f || pan_right != 0.0f;
 	if (user_moved)
 		world->flying = false;
-	/* Grab-the-ground drag: one pixel moves the focus by the ground distance
-	 * one pixel covers at the focus, so the terrain tracks the pointer. */
-	float metres_per_pixel = 2.0f * world->distance * tanf(30.0f * PI_F / 180.0f) /
-							 fmaxf(viewport_height_px, 1.0f);
-	float pitch_stretch = 1.0f / fmaxf(sinf(-world->pitch * PI_F / 180.0f), 0.3f);
-	world->focus_x -= (double)(rx * drag_dx - fx * drag_dy * pitch_stretch) * metres_per_pixel;
-	world->focus_z -= (double)(rz * drag_dx - fz * drag_dy * pitch_stretch) * metres_per_pixel;
 	float pan_speed = world->distance * 0.9f;
 	world->focus_x += (double)(fx * pan_forward + rx * pan_right) * pan_speed * dt;
 	world->focus_z += (double)(fz * pan_forward + rz * pan_right) * pan_speed * dt;
-	world->yaw += rotate_dx * 0.25f;
-	/* Each notch is a fixed ratio, like every map: zoom feels the same at any
-	 * height. Lower in means a flatter, more scenic view of the doors. */
+	world->yaw += rotate_yaw * 75.0f * dt;
+	world->pitch = fminf(-25.0f, fmaxf(-82.0f, world->pitch + rotate_pitch * 55.0f * dt));
+	/* Keyboard zoom is a continuous axis, so exponentiate by frame time to keep
+	 * it consistent at every frame rate and every map height. */
 	world->distance = fminf(MAX_DISTANCE, fmaxf(MIN_DISTANCE, world->distance * powf(0.85f, zoom)));
 	if (world->flying)
 	{
@@ -759,14 +885,13 @@ void overworld_update(Overworld *world, float drag_dx, float drag_dy, float rota
 		if (fabs(world->fly_x - world->focus_x) < 0.05 && fabsf(world->fly_distance - world->distance) < 0.1f)
 			world->flying = false;
 	}
-	float t = (world->distance - MIN_DISTANCE) / (MAX_DISTANCE - MIN_DISTANCE);
-	world->pitch = -(28.0f + 35.0f * sqrtf(fmaxf(t, 0.0f)));
 	clamp_focus(world);
 }
 
 void overworld_fly_to(Overworld *world, uint32_t i)
 {
 	const OverworldEntrance *e = &world->entrances[i % OVERWORLD_ENTRANCES];
+	world->descending = false;
 	world->flying = true;
 	/* Aim a little in front of the door so the mound sits mid-frame. */
 	world->fly_x = e->position.x + cos(e->facing) * 2.0;
@@ -775,6 +900,12 @@ void overworld_fly_to(Overworld *world, uint32_t i)
 	/* Turn to face the door head-on: the camera looks back along its facing. */
 	float want = e->facing * 180.0f / PI_F + 180.0f;
 	world->yaw += remainderf(want - world->yaw, 360.0f);
+}
+
+void overworld_resume_map(Overworld *world)
+{
+	world->descending = false;
+	world->flying = false;
 }
 
 Camera overworld_camera(const Overworld *world)
@@ -792,6 +923,108 @@ Camera overworld_camera(const Overworld *world)
 	if (isfinite(below) && camera.position.y < below + 4.0)
 		camera.position.y = below + 4.0;
 	return camera;
+}
+
+static float ease(float t)
+{
+	t = fminf(1.0f, fmaxf(0.0f, t));
+	return t * t * (3.0f - 2.0f * t);
+}
+
+static Camera camera_mix(Camera a, Camera b, float t)
+{
+	t = ease(t);
+	Camera result = a;
+	result.position.x += (b.position.x - a.position.x) * t;
+	result.position.y += (b.position.y - a.position.y) * t;
+	result.position.z += (b.position.z - a.position.z) * t;
+	result.yaw += remainderf(b.yaw - a.yaw, 360.0f) * t;
+	result.pitch += (b.pitch - a.pitch) * t;
+	return result;
+}
+
+void overworld_begin_descent(Overworld *world, uint32_t i)
+{
+	world->descent_from = overworld_camera(world);
+	world->descent_entrance = i % OVERWORLD_ENTRANCES;
+	world->descent_progress = 0.0f;
+	world->descending = true;
+	world->flying = false;
+}
+
+Camera overworld_descent_camera(Overworld *world, float progress)
+{
+	if (!world->descending)
+		overworld_begin_descent(world, 0);
+	progress = fminf(1.0f, fmaxf(0.0f, progress));
+	world->descent_progress = progress;
+	const OverworldEntrance *e = &world->entrances[world->descent_entrance];
+	float fx = cosf(e->facing), fz = sinf(e->facing);
+	float inward_yaw = e->facing * 180.0f / PI_F + 180.0f;
+	Camera threshold = {
+		.position = {e->position.x + fx * 5.5, e->position.y + 1.70,
+					 e->position.z + fz * 5.5},
+		.yaw = inward_yaw,
+		.pitch = -4.0f,
+	};
+	if (progress < 0.42f)
+		return camera_mix(world->descent_from, threshold, progress / 0.42f);
+	float travel = 0.0f;
+	float local_z;
+	if (progress < 0.48f)
+	{
+		/* Move up to the black portal, but never enter the hillside while the
+		 * terrain is present. */
+		float approach = ease((progress - 0.42f) / 0.06f);
+		local_z = 5.5f + (1.1f - 5.5f) * approach;
+	}
+	else
+	{
+		/* Cut from just outside the opaque portal to safely inside the stone
+		 * throat. Both sides are black at the cut, so no terrain intersection is
+		 * ever shown. Stop with another lit flight still ahead for the load hold. */
+		travel = ease((progress - 0.48f) / 0.52f);
+		local_z = -1.6f - travel * 22.4f;
+	}
+	float floor = local_z < 0.0f ? local_z * (0.43f / 1.25f) : 0.0f;
+	Camera inside = {
+		.position = {e->position.x + fx * local_z,
+					 e->position.y - 0.15 + floor + 1.62 + sinf(travel * 16.0f) * 0.025f,
+					 e->position.z + fz * local_z},
+		.yaw = inward_yaw,
+		.pitch = progress < 0.48f ? -8.0f : -14.0f + sinf(travel * 8.0f) * 0.7f,
+	};
+	return inside;
+}
+
+bool overworld_descent_is_underground(const Overworld *world)
+{
+	return world->descending && world->descent_progress >= 0.48f;
+}
+
+uint32_t overworld_descent_lights(const Overworld *world, WorldPosition camera,
+								 vec4s *positions, vec4s *colors, uint32_t capacity)
+{
+	if (!world->descending || !positions || !colors)
+		return 0;
+	const OverworldEntrance *e = &world->entrances[world->descent_entrance];
+	LocalToWorldTransform placement =
+		coordinate_rotation_y(PI_F * 0.5 - e->facing,
+						  (WorldPosition){e->position.x, e->position.y - 0.15, e->position.z});
+	const uint32_t count = capacity < 6u ? capacity : 6u;
+	for (uint32_t i = 0; i < count; ++i)
+	{
+		float z = -3.5f - (float)i * 6.4f;
+		float floor = z * (0.43f / 1.25f);
+		float side = (i & 1u) ? 2.20f : -2.20f;
+		WorldPosition light = coordinate_local_to_world(
+			&placement, (TileLocalPosition){side, floor + 1.67f, z});
+		CameraRelativePosition relative = coordinate_camera_relative(light, camera);
+		float flicker = 0.88f + 0.12f * sinf(world->time * 11.0f + (float)i * 2.31f);
+		positions[i] = (vec4s){{relative.x, relative.y, relative.z, 7.0f}};
+		colors[i] = (vec4s){{1.0f, 0.48f, 0.18f, 14.0f * flicker}};
+	}
+	return count;
 }
 
 bool overworld_project(const Overworld *world, const Camera *camera, float aspect,
@@ -822,7 +1055,71 @@ static DrawPushConstants entrance_push(const LocalToWorldTransform *transform,
 	};
 }
 
-uint32_t overworld_draws(Overworld *world, WorldPosition camera, RendererDraw *out, uint32_t capacity)
+static mat4s transform_matrix(const LocalToWorldTransform *transform)
+{
+	mat4s matrix = GLMS_MAT4_IDENTITY_INIT;
+	for (int column = 0; column < 3; ++column)
+		for (int row = 0; row < 3; ++row)
+			matrix.raw[column][row] = (float)transform->rotation[column][row];
+	matrix.raw[3][0] = (float)transform->translation.x;
+	matrix.raw[3][1] = (float)transform->translation.y;
+	matrix.raw[3][2] = (float)transform->translation.z;
+	return matrix;
+}
+
+static LocalToWorldTransform descent_torch_transform(const LocalToWorldTransform *placement,
+											 uint32_t index)
+{
+	float z = -3.5f - (float)index * 6.4f;
+	float floor = z * (0.43f / 1.25f);
+	bool right = (index & 1u) != 0;
+	float inward = right ? -1.0f : 1.0f;
+	LocalToWorldTransform local = coordinate_rotation_y(
+		atan2(-(double)inward, 0.0),
+		(WorldPosition){right ? 2.24 : -2.24, floor + 0.05f, z});
+	return coordinate_compose(placement, transform_matrix(&local));
+}
+
+static DrawPushConstants gltf_push(const LocalToWorldTransform *transform,
+								   const GltfMaterial *material, WorldPosition camera)
+{
+	return (DrawPushConstants){
+		.local_to_camera_relative = coordinate_local_to_camera_relative(transform, camera),
+		.geometry = {{material->base_color_factor[0], material->base_color_factor[1],
+					  material->base_color_factor[2], material->base_color_factor[3]}},
+		.elevation_uv = {{material->roughness_factor, material->normal_scale,
+						  material->occlusion_strength, 0.0f}},
+		.material = {{material->metallic_factor, 1.0f, 1.0f, 1.0f}},
+		.debug = {{0.0f, 0.0f, 1.0f, 1.0f}},
+	};
+}
+
+static LocalToWorldTransform descent_flame_transform(WorldPosition anchor, WorldPosition camera)
+{
+	double dx = camera.x - anchor.x, dz = camera.z - anchor.z;
+	double length = hypot(dx, dz);
+	if (length < 1e-6)
+	{
+		dx = 0.0;
+		dz = 1.0;
+		length = 1.0;
+	}
+	dx /= length;
+	dz /= length;
+	const double width = 0.22, height = 0.44, base_drop = 0.114;
+	LocalToWorldTransform transform = {0};
+	transform.rotation[0][0] = dz * width;
+	transform.rotation[0][2] = -dx * width;
+	transform.rotation[1][1] = height;
+	transform.rotation[2][0] = dx;
+	transform.rotation[2][2] = dz;
+	transform.translation =
+		(WorldPosition){anchor.x, anchor.y + height * 0.5 - base_drop, anchor.z};
+	return transform;
+}
+
+uint32_t overworld_draws(Overworld *world, WorldPosition camera, RendererDraw *out,
+						 uint32_t capacity, uint32_t *out_shadow_count)
 {
 	uint32_t count = 0;
 	for (uint32_t e = 0; e < OVERWORLD_ENTRANCES; ++e)
@@ -830,10 +1127,11 @@ uint32_t overworld_draws(Overworld *world, WorldPosition camera, RendererDraw *o
 		const OverworldEntrance *entrance = &world->entrances[e];
 		/* Local +Z (the door's outward normal) onto the entrance facing:
 		 * rotation_y(a) sends +Z to (sin a, cos a), so a = pi/2 - facing. */
-		LocalToWorldTransform transform =
+		LocalToWorldTransform placement =
 			coordinate_rotation_y(PI_F * 0.5 - entrance->facing,
 								  (WorldPosition){entrance->position.x, entrance->position.y - 0.15,
 												  entrance->position.z});
+		LocalToWorldTransform transform = placement;
 		const double scale = 1.4; /* big enough to read from the map */
 		for (int c = 0; c < 3; ++c)
 			for (int r = 0; r < 3; ++r)
@@ -846,19 +1144,117 @@ uint32_t overworld_draws(Overworld *world, WorldPosition camera, RendererDraw *o
 			[OVERWORLD_MESH_DOOR] = {0.55f, 1.25f, 0.6f},
 			[OVERWORLD_MESH_KNOB] = {1.8f, 1.4f, 0.6f},
 			[OVERWORLD_MESH_STEP] = {1.1f, 1.05f, 1.0f},
+			[OVERWORLD_MESH_PORTAL] = {0.008f, 0.006f, 0.004f},
+			[OVERWORLD_MESH_TUNNEL_WALL] = {1.0f, 1.0f, 1.0f},
+			[OVERWORLD_MESH_TUNNEL_STAIRS] = {1.0f, 1.0f, 1.0f},
 		};
 		for (int m = 0; m < OVERWORLD_MESH_COUNT && count < capacity; ++m)
 		{
 			if (!world->uploaded[m])
 				continue;
-			DrawPushConstants push = entrance_push(&transform, camera);
+			bool tunnel = m == OVERWORLD_MESH_TUNNEL_WALL || m == OVERWORLD_MESH_TUNNEL_STAIRS;
+			bool portal = m == OVERWORLD_MESH_PORTAL;
+			if (tunnel && (!world->descending || e != world->descent_entrance))
+				continue;
+			if (portal && (!world->descending || e != world->descent_entrance ||
+						   overworld_descent_is_underground(world)))
+				continue;
+			/* Once through the threshold, neither terrain nor the decorative
+			 * exterior mound may occupy the camera. Only the real stairwell stays. */
+			if (!tunnel && !portal && overworld_descent_is_underground(world))
+				continue;
+			/* The outdoor mound is enlarged for map readability; the stairwell is
+			 * authored in real metres and meets its threshold without that scale. */
+			LocalToWorldTransform piece_transform = tunnel ? placement : transform;
+			if (world->descending && e == world->descent_entrance &&
+				(m == OVERWORLD_MESH_DOOR || m == OVERWORLD_MESH_KNOB))
+			{
+				/* Swing the round door into the mound before the camera crosses
+				 * the threshold. Door and knob use the same hinge transform. */
+				float open = ease((world->descent_progress - 0.25f) / 0.23f);
+				float angle = -open * 1.42f;
+				float cs = cosf(angle), sn = sinf(angle), pivot = -1.05f;
+				mat4s hinge = GLMS_MAT4_IDENTITY_INIT;
+				hinge.raw[0][0] = cs;
+				hinge.raw[0][2] = -sn;
+				hinge.raw[2][0] = sn;
+				hinge.raw[2][2] = cs;
+				hinge.raw[3][0] = pivot * (1.0f - cs);
+				hinge.raw[3][2] = pivot * sn;
+				piece_transform = coordinate_compose(&transform, hinge);
+			}
+			DrawPushConstants push = entrance_push(&piece_transform, camera);
 			push.geometry = (vec4s){{tints[m][0], tints[m][1], tints[m][2], 1.0f}};
-			if (m == OVERWORLD_MESH_MOUND || m == OVERWORLD_MESH_DOOR)
+			if (tunnel)
+				push.geometry.w = -13.76f; /* floor at the bottom step, for moss height */
+			if (m == OVERWORLD_MESH_MOUND || m == OVERWORLD_MESH_DOOR || portal)
 				push.material.x = 0.0f; /* turf and paint are never metal */
 			out[count++] = (RendererDraw){.mesh = &world->meshes[m],
 										  .material_set = world->meshes[m].material_set,
 										  .push = push,
-										  .static_mesh = true};
+										  .static_mesh = true,
+										  .pipeline = tunnel ? RENDERER_PIPELINE_DUNGEON_SURFACE
+														 : RENDERER_PIPELINE_AUTO};
+		}
+	}
+	if (world->descending && world->descent_torch_loaded)
+	{
+		const OverworldEntrance *entrance = &world->entrances[world->descent_entrance];
+		LocalToWorldTransform placement = coordinate_rotation_y(
+			PI_F * 0.5 - entrance->facing,
+			(WorldPosition){entrance->position.x, entrance->position.y - 0.15,
+							entrance->position.z});
+		for (uint32_t torch = 0; torch < 6u; ++torch)
+		{
+			LocalToWorldTransform transform = descent_torch_transform(&placement, torch);
+			for (uint32_t primitive_index = 0;
+				 primitive_index < world->descent_torch.primitive_count && count < capacity;
+				 ++primitive_index)
+			{
+				GltfPrimitive *primitive = &world->descent_torch.primitives[primitive_index];
+				GltfMaterial *material =
+					&world->descent_torch.materials[primitive->material_index];
+				out[count++] = (RendererDraw){
+					.mesh = &primitive->mesh,
+					.material_set = material->descriptor_set,
+					.push = gltf_push(&transform, material, camera),
+					.static_mesh = true,
+				};
+			}
+		}
+	}
+	if (out_shadow_count)
+		*out_shadow_count = count;
+	if (world->descending && world->descent_flame_uploaded)
+	{
+		const OverworldEntrance *entrance = &world->entrances[world->descent_entrance];
+		LocalToWorldTransform placement = coordinate_rotation_y(
+			PI_F * 0.5 - entrance->facing,
+			(WorldPosition){entrance->position.x, entrance->position.y - 0.15,
+							entrance->position.z});
+		for (uint32_t torch = 0; torch < 6u && count < capacity; ++torch)
+		{
+			LocalToWorldTransform fixture = descent_torch_transform(&placement, torch);
+			WorldPosition anchor = coordinate_local_to_world(
+				&fixture, (TileLocalPosition){0.0f, 1.5223f, -0.03492f});
+			float phase = (float)torch * 2.31f;
+			float flicker = 0.88f + 0.12f * sinf(world->time * 11.0f + phase);
+			anchor.y += sinf(world->time * 8.3f + phase) * 0.012f;
+			LocalToWorldTransform flame = descent_flame_transform(anchor, camera);
+			out[count++] = (RendererDraw){
+				.mesh = &world->descent_flame,
+				.material_set = world->descent_flame.material_set,
+				.push = {
+					.local_to_camera_relative = coordinate_local_to_camera_relative(&flame, camera),
+					.geometry = {{1.0f, 1.0f, 1.0f, flicker}},
+					.elevation_uv = {{world->time, phase, 0.22f, 0.44f}},
+					.material = {{0.025f * sinf(world->time * 9.7f + phase), 0.0f, 90.0f,
+								  0.0f}},
+					.debug = {{0.0f, 1.0f, 0.0f, 0.0f}},
+				},
+				.static_mesh = true,
+				.pipeline = RENDERER_PIPELINE_DUNGEON_FLAME,
+			};
 		}
 	}
 	return count;

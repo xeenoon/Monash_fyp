@@ -3,6 +3,7 @@
 #include "camera.h"
 #include "coordinate.h"
 #include "dungeon_campaign.h"
+#include "gltf_scene.h"
 #include "input.h"
 #include "mesh.h"
 #include "renderer.h"
@@ -20,8 +21,8 @@
  * player's position on the map, and the follow camera. */
 
 #define OVERWORLD_ENTRANCES DUNGEON_CAMPAIGN_LEVELS
-/* Five exterior pieces per entrance, with spare room for active entrance
- * effects supplied by richer overworld renderers. */
+/* Five exterior pieces per entrance, plus the active entrance's portal,
+ * stairwell, torch primitives and flames. */
 #define OVERWORLD_MAX_DRAWS (OVERWORLD_ENTRANCES * 5u + 64u)
 
 /* What the ground at an entrance is, which decides the dungeon's biome. */
@@ -50,6 +51,9 @@ enum
 	OVERWORLD_MESH_DOOR,
 	OVERWORLD_MESH_KNOB,
 	OVERWORLD_MESH_STEP,
+	OVERWORLD_MESH_PORTAL,
+	OVERWORLD_MESH_TUNNEL_WALL,
+	OVERWORLD_MESH_TUNNEL_STAIRS,
 	OVERWORLD_MESH_COUNT
 };
 
@@ -67,9 +71,13 @@ typedef struct
 	OverworldEntrance entrances[OVERWORLD_ENTRANCES];
 	Mesh meshes[OVERWORLD_MESH_COUNT];
 	bool uploaded[OVERWORLD_MESH_COUNT];
+	GltfScene descent_torch;
+	bool descent_torch_loaded;
+	Mesh descent_flame;
+	bool descent_flame_uploaded;
 
-	/* The map camera, Google Earth style: it orbits a focus point on the
-	 * ground. Dragging pans the focus, the wheel zooms, right-drag turns. */
+	/* The map camera orbits a focus point on the ground. WASD pans, the arrow
+	 * keys rotate/tilt, and minus/equal zoom. */
 	double focus_x, focus_z;
 	float distance;		  /* metres from the focus */
 	float yaw, pitch;	  /* degrees, Camera convention */
@@ -77,6 +85,12 @@ typedef struct
 	bool flying;
 	double fly_x, fly_z;
 	float fly_distance;
+	/* Entrance cinematic. The starting camera is captured so committing to a
+	 * door never snaps, regardless of how the map was framed. */
+	bool descending;
+	uint32_t descent_entrance;
+	float descent_progress;
+	Camera descent_from;
 	float time;
 } Overworld;
 
@@ -92,15 +106,27 @@ void overworld_destroy(Renderer *renderer, Overworld *world);
 /* Ground height at world (x, z); NAN off the map. */
 float overworld_height(const Overworld *world, double x, double z);
 
-/* Map navigation for one frame. `drag_dx/dy` are pointer motion in pixels
- * while the left button is held, `rotate_dx` likewise for the right button,
- * `zoom` wheel notches; `pan_forward/right` the keyboard. With `controls`
- * false the camera slowly circles (behind the title screen). */
-void overworld_update(Overworld *world, float drag_dx, float drag_dy, float rotate_dx, float zoom,
-					  float pan_forward, float pan_right, float viewport_height_px, float dt,
-					  bool controls);
+/* Keyboard map navigation for one frame. Pan is WASD, rotate/tilt are the
+ * arrow-key axes, and zoom is minus/equal. With `controls` false the camera
+ * slowly circles behind the title screen. */
+void overworld_update(Overworld *world, float pan_forward, float pan_right, float rotate_yaw,
+					  float rotate_pitch, float zoom, float dt, bool controls);
 /* Ease the camera in to look at entrance `i`. */
 void overworld_fly_to(Overworld *world, uint32_t i);
+/* Leave the entrance cinematic without changing the map framing. */
+void overworld_resume_map(Overworld *world);
+
+/* Capture the current map view, then move it to and through entrance `i` as
+ * progress advances from zero to one. */
+void overworld_begin_descent(Overworld *world, uint32_t i);
+Camera overworld_descent_camera(Overworld *world, float progress);
+/* True once the entrance has filled the view and outdoor terrain can be
+ * replaced by the enclosed stairwell. */
+bool overworld_descent_is_underground(const Overworld *world);
+/* Torch-like point lights along the stairwell, camera-relative like the frame
+ * uniform expects. Returns the number written. */
+uint32_t overworld_descent_lights(const Overworld *world, WorldPosition camera,
+								 vec4s *positions, vec4s *colors, uint32_t capacity);
 
 Camera overworld_camera(const Overworld *world);
 
@@ -111,4 +137,4 @@ bool overworld_project(const Overworld *world, const Camera *camera, float aspec
 
 /* Appends the entrance draws (also wanted in the shadow pass). */
 uint32_t overworld_draws(Overworld *world, WorldPosition camera_position, RendererDraw *out,
-						 uint32_t capacity);
+						 uint32_t capacity, uint32_t *out_shadow_count);

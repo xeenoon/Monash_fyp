@@ -103,6 +103,7 @@ typedef struct
 	Dialogue monk_dialogue;
 	uint32_t load_level;
 	int loading_frames;
+	bool loading_entry; /* true only for the surface-to-dungeon cinematic */
 	DungeonGameScreen after_load;
 
 	/* The run. */
@@ -135,15 +136,16 @@ void dungeon_game_set_progress_path(DungeonGame *game, const char *path);
 
 uint32_t dungeon_game_level_seed(const DungeonGame *game, uint32_t level);
 /* Restores the seed recorded by a persistent dungeon cache. The authored
- * campaign name remains tied to the entrance slot. */
+ * campaign name remains stable for this level slot. */
 void dungeon_game_set_level_seed(DungeonGame *game, uint32_t level, uint32_t seed);
 /* Theme each level from the ground its entrance stands on. */
 void dungeon_game_assign_grounds(DungeonGame *game, const OverworldGround grounds[DUNGEON_GAME_LEVELS]);
-/* E at entrance `level` in the overworld. */
+/* Start the surface-to-dungeon entrance sequence for `level`. */
 void dungeon_game_enter(DungeonGame *game, uint32_t level);
-/* Map interaction for one frame, in UI canvas pixels: hover, click to select
- * a pin (and fly to it), click the card's Descend button, Tab to cycle,
- * Enter/E to descend into the selection. */
+/* Zero to one while the surface entrance cinematic is active, otherwise -1. */
+float dungeon_game_entry_progress(const DungeonGame *game);
+/* Map interaction for one frame, in UI canvas pixels: hover or click a pin to
+ * enter it; Tab cycles keyboard focus and Enter/E activates that pin. */
 void dungeon_game_overworld_pointer(DungeonGame *game, float canvas_x, float canvas_y, bool click,
 									bool tab, bool confirm);
 /* Pointer interaction for the title/pause/result menus. Updates the highlighted

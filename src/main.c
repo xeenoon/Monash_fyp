@@ -870,7 +870,7 @@ int main(int argc, char *argv[])
 	const char *game_script = getenv("DUNGEON_GAME_SCRIPT");
 	bool game_script_failed = false;
 	bool previous_overworld_frame = false;
-	float map_drag_travel = 0.0f;
+	bool previous_descent_underground = false;
 	uint64_t game_frame = 0;
 	float game_walk[2] = {0.0f, 0.0f};
 #ifdef DEBUG_SHADER_DUMP
@@ -1117,37 +1117,38 @@ int main(int argc, char *argv[])
 				}
 				else if (action == DUNGEON_GAME_ACTION_RETURN)
 				{
-					/* Back on the map, hovering over the door just left. */
-					overworld_fly_to(&overworld, game.current);
-					game.selected = (int)game.current;
+					/* Return to the same broad map framing, with no dungeon focused. */
+					overworld_resume_map(&overworld);
 				}
 			}
 		}
 		if (use_dungeon_game && game.in_overworld)
 		{
-			/* On the surface: a map to browse, Google Earth style. */
+			/* On the surface: a keyboard-navigated map with clickable dungeon pins. */
 			bool browsing = game.screen == DUNGEON_GAME_OVERWORLD;
 			bool accepting_input = browsing && began_frame_in_overworld &&
 				began_frame_screen == DUNGEON_GAME_OVERWORLD;
 			int window_w = 1, window_h = 1;
 			SDL_GetWindowSize(window, &window_w, &window_h);
-			/* A click is a press and release that did not become a drag. */
-			if (input.mouse_left_pressed)
-				map_drag_travel = 0.0f;
-			if (input.mouse_left)
-				map_drag_travel += fabsf(input.mouse_dx) + fabsf(input.mouse_dy);
-			bool click = input.mouse_left_released && map_drag_travel < 6.0f;
+			bool click = input.mouse_left_released;
 			overworld_update(&overworld,
-							 accepting_input && input.mouse_left ? input.mouse_dx : 0.0f,
-							 accepting_input && input.mouse_left ? input.mouse_dy : 0.0f,
-							 accepting_input && input.mouse_right ? input.mouse_dx : 0.0f,
-							 accepting_input ? input.wheel : 0.0f,
 							 accepting_input ? input.move_forward : 0.0f,
-							 accepting_input ? input.move_right : 0.0f, (float)window_h, dt,
+							 accepting_input ? input.move_right : 0.0f,
+							 accepting_input ? input.orbit_yaw : 0.0f,
+							 accepting_input ? input.orbit_pitch : 0.0f,
+							 accepting_input ? input.map_zoom * 6.0f * dt : 0.0f, dt,
 							 !(game.screen == DUNGEON_GAME_TITLE ||
 							   (game.screen == DUNGEON_GAME_HOW_TO_PLAY &&
 								game.return_screen == DUNGEON_GAME_TITLE)));
-			camera = overworld_camera(&overworld);
+			float entry_progress = dungeon_game_entry_progress(&game);
+			if (entry_progress >= 0.0f)
+			{
+				if (!overworld.descending || overworld.descent_entrance != game.load_level)
+					overworld_begin_descent(&overworld, game.load_level);
+				camera = overworld_descent_camera(&overworld, entry_progress);
+			}
+			else
+				camera = overworld_camera(&overworld);
 			/* Pins over the doors, in UI canvas pixels. The canvas is fitted
 			 * 16:9 into the window exactly as tonemap.frag does it. */
 			float aspect = renderer_aspect(&renderer);
@@ -1180,7 +1181,7 @@ int main(int argc, char *argv[])
 				game.fly_request = -1;
 			}
 		}
-		else if (use_dungeon)
+		else if (use_dungeon && !use_torch_lab)
 		{
 			bool gameplay = !use_dungeon_game || (dungeon_game_playing(&game) &&
 												  began_frame_screen != DUNGEON_GAME_DIALOGUE);
@@ -1342,11 +1343,16 @@ int main(int argc, char *argv[])
 		/* The game switches worlds at runtime: on the surface the frame is a
 		 * terrain frame (sky, sun, atmosphere), underground a dungeon one. */
 		bool overworld_frame = use_dungeon_game && game.in_overworld;
-		bool frame_terrain = use_terrain || overworld_frame;
+		bool descent_underground = overworld_frame && overworld_descent_is_underground(&overworld);
+		bool frame_terrain = use_terrain || (overworld_frame && !descent_underground);
 		bool frame_dungeon = use_dungeon && !overworld_frame;
+		bool underground_frame = frame_dungeon || descent_underground;
 		if (overworld_frame != previous_overworld_frame)
 			history_valid = false;
+		if (descent_underground != previous_descent_underground)
+			history_valid = false;
 		previous_overworld_frame = overworld_frame;
+		previous_descent_underground = descent_underground;
 		bool camera_cut =
 			history_valid &&
 			temporal_camera_cut(previous_camera_position, camera.position, previous_camera_yaw,
@@ -1421,28 +1427,35 @@ int main(int argc, char *argv[])
 		}
 		if (overworld_frame)
 		{
-			/* Terrain, then the dungeon doors, in both the main
-			 * and the shadow list: one allocation, main list first. */
+			/* Terrain, then the dungeon entrances, in both the main
+			 * and the shadow list: one allocation, main list first. Additive
+			 * stairwell flames are deliberately outside the shadow prefix. */
 			RendererDraw extras[OVERWORLD_MAX_DRAWS];
+			uint32_t extra_shadow_count = 0;
 			uint32_t extra_count = overworld_draws(&overworld, camera.position, extras,
-											 OVERWORLD_MAX_DRAWS);
+											 OVERWORLD_MAX_DRAWS,
+											 &extra_shadow_count);
 			allocated_draws = calloc((size_t)terrain_draw_count + terrain_shadow_draw_count +
-										 2u * extra_count + 1u,
+										 extra_count + extra_shadow_count + 1u,
 									 sizeof(*allocated_draws));
 			if (!allocated_draws)
 			{
 				running = false;
 				continue;
 			}
-			memcpy(allocated_draws, terrain_draws, sizeof(RendererDraw) * terrain_draw_count);
+			if (terrain_draw_count)
+				memcpy(allocated_draws, terrain_draws, sizeof(RendererDraw) * terrain_draw_count);
 			memcpy(allocated_draws + terrain_draw_count, extras, sizeof(RendererDraw) * extra_count);
 			RendererDraw *shadow_list = allocated_draws + terrain_draw_count + extra_count;
-			memcpy(shadow_list, terrain_shadow_draws, sizeof(RendererDraw) * terrain_shadow_draw_count);
-			memcpy(shadow_list + terrain_shadow_draw_count, extras, sizeof(RendererDraw) * extra_count);
+			if (terrain_shadow_draw_count)
+				memcpy(shadow_list, terrain_shadow_draws,
+					   sizeof(RendererDraw) * terrain_shadow_draw_count);
+			memcpy(shadow_list + terrain_shadow_draw_count, extras,
+				   sizeof(RendererDraw) * extra_shadow_count);
 			active_draws = allocated_draws;
 			active_draw_count = terrain_draw_count + extra_count;
 			active_shadow_draws = shadow_list;
-			active_shadow_draw_count = terrain_shadow_draw_count + extra_count;
+			active_shadow_draw_count = terrain_shadow_draw_count + extra_shadow_count;
 		}
 		if (use_quarry)
 		{
@@ -1588,7 +1601,7 @@ int main(int argc, char *argv[])
 						 atmosphere.sun_angular_radius_rad, shadow_quality.blocker_search_m}},
 			.shadow_pcss = (vec4s){{shadow_quality.max_filter_radius_texels,
 									(float)renderer.shadow_resolution, 0.0f, 0.0f}},
-			.sun_radiance = frame_dungeon ? (vec4s){{0.22f, 0.20f, 0.18f, 0.0f}}
+			.sun_radiance = underground_frame ? (vec4s){{0.22f, 0.20f, 0.18f, 0.0f}}
 										 : (vec4s){{1.6f, 1.5f, 1.35f, 0.0f}},
 			.atmosphere_radii = (vec4s){{atmosphere.bottom_radius_km, atmosphere.top_radius_km,
 										 fmaxf((float)camera.position.y * 0.001f, 0.001f),
@@ -1609,7 +1622,8 @@ int main(int argc, char *argv[])
 				(vec4s){{atmosphere.ground_albedo[0], atmosphere.ground_albedo[1],
 						 atmosphere.ground_albedo[2], atmosphere.multiple_scattering_factor}},
 			.atmosphere_options = (vec4s){{atmosphere.aerial_max_distance_km,
-										   (float)atmosphere_slice, frame_dungeon ? 0.0f : 1.0f, 0.0f}},
+										   (float)atmosphere_slice, underground_frame ? 0.0f : 1.0f,
+										   0.0f}},
 			.temporal_parameters =
 				(vec4s){{use_history ? 1.0f : 0.0f, dt, 0.0f, auto_exposure_enabled ? 1.0f : 0.0f}},
 			.temporal_jitter = (vec4s){{jitter.x, jitter.y, previous_jitter.x, previous_jitter.y}},
@@ -1622,8 +1636,8 @@ int main(int argc, char *argv[])
 			.stretch_overlay = (vec4s){{stretch_overlay.enabled ? 1.0f : 0.0f,
 										stretch_overlay.threshold, stretch_overlay.opacity, 0.0f}},
 			.point_light_options =
-				frame_dungeon ? (vec4s){{0.0f, 0.25f, 0.25f, 0.0f}}
-							: (vec4s){{0.0f, 1.0f, 1.0f, 0.0f}},
+				underground_frame ? (vec4s){{0.0f, 0.25f, 0.25f, 0.0f}}
+								: (vec4s){{0.0f, 1.0f, 1.0f, 0.0f}},
 		};
 		if (frame_dungeon)
 		{
@@ -1637,6 +1651,10 @@ int main(int argc, char *argv[])
 			frame.point_shadow_origin = (vec4s){{(float)camera.position.x,
 				(float)camera.position.y, (float)camera.position.z, (float)dungeon.shadow.count}};
 		}
+		else if (descent_underground)
+			frame.point_light_options.x = (float)overworld_descent_lights(
+				&overworld, camera.position, frame.point_light_position_radius,
+				frame.point_light_color_intensity, MAX_POINT_LIGHTS);
 		for (uint32_t i = 0; i < SHADOW_CASCADE_COUNT; ++i)
 			frame.shadow_view_projection[i] = shadow_cascades.view_projection[i];
 #ifdef DEBUG_SHADER_DUMP

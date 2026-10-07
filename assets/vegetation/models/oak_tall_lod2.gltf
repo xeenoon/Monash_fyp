@@ -1,0 +1,450 @@
+{
+  "asset": {
+    "version": "2.0",
+    "generator": "Gameport detailed vegetation"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "oak_tall_lod2"
+    }
+  ],
+  "meshes": [
+    {
+      "name": "oak_tall_lod2",
+      "primitives": [
+        {
+          "material": 0,
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2,
+            "TANGENT": 3
+          },
+          "indices": 4
+        },
+        {
+          "material": 1,
+          "attributes": {
+            "POSITION": 5,
+            "NORMAL": 6,
+            "TEXCOORD_0": 7,
+            "TANGENT": 8
+          },
+          "indices": 9
+        },
+        {
+          "material": 2,
+          "attributes": {
+            "POSITION": 10,
+            "NORMAL": 11,
+            "TEXCOORD_0": 12,
+            "TANGENT": 13
+          },
+          "indices": 14
+        }
+      ]
+    }
+  ],
+  "materials": [
+    {
+      "name": "Scanned furrowed bark",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 1,
+        "baseColorTexture": {
+          "index": 0
+        },
+        "metallicRoughnessTexture": {
+          "index": 1
+        }
+      },
+      "doubleSided": false,
+      "normalTexture": {
+        "index": 2,
+        "scale": 0.85
+      },
+      "occlusionTexture": {
+        "index": 1
+      }
+    },
+    {
+      "name": "Mature broadleaf",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 1,
+        "baseColorTexture": {
+          "index": 3
+        },
+        "metallicRoughnessTexture": {
+          "index": 4
+        }
+      },
+      "doubleSided": false,
+      "normalTexture": {
+        "index": 5,
+        "scale": 0.55
+      },
+      "occlusionTexture": {
+        "index": 4
+      }
+    },
+    {
+      "name": "Sunlit young broadleaf",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          1.15,
+          1.1,
+          0.85,
+          1
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 1,
+        "baseColorTexture": {
+          "index": 6
+        },
+        "metallicRoughnessTexture": {
+          "index": 7
+        }
+      },
+      "doubleSided": false,
+      "normalTexture": {
+        "index": 8,
+        "scale": 0.55
+      },
+      "occlusionTexture": {
+        "index": 7
+      }
+    }
+  ],
+  "images": [
+    {
+      "uri": "../textures/broadleaf_bark_albedo.jpg"
+    },
+    {
+      "uri": "../textures/broadleaf_bark_orm.jpg"
+    },
+    {
+      "uri": "../textures/broadleaf_bark_normal.png"
+    },
+    {
+      "uri": "../textures/leaf_albedo.png"
+    },
+    {
+      "uri": "../textures/leaf_orm.png"
+    },
+    {
+      "uri": "../textures/leaf_normal.png"
+    },
+    {
+      "uri": "../textures/leaf_albedo.png"
+    },
+    {
+      "uri": "../textures/leaf_orm.png"
+    },
+    {
+      "uri": "../textures/leaf_normal.png"
+    }
+  ],
+  "textures": [
+    {
+      "source": 0,
+      "sampler": 0
+    },
+    {
+      "source": 1,
+      "sampler": 0
+    },
+    {
+      "source": 2,
+      "sampler": 0
+    },
+    {
+      "source": 3,
+      "sampler": 0
+    },
+    {
+      "source": 4,
+      "sampler": 0
+    },
+    {
+      "source": 5,
+      "sampler": 0
+    },
+    {
+      "source": 6,
+      "sampler": 0
+    },
+    {
+      "source": 7,
+      "sampler": 0
+    },
+    {
+      "source": 8,
+      "sampler": 0
+    }
+  ],
+  "samplers": [
+    {
+      "magFilter": 9729,
+      "minFilter": 9987,
+      "wrapS": 10497,
+      "wrapT": 10497
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 8341,
+      "type": "VEC3",
+      "min": [
+        -3.2897095680236816,
+        -0.010192915797233582,
+        -2.990487575531006
+      ],
+      "max": [
+        3.72926664352417,
+        11.128118515014648,
+        3.265413284301758
+      ]
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 8341,
+      "type": "VEC3",
+      "min": [
+        -0.9995325803756714,
+        -0.9999976754188538,
+        -0.9999980330467224
+      ],
+      "max": [
+        0.9999404549598694,
+        0.9985947012901306,
+        0.999795138835907
+      ]
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 8341,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5126,
+      "count": 8341,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 4,
+      "componentType": 5125,
+      "count": 33690,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 5,
+      "componentType": 5126,
+      "count": 24720,
+      "type": "VEC3",
+      "min": [
+        -3.7045743465423584,
+        5.593989849090576,
+        -3.582538604736328
+      ],
+      "max": [
+        4.285571098327637,
+        11.374008178710938,
+        3.7788333892822266
+      ]
+    },
+    {
+      "bufferView": 6,
+      "componentType": 5126,
+      "count": 24720,
+      "type": "VEC3",
+      "min": [
+        -0.9998272061347961,
+        -0.9999760389328003,
+        -0.9999600648880005
+      ],
+      "max": [
+        0.9998272061347961,
+        0.9999760389328003,
+        0.9999600648880005
+      ]
+    },
+    {
+      "bufferView": 7,
+      "componentType": 5126,
+      "count": 24720,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 8,
+      "componentType": 5126,
+      "count": 24720,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 9,
+      "componentType": 5125,
+      "count": 74160,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 10,
+      "componentType": 5126,
+      "count": 7296,
+      "type": "VEC3",
+      "min": [
+        -3.6226630210876465,
+        5.874151706695557,
+        -3.1717886924743652
+      ],
+      "max": [
+        3.8992807865142822,
+        11.381586074829102,
+        3.4912109375
+      ]
+    },
+    {
+      "bufferView": 11,
+      "componentType": 5126,
+      "count": 7296,
+      "type": "VEC3",
+      "min": [
+        -0.9998775124549866,
+        -0.9999217987060547,
+        -0.999897301197052
+      ],
+      "max": [
+        0.9998775124549866,
+        0.9999217987060547,
+        0.999897301197052
+      ]
+    },
+    {
+      "bufferView": 12,
+      "componentType": 5126,
+      "count": 7296,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 13,
+      "componentType": 5126,
+      "count": 7296,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 14,
+      "componentType": 5125,
+      "count": 21888,
+      "type": "SCALAR"
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 100092
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 100092,
+      "byteLength": 100092
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 200184,
+      "byteLength": 66728
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 266912,
+      "byteLength": 133456
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 400368,
+      "byteLength": 134760
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 535128,
+      "byteLength": 296640
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 831768,
+      "byteLength": 296640
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 1128408,
+      "byteLength": 197760
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 1326168,
+      "byteLength": 395520
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 1721688,
+      "byteLength": 296640
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 2018328,
+      "byteLength": 87552
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 2105880,
+      "byteLength": 87552
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 2193432,
+      "byteLength": 58368
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 2251800,
+      "byteLength": 116736
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 2368536,
+      "byteLength": 87552
+    }
+  ],
+  "buffers": [
+    {
+      "uri": "oak_tall_lod2.bin",
+      "byteLength": 2456088
+    }
+  ]
+}

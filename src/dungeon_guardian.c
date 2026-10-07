@@ -61,7 +61,8 @@ uint32_t dungeon_guardian_draws(DungeonGuardianArt *art, WorldPosition camera,
 			.debug = {{0, 1, 1, 1}}, /* Moving sculpture: reject stale TAA history. */
 		};
 		/* Amber eyes heat to vermilion when the guardian acquires the player. */
-		if (p->material_index == 2 && art->hunting)
+		/* Import slot zero is the fallback; authored eye material 2 is slot 3. */
+		if (p->material_index == 3 && art->hunting)
 			push.geometry = (vec4s){{1.0f, .11f, .025f, 1.0f}};
 		out[count++] = (RendererDraw){.mesh = &p->mesh,
 			.material_set = m->descriptor_set, .push = push, .static_mesh = true};

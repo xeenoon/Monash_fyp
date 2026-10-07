@@ -1,0 +1,317 @@
+{
+  "asset": {
+    "version": "2.0",
+    "generator": "Gameport detailed vegetation"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "pine_windswept_lod2"
+    }
+  ],
+  "meshes": [
+    {
+      "name": "pine_windswept_lod2",
+      "primitives": [
+        {
+          "material": 0,
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2,
+            "TANGENT": 3
+          },
+          "indices": 4
+        },
+        {
+          "material": 1,
+          "attributes": {
+            "POSITION": 5,
+            "NORMAL": 6,
+            "TEXCOORD_0": 7,
+            "TANGENT": 8
+          },
+          "indices": 9
+        }
+      ]
+    }
+  ],
+  "materials": [
+    {
+      "name": "Scanned conifer bark",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 1,
+        "baseColorTexture": {
+          "index": 0
+        },
+        "metallicRoughnessTexture": {
+          "index": 1
+        }
+      },
+      "doubleSided": false,
+      "normalTexture": {
+        "index": 2,
+        "scale": 0.85
+      },
+      "occlusionTexture": {
+        "index": 1
+      }
+    },
+    {
+      "name": "Evergreen needles",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 1,
+        "baseColorTexture": {
+          "index": 3
+        },
+        "metallicRoughnessTexture": {
+          "index": 4
+        }
+      },
+      "doubleSided": false,
+      "normalTexture": {
+        "index": 5,
+        "scale": 0.55
+      },
+      "occlusionTexture": {
+        "index": 4
+      }
+    }
+  ],
+  "images": [
+    {
+      "uri": "../textures/conifer_bark_albedo.jpg"
+    },
+    {
+      "uri": "../textures/conifer_bark_orm.jpg"
+    },
+    {
+      "uri": "../textures/conifer_bark_normal.png"
+    },
+    {
+      "uri": "../textures/needle_albedo.png"
+    },
+    {
+      "uri": "../textures/needle_orm.png"
+    },
+    {
+      "uri": "../textures/needle_normal.png"
+    }
+  ],
+  "textures": [
+    {
+      "source": 0,
+      "sampler": 0
+    },
+    {
+      "source": 1,
+      "sampler": 0
+    },
+    {
+      "source": 2,
+      "sampler": 0
+    },
+    {
+      "source": 3,
+      "sampler": 0
+    },
+    {
+      "source": 4,
+      "sampler": 0
+    },
+    {
+      "source": 5,
+      "sampler": 0
+    }
+  ],
+  "samplers": [
+    {
+      "magFilter": 9729,
+      "minFilter": 9987,
+      "wrapS": 10497,
+      "wrapT": 10497
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 5650,
+      "type": "VEC3",
+      "min": [
+        -1.8570587635040283,
+        -0.010636316612362862,
+        -1.856918215751648
+      ],
+      "max": [
+        2.1036875247955322,
+        8.500909805297852,
+        2.2182178497314453
+      ]
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 5650,
+      "type": "VEC3",
+      "min": [
+        -0.999940812587738,
+        -0.9990578293800354,
+        -0.9999951720237732
+      ],
+      "max": [
+        1.0,
+        0.955129861831665,
+        0.9999947547912598
+      ]
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 5650,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5126,
+      "count": 5650,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 4,
+      "componentType": 5125,
+      "count": 24084,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 5,
+      "componentType": 5126,
+      "count": 18620,
+      "type": "VEC3",
+      "min": [
+        -2.1246979236602783,
+        2.6899898052215576,
+        -2.149822235107422
+      ],
+      "max": [
+        2.2997355461120605,
+        8.602417945861816,
+        2.665571689605713
+      ]
+    },
+    {
+      "bufferView": 6,
+      "componentType": 5126,
+      "count": 18620,
+      "type": "VEC3",
+      "min": [
+        -0.9998077750205994,
+        -0.9996761679649353,
+        -0.9999680519104004
+      ],
+      "max": [
+        0.9999535083770752,
+        0.9995917081832886,
+        0.9999552369117737
+      ]
+    },
+    {
+      "bufferView": 7,
+      "componentType": 5126,
+      "count": 18620,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 8,
+      "componentType": 5126,
+      "count": 18620,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 9,
+      "componentType": 5125,
+      "count": 71820,
+      "type": "SCALAR"
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 67800
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 67800,
+      "byteLength": 67800
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 135600,
+      "byteLength": 45200
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 180800,
+      "byteLength": 90400
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 271200,
+      "byteLength": 96336
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 367536,
+      "byteLength": 223440
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 590976,
+      "byteLength": 223440
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 814416,
+      "byteLength": 148960
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 963376,
+      "byteLength": 297920
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 1261296,
+      "byteLength": 287280
+    }
+  ],
+  "buffers": [
+    {
+      "uri": "pine_windswept_lod2.bin",
+      "byteLength": 1548576
+    }
+  ]
+}

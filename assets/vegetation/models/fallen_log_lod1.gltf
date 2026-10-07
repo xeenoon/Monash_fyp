@@ -1,0 +1,184 @@
+{
+  "asset": {
+    "version": "2.0",
+    "generator": "Gameport detailed vegetation"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "fallen_log_lod1"
+    }
+  ],
+  "meshes": [
+    {
+      "name": "fallen_log_lod1",
+      "primitives": [
+        {
+          "material": 0,
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2,
+            "TANGENT": 3
+          },
+          "indices": 4
+        }
+      ]
+    }
+  ],
+  "materials": [
+    {
+      "name": "Scanned furrowed bark",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 1,
+        "baseColorTexture": {
+          "index": 0
+        },
+        "metallicRoughnessTexture": {
+          "index": 1
+        }
+      },
+      "doubleSided": false,
+      "normalTexture": {
+        "index": 2,
+        "scale": 0.85
+      },
+      "occlusionTexture": {
+        "index": 1
+      }
+    }
+  ],
+  "images": [
+    {
+      "uri": "../textures/broadleaf_bark_albedo.jpg"
+    },
+    {
+      "uri": "../textures/broadleaf_bark_orm.jpg"
+    },
+    {
+      "uri": "../textures/broadleaf_bark_normal.png"
+    }
+  ],
+  "textures": [
+    {
+      "source": 0,
+      "sampler": 0
+    },
+    {
+      "source": 1,
+      "sampler": 0
+    },
+    {
+      "source": 2,
+      "sampler": 0
+    }
+  ],
+  "samplers": [
+    {
+      "magFilter": 9729,
+      "minFilter": 9987,
+      "wrapS": 10497,
+      "wrapT": 10497
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 640,
+      "type": "VEC3",
+      "min": [
+        -1.280299186706543,
+        -0.018034089356660843,
+        -0.2975118160247803
+      ],
+      "max": [
+        1.3137142658233643,
+        0.4992084503173828,
+        0.41753628849983215
+      ]
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 640,
+      "type": "VEC3",
+      "min": [
+        -0.9877105951309204,
+        -0.9853790402412415,
+        -0.9998027086257935
+      ],
+      "max": [
+        0.9933363199234009,
+        0.9849532842636108,
+        0.9998399019241333
+      ]
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 640,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5126,
+      "count": 640,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 4,
+      "componentType": 5125,
+      "count": 2904,
+      "type": "SCALAR"
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 7680
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 7680,
+      "byteLength": 7680
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 15360,
+      "byteLength": 5120
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 20480,
+      "byteLength": 10240
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 30720,
+      "byteLength": 11616
+    }
+  ],
+  "buffers": [
+    {
+      "uri": "fallen_log_lod1.bin",
+      "byteLength": 42336
+    }
+  ]
+}

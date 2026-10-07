@@ -1,0 +1,317 @@
+{
+  "asset": {
+    "version": "2.0",
+    "generator": "Gameport detailed vegetation"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "broken_stump_lod0"
+    }
+  ],
+  "meshes": [
+    {
+      "name": "broken_stump_lod0",
+      "primitives": [
+        {
+          "material": 0,
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2,
+            "TANGENT": 3
+          },
+          "indices": 4
+        },
+        {
+          "material": 1,
+          "attributes": {
+            "POSITION": 5,
+            "NORMAL": 6,
+            "TEXCOORD_0": 7,
+            "TANGENT": 8
+          },
+          "indices": 9
+        }
+      ]
+    }
+  ],
+  "materials": [
+    {
+      "name": "Scanned furrowed bark",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 1,
+        "baseColorTexture": {
+          "index": 0
+        },
+        "metallicRoughnessTexture": {
+          "index": 1
+        }
+      },
+      "doubleSided": false,
+      "normalTexture": {
+        "index": 2,
+        "scale": 0.85
+      },
+      "occlusionTexture": {
+        "index": 1
+      }
+    },
+    {
+      "name": "Exposed heartwood",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          1.3,
+          1.13,
+          0.83,
+          1
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 1,
+        "baseColorTexture": {
+          "index": 3
+        },
+        "metallicRoughnessTexture": {
+          "index": 4
+        }
+      },
+      "doubleSided": false,
+      "normalTexture": {
+        "index": 5,
+        "scale": 0.85
+      },
+      "occlusionTexture": {
+        "index": 4
+      }
+    }
+  ],
+  "images": [
+    {
+      "uri": "../textures/broadleaf_bark_albedo.jpg"
+    },
+    {
+      "uri": "../textures/broadleaf_bark_orm.jpg"
+    },
+    {
+      "uri": "../textures/broadleaf_bark_normal.png"
+    },
+    {
+      "uri": "../textures/broadleaf_bark_albedo.jpg"
+    },
+    {
+      "uri": "../textures/broadleaf_bark_orm.jpg"
+    },
+    {
+      "uri": "../textures/broadleaf_bark_normal.png"
+    }
+  ],
+  "textures": [
+    {
+      "source": 0,
+      "sampler": 0
+    },
+    {
+      "source": 1,
+      "sampler": 0
+    },
+    {
+      "source": 2,
+      "sampler": 0
+    },
+    {
+      "source": 3,
+      "sampler": 0
+    },
+    {
+      "source": 4,
+      "sampler": 0
+    },
+    {
+      "source": 5,
+      "sampler": 0
+    }
+  ],
+  "samplers": [
+    {
+      "magFilter": 9729,
+      "minFilter": 9987,
+      "wrapS": 10497,
+      "wrapT": 10497
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 4993,
+      "type": "VEC3",
+      "min": [
+        -0.6043846011161804,
+        -0.020631253719329834,
+        -0.8523455858230591
+      ],
+      "max": [
+        0.6936666965484619,
+        0.650390088558197,
+        0.7308072447776794
+      ]
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 4993,
+      "type": "VEC3",
+      "min": [
+        -0.9912273287773132,
+        -0.999714732170105,
+        -0.9998815059661865
+      ],
+      "max": [
+        0.9998926520347595,
+        0.9952701926231384,
+        0.9990834593772888
+      ]
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 4993,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5126,
+      "count": 4993,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 4,
+      "componentType": 5125,
+      "count": 26160,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 5,
+      "componentType": 5126,
+      "count": 632,
+      "type": "VEC3",
+      "min": [
+        -0.22762331366539001,
+        0.5617347955703735,
+        -0.23041731119155884
+      ],
+      "max": [
+        0.22753778100013733,
+        0.8233656287193298,
+        0.22711734473705292
+      ]
+    },
+    {
+      "bufferView": 6,
+      "componentType": 5126,
+      "count": 632,
+      "type": "VEC3",
+      "min": [
+        -0.9492753148078918,
+        -0.9897932410240173,
+        -0.9928910732269287
+      ],
+      "max": [
+        0.9490764737129211,
+        0.9897932410240173,
+        0.9930344820022583
+      ]
+    },
+    {
+      "bufferView": 7,
+      "componentType": 5126,
+      "count": 632,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 8,
+      "componentType": 5126,
+      "count": 632,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 9,
+      "componentType": 5125,
+      "count": 2400,
+      "type": "SCALAR"
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 59916
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 59916,
+      "byteLength": 59916
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 119832,
+      "byteLength": 39944
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 159776,
+      "byteLength": 79888
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 239664,
+      "byteLength": 104640
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 344304,
+      "byteLength": 7584
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 351888,
+      "byteLength": 7584
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 359472,
+      "byteLength": 5056
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 364528,
+      "byteLength": 10112
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 374640,
+      "byteLength": 9600
+    }
+  ],
+  "buffers": [
+    {
+      "uri": "broken_stump_lod0.bin",
+      "byteLength": 384240
+    }
+  ]
+}

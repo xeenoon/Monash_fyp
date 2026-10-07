@@ -1,0 +1,184 @@
+{
+  "asset": {
+    "version": "2.0",
+    "generator": "Gameport detailed vegetation"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "grass_dry_lod2"
+    }
+  ],
+  "meshes": [
+    {
+      "name": "grass_dry_lod2",
+      "primitives": [
+        {
+          "material": 0,
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2,
+            "TANGENT": 3
+          },
+          "indices": 4
+        }
+      ]
+    }
+  ],
+  "materials": [
+    {
+      "name": "Dry grass",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 1,
+        "baseColorTexture": {
+          "index": 0
+        },
+        "metallicRoughnessTexture": {
+          "index": 1
+        }
+      },
+      "doubleSided": false,
+      "normalTexture": {
+        "index": 2,
+        "scale": 0.55
+      },
+      "occlusionTexture": {
+        "index": 1
+      }
+    }
+  ],
+  "images": [
+    {
+      "uri": "../textures/dry_grass_albedo.png"
+    },
+    {
+      "uri": "../textures/dry_grass_orm.png"
+    },
+    {
+      "uri": "../textures/dry_grass_normal.png"
+    }
+  ],
+  "textures": [
+    {
+      "source": 0,
+      "sampler": 0
+    },
+    {
+      "source": 1,
+      "sampler": 0
+    },
+    {
+      "source": 2,
+      "sampler": 0
+    }
+  ],
+  "samplers": [
+    {
+      "magFilter": 9729,
+      "minFilter": 9987,
+      "wrapS": 10497,
+      "wrapT": 10497
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 1385,
+      "type": "VEC3",
+      "min": [
+        -1.1395076513290405,
+        -0.006157507188618183,
+        -0.8491741418838501
+      ],
+      "max": [
+        1.1876912117004395,
+        1.3500422239303589,
+        0.8238133192062378
+      ]
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 1385,
+      "type": "VEC3",
+      "min": [
+        -0.9964229464530945,
+        -0.9813202023506165,
+        -0.9956040382385254
+      ],
+      "max": [
+        0.9961968064308167,
+        0.9813202023506165,
+        0.9956040382385254
+      ]
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 1385,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5126,
+      "count": 1385,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 4,
+      "componentType": 5125,
+      "count": 4740,
+      "type": "SCALAR"
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 16620
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 16620,
+      "byteLength": 16620
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 33240,
+      "byteLength": 11080
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 44320,
+      "byteLength": 22160
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 66480,
+      "byteLength": 18960
+    }
+  ],
+  "buffers": [
+    {
+      "uri": "grass_dry_lod2.bin",
+      "byteLength": 85440
+    }
+  ]
+}

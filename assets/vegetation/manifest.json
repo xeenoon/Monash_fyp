@@ -1,0 +1,1395 @@
+{
+  "version": 1,
+  "units": "metres",
+  "up_axis": "Y",
+  "pivot": "ground centre",
+  "materials": "material_sources.json",
+  "assets": [
+    {
+      "id": "grass_meadow_a",
+      "category": "grass",
+      "seed": 181,
+      "scale_range": [
+        0.7,
+        1.25
+      ],
+      "yaw_degrees": [
+        0,
+        360
+      ],
+      "max_slope_degrees": 42,
+      "ground_sink_m": 0.015,
+      "align_to_slope": true,
+      "lods": [
+        {
+          "path": "models/grass_meadow_a_lod0.gltf",
+          "vertices": 11520,
+          "triangles": 13440,
+          "draws": 1,
+          "bounds_min": [
+            -0.7681378722190857,
+            -0.00344175286591053,
+            -0.722366988658905
+          ],
+          "bounds_max": [
+            0.597084641456604,
+            0.6660199761390686,
+            0.6542326807975769
+          ],
+          "branch_sweeps": 0,
+          "foliage_elements": 240,
+          "distance_m": 0
+        },
+        {
+          "path": "models/grass_meadow_a_lod1.gltf",
+          "vertices": 2400,
+          "triangles": 2560,
+          "draws": 1,
+          "bounds_min": [
+            -0.8616325855255127,
+            -0.0046448735520243645,
+            -0.769275426864624
+          ],
+          "bounds_max": [
+            0.6231902241706848,
+            0.7859042882919312,
+            0.7468259334564209
+          ],
+          "branch_sweeps": 0,
+          "foliage_elements": 80,
+          "distance_m": 9
+        },
+        {
+          "path": "models/grass_meadow_a_lod2.gltf",
+          "vertices": 624,
+          "triangles": 624,
+          "draws": 1,
+          "bounds_min": [
+            -0.6634429693222046,
+            -0.005464497953653336,
+            -0.9330517053604126
+          ],
+          "bounds_max": [
+            0.5387024879455566,
+            1.0280344486236572,
+            0.5275146961212158
+          ],
+          "branch_sweeps": 0,
+          "foliage_elements": 26,
+          "distance_m": 25
+        }
+      ],
+      "spacing_radius_m": 0.615,
+      "trunk_collision_radius_m": 0.0
+    },
+    {
+      "id": "grass_meadow_b",
+      "category": "grass",
+      "seed": 193,
+      "scale_range": [
+        0.7,
+        1.3
+      ],
+      "yaw_degrees": [
+        0,
+        360
+      ],
+      "max_slope_degrees": 42,
+      "ground_sink_m": 0.015,
+      "align_to_slope": true,
+      "lods": [
+        {
+          "path": "models/grass_meadow_b_lod0.gltf",
+          "vertices": 11520,
+          "triangles": 13440,
+          "draws": 1,
+          "bounds_min": [
+            -0.6123555898666382,
+            -0.003526332089677453,
+            -0.674039900302887
+          ],
+          "bounds_max": [
+            0.6233617663383484,
+            0.6993545889854431,
+            0.7654734253883362
+          ],
+          "branch_sweeps": 0,
+          "foliage_elements": 240,
+          "distance_m": 0
+        },
+        {
+          "path": "models/grass_meadow_b_lod1.gltf",
+          "vertices": 2400,
+          "triangles": 2560,
+          "draws": 1,
+          "bounds_min": [
+            -0.6890801787376404,
+            -0.0042191436514258385,
+            -0.6824268102645874
+          ],
+          "bounds_max": [
+            0.6777904033660889,
+            0.7674000859260559,
+            0.8595165014266968
+          ],
+          "branch_sweeps": 0,
+          "foliage_elements": 80,
+          "distance_m": 9
+        },
+        {
+          "path": "models/grass_meadow_b_lod2.gltf",
+          "vertices": 648,
+          "triangles": 648,
+          "draws": 1,
+          "bounds_min": [
+            -0.8467881083488464,
+            -0.004504714161157608,
+            -0.6887113451957703
+          ],
+          "bounds_max": [
+            0.6339338421821594,
+            1.0044276714324951,
+            0.9189678430557251
+          ],
+          "branch_sweeps": 0,
+          "foliage_elements": 27,
+          "distance_m": 25
+        }
+      ],
+      "spacing_radius_m": 0.612,
+      "trunk_collision_radius_m": 0.0
+    },
+    {
+      "id": "grass_short",
+      "category": "grass",
+      "seed": 197,
+      "scale_range": [
+        0.7,
+        1.3
+      ],
+      "yaw_degrees": [
+        0,
+        360
+      ],
+      "max_slope_degrees": 45,
+      "ground_sink_m": 0.015,
+      "align_to_slope": true,
+      "lods": [
+        {
+          "path": "models/grass_short_lod0.gltf",
+          "vertices": 8160,
+          "triangles": 9520,
+          "draws": 1,
+          "bounds_min": [
+            -0.49488651752471924,
+            -0.0033893256913870573,
+            -0.4744815230369568
+          ],
+          "bounds_max": [
+            0.5101484060287476,
+            0.239517480134964,
+            0.4793510437011719
+          ],
+          "branch_sweeps": 0,
+          "foliage_elements": 170,
+          "distance_m": 0
+        },
+        {
+          "path": "models/grass_short_lod1.gltf",
+          "vertices": 1710,
+          "triangles": 1824,
+          "draws": 1,
+          "bounds_min": [
+            -0.44635486602783203,
+            -0.0045745656825602055,
+            -0.49835681915283203
+          ],
+          "bounds_max": [
+            0.49489983916282654,
+            0.2729004919528961,
+            0.45615333318710327
+          ],
+          "branch_sweeps": 0,
+          "foliage_elements": 57,
+          "distance_m": 9
+        },
+        {
+          "path": "models/grass_short_lod2.gltf",
+          "vertices": 456,
+          "triangles": 456,
+          "draws": 1,
+          "bounds_min": [
+            -0.35793328285217285,
+            -0.006098389159888029,
+            -0.5200810432434082
+          ],
+          "bounds_max": [
+            0.47972190380096436,
+            0.3458089232444763,
+            0.20191606879234314
+          ],
+          "branch_sweeps": 0,
+          "foliage_elements": 19,
+          "distance_m": 25
+        }
+      ],
+      "spacing_radius_m": 0.408,
+      "trunk_collision_radius_m": 0.0
+    },
+    {
+      "id": "grass_dry",
+      "category": "grass",
+      "seed": 211,
+      "scale_range": [
+        0.8,
+        1.2
+      ],
+      "yaw_degrees": [
+        0,
+        360
+      ],
+      "max_slope_degrees": 45,
+      "ground_sink_m": 0.015,
+      "align_to_slope": true,
+      "lods": [
+        {
+          "path": "models/grass_dry_lod0.gltf",
+          "vertices": 10613,
+          "triangles": 12020,
+          "draws": 1,
+          "bounds_min": [
+            -0.8192753791809082,
+            -0.0034228863660246134,
+            -0.7888092398643494
+          ],
+          "bounds_max": [
+            0.8509950041770935,
+            0.9026836156845093,
+            0.7733911871910095
+          ],
+          "branch_sweeps": 13,
+          "foliage_elements": 262,
+          "distance_m": 0
+        },
+        {
+          "path": "models/grass_dry_lod1.gltf",
+          "vertices": 2987,
+          "triangles": 3252,
+          "draws": 1,
+          "bounds_min": [
+            -0.9240791201591492,
+            -0.004619340877979994,
+            -0.6969035267829895
+          ],
+          "bounds_max": [
+            0.9633944034576416,
+            1.0277740955352783,
+            0.880041241645813
+          ],
+          "branch_sweeps": 13,
+          "foliage_elements": 87,
+          "distance_m": 9
+        },
+        {
+          "path": "models/grass_dry_lod2.gltf",
+          "vertices": 1385,
+          "triangles": 1580,
+          "draws": 1,
+          "bounds_min": [
+            -1.1395076513290405,
+            -0.006157507188618183,
+            -0.8491741418838501
+          ],
+          "bounds_max": [
+            1.1876912117004395,
+            1.3500422239303589,
+            0.8238133192062378
+          ],
+          "branch_sweeps": 13,
+          "foliage_elements": 29,
+          "distance_m": 25
+        }
+      ],
+      "spacing_radius_m": 0.681,
+      "trunk_collision_radius_m": 0.0
+    },
+    {
+      "id": "fern_large",
+      "category": "undergrowth",
+      "seed": 223,
+      "scale_range": [
+        0.8,
+        1.2
+      ],
+      "yaw_degrees": [
+        0,
+        360
+      ],
+      "max_slope_degrees": 35,
+      "ground_sink_m": 0.015,
+      "align_to_slope": true,
+      "lods": [
+        {
+          "path": "models/fern_large_lod0.gltf",
+          "vertices": 134959,
+          "triangles": 157872,
+          "draws": 1,
+          "bounds_min": [
+            -0.8515520095825195,
+            0.019248291850090027,
+            -0.8510943055152893
+          ],
+          "bounds_max": [
+            0.9494728446006775,
+            0.480771541595459,
+            0.7040702104568481
+          ],
+          "branch_sweeps": 407,
+          "foliage_elements": 2376,
+          "distance_m": 0
+        },
+        {
+          "path": "models/fern_large_lod1.gltf",
+          "vertices": 43285,
+          "triangles": 47652,
+          "draws": 1,
+          "bounds_min": [
+            -0.8515936732292175,
+            0.019966818392276764,
+            -0.8510916233062744
+          ],
+          "bounds_max": [
+            0.9494335651397705,
+            0.4809142053127289,
+            0.7041022181510925
+          ],
+          "branch_sweeps": 407,
+          "foliage_elements": 792,
+          "distance_m": 9
+        },
+        {
+          "path": "models/fern_large_lod2.gltf",
+          "vertices": 25861,
+          "triangles": 28644,
+          "draws": 1,
+          "bounds_min": [
+            -0.8515936732292175,
+            0.019966818392276764,
+            -0.8510916233062744
+          ],
+          "bounds_max": [
+            0.9494335651397705,
+            0.4712201654911041,
+            0.7041022181510925
+          ],
+          "branch_sweeps": 407,
+          "foliage_elements": 264,
+          "distance_m": 25
+        }
+      ],
+      "spacing_radius_m": 0.76,
+      "trunk_collision_radius_m": 0.0
+    },
+    {
+      "id": "fern_small",
+      "category": "undergrowth",
+      "seed": 227,
+      "scale_range": [
+        0.5,
+        0.8
+      ],
+      "yaw_degrees": [
+        0,
+        360
+      ],
+      "max_slope_degrees": 35,
+      "ground_sink_m": 0.015,
+      "align_to_slope": true,
+      "lods": [
+        {
+          "path": "models/fern_small_lod0.gltf",
+          "vertices": 134959,
+          "triangles": 157872,
+          "draws": 1,
+          "bounds_min": [
+            -0.9199270009994507,
+            0.019248291850090027,
+            -0.8763267993927002
+          ],
+          "bounds_max": [
+            0.7740300297737122,
+            0.4990721046924591,
+            0.5781469941139221
+          ],
+          "branch_sweeps": 407,
+          "foliage_elements": 2376,
+          "distance_m": 0
+        },
+        {
+          "path": "models/fern_small_lod1.gltf",
+          "vertices": 43285,
+          "triangles": 47652,
+          "draws": 1,
+          "bounds_min": [
+            -0.919969916343689,
+            0.019966818392276764,
+            -0.8763135671615601
+          ],
+          "bounds_max": [
+            0.7739891409873962,
+            0.5014902949333191,
+            0.5781469941139221
+          ],
+          "branch_sweeps": 407,
+          "foliage_elements": 792,
+          "distance_m": 9
+        },
+        {
+          "path": "models/fern_small_lod2.gltf",
+          "vertices": 25861,
+          "triangles": 28644,
+          "draws": 1,
+          "bounds_min": [
+            -0.919969916343689,
+            0.019966818392276764,
+            -0.8763135671615601
+          ],
+          "bounds_max": [
+            0.7739891409873962,
+            0.49354735016822815,
+            0.5781469941139221
+          ],
+          "branch_sweeps": 407,
+          "foliage_elements": 264,
+          "distance_m": 25
+        }
+      ],
+      "spacing_radius_m": 0.736,
+      "trunk_collision_radius_m": 0.0
+    },
+    {
+      "id": "woodland_shrub",
+      "category": "undergrowth",
+      "seed": 229,
+      "scale_range": [
+        0.7,
+        1.2
+      ],
+      "yaw_degrees": [
+        0,
+        360
+      ],
+      "max_slope_degrees": 32,
+      "ground_sink_m": 0.015,
+      "align_to_slope": true,
+      "lods": [
+        {
+          "path": "models/woodland_shrub_lod0.gltf",
+          "vertices": 49338,
+          "triangles": 59256,
+          "draws": 3,
+          "bounds_min": [
+            -0.7817884683609009,
+            -0.013003160245716572,
+            -0.7243311405181885
+          ],
+          "bounds_max": [
+            0.8425660133361816,
+            1.1619327068328857,
+            0.7541516423225403
+          ],
+          "branch_sweeps": 72,
+          "foliage_elements": 882,
+          "distance_m": 0
+        },
+        {
+          "path": "models/woodland_shrub_lod1.gltf",
+          "vertices": 13500,
+          "triangles": 15456,
+          "draws": 3,
+          "bounds_min": [
+            -0.7944228649139404,
+            -0.011338043957948685,
+            -0.7385359406471252
+          ],
+          "bounds_max": [
+            0.8444991111755371,
+            1.1617560386657715,
+            0.7416231036186218
+          ],
+          "branch_sweeps": 72,
+          "foliage_elements": 294,
+          "distance_m": 9
+        },
+        {
+          "path": "models/woodland_shrub_lod2.gltf",
+          "vertices": 2937,
+          "triangles": 3108,
+          "draws": 3,
+          "bounds_min": [
+            -0.7368552088737488,
+            -0.011338043957948685,
+            -0.7677258849143982
+          ],
+          "bounds_max": [
+            0.8832532167434692,
+            1.1617560386657715,
+            0.7348697781562805
+          ],
+          "branch_sweeps": 9,
+          "foliage_elements": 98,
+          "distance_m": 25
+        }
+      ],
+      "spacing_radius_m": 0.674,
+      "trunk_collision_radius_m": 0.0
+    },
+    {
+      "id": "meadow_flowers",
+      "category": "flowers",
+      "seed": 233,
+      "scale_range": [
+        0.75,
+        1.2
+      ],
+      "yaw_degrees": [
+        0,
+        360
+      ],
+      "max_slope_degrees": 30,
+      "ground_sink_m": 0.015,
+      "align_to_slope": true,
+      "lods": [
+        {
+          "path": "models/meadow_flowers_lod0.gltf",
+          "vertices": 17535,
+          "triangles": 20620,
+          "draws": 3,
+          "bounds_min": [
+            -0.5412482619285583,
+            -0.0036465106531977654,
+            -0.49739059805870056
+          ],
+          "bounds_max": [
+            0.46846991777420044,
+            0.4135516285896301,
+            0.5091338157653809
+          ],
+          "branch_sweeps": 30,
+          "foliage_elements": 320,
+          "distance_m": 0
+        },
+        {
+          "path": "models/meadow_flowers_lod1.gltf",
+          "vertices": 4845,
+          "triangles": 5404,
+          "draws": 3,
+          "bounds_min": [
+            -0.570850670337677,
+            -0.0034257329534739256,
+            -0.4968421161174774
+          ],
+          "bounds_max": [
+            0.4184754192829132,
+            0.41604986786842346,
+            0.534827470779419
+          ],
+          "branch_sweeps": 30,
+          "foliage_elements": 107,
+          "distance_m": 9
+        },
+        {
+          "path": "models/meadow_flowers_lod2.gltf",
+          "vertices": 2499,
+          "triangles": 2844,
+          "draws": 3,
+          "bounds_min": [
+            -0.542180597782135,
+            -0.004565119743347168,
+            -0.5360199213027954
+          ],
+          "bounds_max": [
+            0.2706674039363861,
+            0.41918644309043884,
+            0.4691627025604248
+          ],
+          "branch_sweeps": 30,
+          "foliage_elements": 36,
+          "distance_m": 25
+        }
+      ],
+      "spacing_radius_m": 0.433,
+      "trunk_collision_radius_m": 0.0
+    },
+    {
+      "id": "fallen_log",
+      "category": "deadwood",
+      "seed": 239,
+      "scale_range": [
+        0.8,
+        1.4
+      ],
+      "yaw_degrees": [
+        0,
+        360
+      ],
+      "max_slope_degrees": 22,
+      "ground_sink_m": 0.015,
+      "align_to_slope": true,
+      "lods": [
+        {
+          "path": "models/fallen_log_lod0.gltf",
+          "vertices": 2011,
+          "triangles": 3464,
+          "draws": 1,
+          "bounds_min": [
+            -1.2791204452514648,
+            -0.018059149384498596,
+            -0.2975118160247803
+          ],
+          "bounds_max": [
+            1.3136162757873535,
+            0.4992084503173828,
+            0.41753628849983215
+          ],
+          "branch_sweeps": 5,
+          "foliage_elements": 0,
+          "distance_m": 0
+        },
+        {
+          "path": "models/fallen_log_lod1.gltf",
+          "vertices": 640,
+          "triangles": 968,
+          "draws": 1,
+          "bounds_min": [
+            -1.280299186706543,
+            -0.018034089356660843,
+            -0.2975118160247803
+          ],
+          "bounds_max": [
+            1.3137142658233643,
+            0.4992084503173828,
+            0.41753628849983215
+          ],
+          "branch_sweeps": 5,
+          "foliage_elements": 0,
+          "distance_m": 9
+        },
+        {
+          "path": "models/fallen_log_lod2.gltf",
+          "vertices": 418,
+          "triangles": 576,
+          "draws": 1,
+          "bounds_min": [
+            -1.281668782234192,
+            -0.017202073708176613,
+            -0.29736852645874023
+          ],
+          "bounds_max": [
+            1.3130313158035278,
+            0.49820804595947266,
+            0.41751641035079956
+          ],
+          "branch_sweeps": 5,
+          "foliage_elements": 0,
+          "distance_m": 25
+        }
+      ],
+      "spacing_radius_m": 1.051,
+      "trunk_collision_radius_m": 0.0
+    },
+    {
+      "id": "broken_stump",
+      "category": "deadwood",
+      "seed": 241,
+      "scale_range": [
+        0.75,
+        1.3
+      ],
+      "yaw_degrees": [
+        0,
+        360
+      ],
+      "max_slope_degrees": 32,
+      "ground_sink_m": 0.015,
+      "align_to_slope": true,
+      "lods": [
+        {
+          "path": "models/broken_stump_lod0.gltf",
+          "vertices": 5625,
+          "triangles": 9520,
+          "draws": 2,
+          "bounds_min": [
+            -0.6043846011161804,
+            -0.020631253719329834,
+            -0.8523455858230591
+          ],
+          "bounds_max": [
+            0.6936666965484619,
+            0.8233656287193298,
+            0.7308072447776794
+          ],
+          "branch_sweeps": 17,
+          "foliage_elements": 0,
+          "distance_m": 0
+        },
+        {
+          "path": "models/broken_stump_lod1.gltf",
+          "vertices": 1699,
+          "triangles": 2424,
+          "draws": 2,
+          "bounds_min": [
+            -0.6039986610412598,
+            -0.020592303946614265,
+            -0.8523330092430115
+          ],
+          "bounds_max": [
+            0.6936666965484619,
+            0.8233393430709839,
+            0.7307517528533936
+          ],
+          "branch_sweeps": 17,
+          "foliage_elements": 0,
+          "distance_m": 9
+        },
+        {
+          "path": "models/broken_stump_lod2.gltf",
+          "vertices": 1168,
+          "triangles": 1526,
+          "draws": 2,
+          "bounds_min": [
+            -0.6039986610412598,
+            -0.020736174657940865,
+            -0.8522500991821289
+          ],
+          "bounds_max": [
+            0.6936666965484619,
+            0.8233393430709839,
+            0.7308151721954346
+          ],
+          "branch_sweeps": 17,
+          "foliage_elements": 0,
+          "distance_m": 25
+        }
+      ],
+      "spacing_radius_m": 0.682,
+      "trunk_collision_radius_m": 0.0
+    },
+    {
+      "id": "pine_mature",
+      "category": "tree",
+      "seed": 101,
+      "scale_range": [
+        0.85,
+        1.2
+      ],
+      "yaw_degrees": [
+        0,
+        360
+      ],
+      "max_slope_degrees": 32,
+      "ground_sink_m": 0.015,
+      "align_to_slope": false,
+      "lods": [
+        {
+          "path": "models/pine_mature_lod0.gltf",
+          "vertices": 841374,
+          "triangles": 1070720,
+          "draws": 2,
+          "bounds_min": [
+            -4.429080963134766,
+            -0.036279596388339996,
+            -3.3632354736328125
+          ],
+          "bounds_max": [
+            3.680093765258789,
+            12.310907363891602,
+            3.460439682006836
+          ],
+          "branch_sweeps": 3092,
+          "foliage_elements": 95760,
+          "distance_m": 0
+        },
+        {
+          "path": "models/pine_mature_lod1.gltf",
+          "vertices": 106710,
+          "triangles": 138856,
+          "draws": 2,
+          "bounds_min": [
+            -4.439839839935303,
+            -0.02829761803150177,
+            -3.3092916011810303
+          ],
+          "bounds_max": [
+            3.6780686378479004,
+            12.33626937866211,
+            3.4916296005249023
+          ],
+          "branch_sweeps": 446,
+          "foliage_elements": 10640,
+          "distance_m": 45
+        },
+        {
+          "path": "models/pine_mature_lod2.gltf",
+          "vertices": 24614,
+          "triangles": 32448,
+          "draws": 2,
+          "bounds_min": [
+            -4.381999969482422,
+            -0.013985222205519676,
+            -3.2114531993865967
+          ],
+          "bounds_max": [
+            3.525761127471924,
+            12.000091552734375,
+            3.3744218349456787
+          ],
+          "branch_sweeps": 66,
+          "foliage_elements": 2660,
+          "distance_m": 120
+        }
+      ],
+      "spacing_radius_m": 3.543,
+      "trunk_collision_radius_m": 0.42
+    },
+    {
+      "id": "pine_windswept",
+      "category": "tree",
+      "seed": 113,
+      "scale_range": [
+        0.8,
+        1.15
+      ],
+      "yaw_degrees": [
+        0,
+        360
+      ],
+      "max_slope_degrees": 38,
+      "ground_sink_m": 0.015,
+      "align_to_slope": false,
+      "lods": [
+        {
+          "path": "models/pine_windswept_lod0.gltf",
+          "vertices": 841374,
+          "triangles": 1070720,
+          "draws": 2,
+          "bounds_min": [
+            -2.135756254196167,
+            -0.011141886934638023,
+            -2.1180992126464844
+          ],
+          "bounds_max": [
+            2.3269197940826416,
+            8.72715950012207,
+            2.695035934448242
+          ],
+          "branch_sweeps": 3092,
+          "foliage_elements": 95760,
+          "distance_m": 0
+        },
+        {
+          "path": "models/pine_windswept_lod1.gltf",
+          "vertices": 106710,
+          "triangles": 138856,
+          "draws": 2,
+          "bounds_min": [
+            -2.131474494934082,
+            -0.011075923219323158,
+            -2.118070125579834
+          ],
+          "bounds_max": [
+            2.3292858600616455,
+            8.677103042602539,
+            2.613656997680664
+          ],
+          "branch_sweeps": 446,
+          "foliage_elements": 10640,
+          "distance_m": 45
+        },
+        {
+          "path": "models/pine_windswept_lod2.gltf",
+          "vertices": 24270,
+          "triangles": 31968,
+          "draws": 2,
+          "bounds_min": [
+            -2.1246979236602783,
+            -0.010636316612362862,
+            -2.149822235107422
+          ],
+          "bounds_max": [
+            2.2997355461120605,
+            8.602417945861816,
+            2.665571689605713
+          ],
+          "branch_sweeps": 62,
+          "foliage_elements": 2660,
+          "distance_m": 120
+        }
+      ],
+      "spacing_radius_m": 2.156,
+      "trunk_collision_radius_m": 0.298
+    },
+    {
+      "id": "spruce_mature",
+      "category": "tree",
+      "seed": 127,
+      "scale_range": [
+        0.9,
+        1.25
+      ],
+      "yaw_degrees": [
+        0,
+        360
+      ],
+      "max_slope_degrees": 32,
+      "ground_sink_m": 0.015,
+      "align_to_slope": false,
+      "lods": [
+        {
+          "path": "models/spruce_mature_lod0.gltf",
+          "vertices": 1209942,
+          "triangles": 1537760,
+          "draws": 2,
+          "bounds_min": [
+            -3.100905656814575,
+            -0.2538091242313385,
+            -2.7830464839935303
+          ],
+          "bounds_max": [
+            3.3873836994171143,
+            10.242435455322266,
+            3.05373215675354
+          ],
+          "branch_sweeps": 4460,
+          "foliage_elements": 138096,
+          "distance_m": 0
+        },
+        {
+          "path": "models/spruce_mature_lod1.gltf",
+          "vertices": 152910,
+          "triangles": 198664,
+          "draws": 2,
+          "bounds_min": [
+            -3.036254405975342,
+            -0.20623254776000977,
+            -2.739830732345581
+          ],
+          "bounds_max": [
+            3.385903835296631,
+            10.203651428222656,
+            3.0012874603271484
+          ],
+          "branch_sweeps": 638,
+          "foliage_elements": 15344,
+          "distance_m": 45
+        },
+        {
+          "path": "models/spruce_mature_lod2.gltf",
+          "vertices": 34652,
+          "triangles": 45552,
+          "draws": 2,
+          "bounds_min": [
+            -3.0096237659454346,
+            -0.1925010234117508,
+            -2.7580270767211914
+          ],
+          "bounds_max": [
+            3.23854923248291,
+            10.000106811523438,
+            3.053387403488159
+          ],
+          "branch_sweeps": 87,
+          "foliage_elements": 3836,
+          "distance_m": 120
+        }
+      ],
+      "spacing_radius_m": 2.71,
+      "trunk_collision_radius_m": 0.35
+    },
+    {
+      "id": "spruce_young",
+      "category": "sapling",
+      "seed": 139,
+      "scale_range": [
+        0.75,
+        1.25
+      ],
+      "yaw_degrees": [
+        0,
+        360
+      ],
+      "max_slope_degrees": 38,
+      "ground_sink_m": 0.015,
+      "align_to_slope": false,
+      "lods": [
+        {
+          "path": "models/spruce_young_lod0.gltf",
+          "vertices": 1209942,
+          "triangles": 1537760,
+          "draws": 2,
+          "bounds_min": [
+            -1.247560977935791,
+            -0.11019440740346909,
+            -1.4074671268463135
+          ],
+          "bounds_max": [
+            1.2810981273651123,
+            4.3444437980651855,
+            1.5015040636062622
+          ],
+          "branch_sweeps": 4460,
+          "foliage_elements": 138096,
+          "distance_m": 0
+        },
+        {
+          "path": "models/spruce_young_lod1.gltf",
+          "vertices": 152910,
+          "triangles": 198664,
+          "draws": 2,
+          "bounds_min": [
+            -1.2056753635406494,
+            -0.08593741804361343,
+            -1.432438850402832
+          ],
+          "bounds_max": [
+            1.2830137014389038,
+            4.377232074737549,
+            1.4756978750228882
+          ],
+          "branch_sweeps": 638,
+          "foliage_elements": 15344,
+          "distance_m": 16
+        },
+        {
+          "path": "models/spruce_young_lod2.gltf",
+          "vertices": 33018,
+          "triangles": 43272,
+          "draws": 2,
+          "bounds_min": [
+            -1.2500567436218262,
+            -0.07294720411300659,
+            -1.5048635005950928
+          ],
+          "bounds_max": [
+            1.2171330451965332,
+            4.21921968460083,
+            1.4553475379943848
+          ],
+          "branch_sweeps": 68,
+          "foliage_elements": 3836,
+          "distance_m": 45
+        }
+      ],
+      "spacing_radius_m": 1.201,
+      "trunk_collision_radius_m": 0.147
+    },
+    {
+      "id": "oak_spreading",
+      "category": "tree",
+      "seed": 151,
+      "scale_range": [
+        0.85,
+        1.15
+      ],
+      "yaw_degrees": [
+        0,
+        360
+      ],
+      "max_slope_degrees": 26,
+      "ground_sink_m": 0.015,
+      "align_to_slope": false,
+      "lods": [
+        {
+          "path": "models/oak_spreading_lod0.gltf",
+          "vertices": 653417,
+          "triangles": 786468,
+          "draws": 3,
+          "bounds_min": [
+            -5.152060031890869,
+            -0.0003903510223608464,
+            -4.629513740539551
+          ],
+          "bounds_max": [
+            4.486457824707031,
+            8.764252662658691,
+            4.7422261238098145
+          ],
+          "branch_sweeps": 659,
+          "foliage_elements": 12012,
+          "distance_m": 0
+        },
+        {
+          "path": "models/oak_spreading_lod1.gltf",
+          "vertices": 165808,
+          "triangles": 188530,
+          "draws": 3,
+          "bounds_min": [
+            -5.140995979309082,
+            -0.00024786320864222944,
+            -4.654454231262207
+          ],
+          "bounds_max": [
+            4.492129325866699,
+            8.7150297164917,
+            4.741609573364258
+          ],
+          "branch_sweeps": 659,
+          "foliage_elements": 4002,
+          "distance_m": 45
+        },
+        {
+          "path": "models/oak_spreading_lod2.gltf",
+          "vertices": 40357,
+          "triangles": 43246,
+          "draws": 3,
+          "bounds_min": [
+            -5.097778797149658,
+            -0.0002372707676840946,
+            -4.609821796417236
+          ],
+          "bounds_max": [
+            4.548787593841553,
+            8.624763488769531,
+            4.602925777435303
+          ],
+          "branch_sweeps": 113,
+          "foliage_elements": 1334,
+          "distance_m": 120
+        }
+      ],
+      "spacing_radius_m": 4.122,
+      "trunk_collision_radius_m": 0.315
+    },
+    {
+      "id": "oak_tall",
+      "category": "tree",
+      "seed": 163,
+      "scale_range": [
+        0.9,
+        1.2
+      ],
+      "yaw_degrees": [
+        0,
+        360
+      ],
+      "max_slope_degrees": 26,
+      "ground_sink_m": 0.015,
+      "align_to_slope": false,
+      "lods": [
+        {
+          "path": "models/oak_tall_lod0.gltf",
+          "vertices": 653417,
+          "triangles": 786468,
+          "draws": 3,
+          "bounds_min": [
+            -3.763991355895996,
+            -0.030978025868535042,
+            -3.7987537384033203
+          ],
+          "bounds_max": [
+            4.235950946807861,
+            11.420648574829102,
+            3.650273084640503
+          ],
+          "branch_sweeps": 659,
+          "foliage_elements": 12012,
+          "distance_m": 0
+        },
+        {
+          "path": "models/oak_tall_lod1.gltf",
+          "vertices": 165808,
+          "triangles": 188530,
+          "draws": 3,
+          "bounds_min": [
+            -3.7906267642974854,
+            -0.02380271442234516,
+            -3.64933180809021
+          ],
+          "bounds_max": [
+            4.214457988739014,
+            11.445293426513672,
+            3.6923511028289795
+          ],
+          "branch_sweeps": 659,
+          "foliage_elements": 4002,
+          "distance_m": 45
+        },
+        {
+          "path": "models/oak_tall_lod2.gltf",
+          "vertices": 40357,
+          "triangles": 43246,
+          "draws": 3,
+          "bounds_min": [
+            -3.7045743465423584,
+            -0.010192915797233582,
+            -3.582538604736328
+          ],
+          "bounds_max": [
+            4.285571098327637,
+            11.381586074829102,
+            3.7788333892822266
+          ],
+          "branch_sweeps": 113,
+          "foliage_elements": 1334,
+          "distance_m": 120
+        }
+      ],
+      "spacing_radius_m": 3.389,
+      "trunk_collision_radius_m": 0.42
+    },
+    {
+      "id": "oak_sapling",
+      "category": "sapling",
+      "seed": 173,
+      "scale_range": [
+        0.75,
+        1.3
+      ],
+      "yaw_degrees": [
+        0,
+        360
+      ],
+      "max_slope_degrees": 32,
+      "ground_sink_m": 0.015,
+      "align_to_slope": false,
+      "lods": [
+        {
+          "path": "models/oak_sapling_lod0.gltf",
+          "vertices": 454785,
+          "triangles": 548884,
+          "draws": 3,
+          "bounds_min": [
+            -1.7500356435775757,
+            -0.0008332652505487204,
+            -1.7003345489501953
+          ],
+          "bounds_max": [
+            1.4906690120697021,
+            3.862041711807251,
+            1.5874398946762085
+          ],
+          "branch_sweeps": 459,
+          "foliage_elements": 8316,
+          "distance_m": 0
+        },
+        {
+          "path": "models/oak_sapling_lod1.gltf",
+          "vertices": 115440,
+          "triangles": 131562,
+          "draws": 3,
+          "bounds_min": [
+            -1.750607967376709,
+            -0.0007441189954988658,
+            -1.734800934791565
+          ],
+          "bounds_max": [
+            1.4582767486572266,
+            3.8239023685455322,
+            1.5738731622695923
+          ],
+          "branch_sweeps": 459,
+          "foliage_elements": 2772,
+          "distance_m": 16
+        },
+        {
+          "path": "models/oak_sapling_lod2.gltf",
+          "vertices": 24210,
+          "triangles": 25202,
+          "draws": 3,
+          "bounds_min": [
+            -1.7379233837127686,
+            -0.0006917353020980954,
+            -1.7061371803283691
+          ],
+          "bounds_max": [
+            1.441902995109558,
+            3.8200201988220215,
+            1.6046326160430908
+          ],
+          "branch_sweeps": 18,
+          "foliage_elements": 924,
+          "distance_m": 45
+        }
+      ],
+      "spacing_radius_m": 1.4,
+      "trunk_collision_radius_m": 0.133
+    },
+    {
+      "id": "laurel_giant",
+      "category": "tree",
+      "seed": 251,
+      "scale_range": [
+        0.9,
+        1.15
+      ],
+      "yaw_degrees": [
+        0,
+        360
+      ],
+      "max_slope_degrees": 26,
+      "ground_sink_m": 0.015,
+      "align_to_slope": false,
+      "lods": [
+        {
+          "path": "models/laurel_giant_lod0.gltf",
+          "vertices": 2970152,
+          "triangles": 3550720,
+          "draws": 3,
+          "bounds_min": [
+            -9.8920316696167,
+            -0.11132664978504181,
+            -10.292709350585938
+          ],
+          "bounds_max": [
+            9.726399421691895,
+            18.131284713745117,
+            9.68918514251709
+          ],
+          "branch_sweeps": 2929,
+          "foliage_elements": 55440,
+          "distance_m": 0
+        },
+        {
+          "path": "models/laurel_giant_lod1.gltf",
+          "vertices": 751541,
+          "triangles": 849160,
+          "draws": 3,
+          "bounds_min": [
+            -9.775092124938965,
+            -0.09950320422649384,
+            -10.248741149902344
+          ],
+          "bounds_max": [
+            9.740153312683105,
+            18.155019760131836,
+            9.736738204956055
+          ],
+          "branch_sweeps": 2929,
+          "foliage_elements": 18480,
+          "distance_m": 45
+        },
+        {
+          "path": "models/laurel_giant_lod2.gltf",
+          "vertices": 176834,
+          "triangles": 186324,
+          "draws": 3,
+          "bounds_min": [
+            -9.871053695678711,
+            -0.07628191262483597,
+            -10.248896598815918
+          ],
+          "bounds_max": [
+            9.67081069946289,
+            18.209457397460938,
+            9.427363395690918
+          ],
+          "branch_sweeps": 409,
+          "foliage_elements": 6160,
+          "distance_m": 120
+        }
+      ],
+      "spacing_radius_m": 8.234,
+      "trunk_collision_radius_m": 0.63
+    }
+  ]
+}

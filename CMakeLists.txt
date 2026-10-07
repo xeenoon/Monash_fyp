@@ -581,6 +581,12 @@ if(BUILD_TESTING)
     add_test(NAME phase2_projection_and_precision COMMAND phase2_tests)
 
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME vegetation_asset_pack
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/vegetation_asset_tests.py")
+    add_test(NAME vegetation_terrain_scatter
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/vegetation_scatter_tests.py")
+    add_test(NAME medusa_guardian_asset
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/medusa_asset_tests.py")
     add_test(NAME dungeon_material_assets
         COMMAND "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/dungeon_assets_tests.py"

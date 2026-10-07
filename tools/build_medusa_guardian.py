@@ -63,7 +63,7 @@ class Geometry:
     def add(self, material, p, n, uv, idx):
         self.parts.setdefault(material, []).append((np.asarray(p),np.asarray(n),np.asarray(uv),np.asarray(idx)))
 
-    def ellipsoid(self, material, center, size, segments=32, rings=20, sculpt=False):
+    def ellipsoid(self, material, center, size, segments=32, rings=20, sculpt=False, chin=None):
         # Offset poles very slightly to keep UV tangent triangles nondegenerate.
         v = np.linspace(.0001,math.pi-.0001,rings+1)
         u = np.linspace(0,TAU,segments+1)
@@ -76,7 +76,11 @@ class Geometry:
             # Recessed eye sockets, a narrowed jaw and a drawn brow.
             sockets = sum(np.exp(-((xx-s*.112)/.072)**2-((yy-.025)/.047)**2) for s in (-1,1))
             p[...,2] -= front*.043*sockets
+            cheeks = sum(np.exp(-((xx-s*.126)/.065)**2-((yy+.063)/.045)**2) for s in (-1,1))
+            p[...,2] += front*.018*cheeks
             p[...,0] *= 1-.22*np.clip(-yy/.25,0,1)
+            if chin is not None:
+                p[...,1] = np.where(p[...,1] < chin, chin+(p[...,1]-chin)*.15, p[...,1])
         p += center
         idx = grid_indices(rings,segments,reverse=True)
         # Recompute normals on the sculpt, where the analytic ellipsoid differs.
@@ -147,26 +151,26 @@ def mask(g, center, scale=1, serpent=False):
     """Layered sculpt: recessed sockets, lids, cheekbones, nose, lips and fangs."""
     c=np.asarray(center)
     def ball(mat,pos,size):
-        g.ellipsoid(mat,c+np.array(pos)*scale,np.array(size)*scale,24,16)
+        g.ellipsoid(mat,c+np.array(pos)*scale,np.array(size)*scale,12 if serpent else 24,8 if serpent else 16)
     def line(mat,points,r):
-        g.tube(mat,c+np.array(points)*scale,np.array(r)*scale,12,6)
+        g.tube(mat,c+np.array(points)*scale,np.array(r)*scale,8 if serpent else 12,4 if serpent else 6)
     stone=0 if serpent else 1
-    g.ellipsoid(stone,c,np.array([.205,.268,.163])*scale,40,28,sculpt=True)
+    g.ellipsoid(stone,c,np.array([.205,.268,.163])*scale,24 if serpent else 40,16 if serpent else 28,
+                sculpt=True,chin=-.11*scale if serpent else None)
     for s in (-1,1):
-        ball(4,(s*.104,.026,.143),(.079,.053,.033))
-        ball(2,(s*.105,.028,.166),(.048,.026,.023))
-        ball(4,(s*.105,.029,.187),(.009,.025,.008))
-        line(stone,[(s*.035,.063,.153),(s*.10,.086,.158),(s*.17,.064,.118)], [.012,.026,.008])
-        line(stone,[(s*.044,.009,.157),(s*.11,-.009,.162),(s*.169,.018,.12)], [.008,.012,.007])
-        ball(stone,(s*.139,-.060,.113),(.048,.061,.036))
+        ball(4,(s*.104,.026,.143),(.067,.030,.025))
+        ball(2,(s*.105,.028,.163),(.044,.015,.015))
+        ball(4,(s*.105,.029,.178),(.006,.015,.004))
+        line(stone,[(s*.035,.041,.151),(s*.10,.053,.158),(s*.17,.064,.118)], [.012,.021,.008])
+        line(stone,[(s*.044,.012,.151),(s*.11,.006,.155),(s*.169,.025,.12)], [.006,.008,.006])
         if serpent:
             line(5,[(s*.056,-.119,.14),(s*.055,-.175,.162),(s*.042,-.187,.181)],[.018,.013,.001])
     ball(stone,(0,-.004,.163),(.029,.072,.038))
     ball(stone,(0,-.052,.19),(.040,.024,.030))
     ball(4,(0,-.124,.139),(.066,.026,.022))
     line(3,[(-.065,-.12,.142),(-.026,-.102,.157),(0,-.111,.161),(.026,-.102,.157),(.065,-.12,.142)], [.006,.011,.01,.011,.006])
-    line(stone,[(-.06,-.13,.139),(0,-.147,.155),(.06,-.13,.139)],[.006,.015,.006])
     if not serpent:
+        line(stone,[(-.06,-.13,.139),(0,-.147,.155),(.06,-.13,.139)],[.006,.015,.006])
         ball(3,(0,.159,.137),(.045,.059,.018))
         ball(2,(0,.158,.157),(.023,.037,.012))
         ball(4,(0,.158,.168),(.006,.031,.004))
@@ -175,6 +179,7 @@ def mask(g, center, scale=1, serpent=False):
 class Asset:
     def __init__(self):
         self.data=bytearray()
+        self.pivots={0:np.zeros(3)}
         self.doc={"asset":{"version":"2.0","generator":"Gameport spline Medusa"},
                   "scene":0,"scenes":[{"nodes":[0]}],"nodes":[{"name":"Medusa","children":[]}],
                   "meshes":[],"accessors":[],"bufferViews":[],"materials":[],"images":[],"textures":[],
@@ -208,7 +213,7 @@ class Asset:
             mat["normalTexture"]={**self.texture(texture+"_normal.png"),"scale":.7}
         self.doc["materials"].append(mat)
 
-    def node(self,name,g,pivot=(0,0,0)):
+    def node(self,name,g,pivot=(0,0,0),parent=0):
         primitives=[]
         for material,parts in g.parts.items():
             p=[]; n=[]; uv=[]; idx=[]; count=0
@@ -218,23 +223,70 @@ class Asset:
                                               "TEXCOORD_0":self.accessor(uv,"VEC2")},
                                "indices":self.accessor(idx,"SCALAR",True),"material":material})
         mesh=len(self.doc["meshes"]); self.doc["meshes"].append({"name":name,"primitives":primitives})
-        node=len(self.doc["nodes"])
-        self.doc["nodes"].append({"name":name,"mesh":mesh,"translation":list(pivot)})
-        self.doc["nodes"][0]["children"].append(node)
+        node=self.anchor(name,pivot,parent)
+        self.doc["nodes"][node]["mesh"]=mesh
         return node
 
-    def animate(self,nodes):
-        times=np.linspace(0,8,65)
+    def anchor(self,name,pivot,parent):
+        node=len(self.doc["nodes"])
+        self.pivots[node]=np.asarray(pivot)
+        self.doc["nodes"].append({"name":name,
+                                  "translation":(self.pivots[node]-self.pivots[parent]).tolist()})
+        self.doc["nodes"][parent].setdefault("children",[]).append(node)
+        return node
+
+    def animate(self,rigs,tendrils):
+        # Different phases and numbers of oscillations keep the heads from
+        # moving in unison. Each attack is a fast double strike, with a hard
+        # jaw closure at full extension and recoil before the second bite.
+        # Bake at 60 Hz so the 45 ms jaw slam survives LINEAR interpolation.
+        times=np.linspace(0,16,961)
         time_index=self.accessor(times,"SCALAR")
         clip={"name":"Serpentine","samplers":[],"channels":[]}
-        for i,node in enumerate(nodes):
-            phase=i*2.39996
-            axis=unit(np.array([.7*math.sin(phase),.35,math.cos(phase)]))
-            angle=.085*(np.sin(times*TAU/8+phase)-math.sin(phase))
-            rotations=np.column_stack((np.sin(angle[:,None]/2)*axis,np.cos(angle/2)))
+        def channel(node,path,values):
             sampler=len(clip["samplers"])
-            clip["samplers"].append({"input":time_index,"output":self.accessor(rotations,"VEC4"),"interpolation":"LINEAR"})
-            clip["channels"].append({"sampler":sampler,"target":{"node":node,"path":"rotation"}})
+            clip["samplers"].append({"input":time_index,"output":self.accessor(values,"VEC4" if path=="rotation" else "VEC3"),"interpolation":"LINEAR"})
+            clip["channels"].append({"sampler":sampler,"target":{"node":node,"path":path}})
+        def rotate(node,pitch,yaw,roll):
+            # Quaternion Ry * Rx * Rz, glTF xyzw; all angles in radians.
+            sx,cx=np.sin(pitch/2),np.cos(pitch/2)
+            sy,cy=np.sin(yaw/2),np.cos(yaw/2)
+            sz,cz=np.sin(roll/2),np.cos(roll/2)
+            q=np.column_stack((cy*sx*cz+sy*cx*sz,sy*cx*cz-cy*sx*sz,
+                               cy*cx*sz-sy*sx*cz,cy*cx*cz+sy*sx*sz))
+            channel(node,"rotation",q)
+        def smooth(t):
+            t=np.clip(t,0,1)
+            return t*t*(3-2*t)
+        def pulse(t,start,rise,hold,fall):
+            return smooth((t-start)/rise)*(1-smooth((t-start-rise-hold)/fall))
+        t=times*TAU/16
+        for i,(root,socket,head,jaw,tongue) in enumerate(rigs):
+            phase=i*2.39996
+            local=(times-(.8+i*.71))%8
+            strike=pulse(local,0,.10,.08,.20)+.85*pulse(local,.43,.08,.06,.28)
+            recoil=pulse(local,.26,.07,.02,.14)
+            reach=strike-.16*recoil
+            gape=pulse(local,0,.065,.085,.045)+pulse(local,.43,.055,.075,.045)
+            search=np.sin(t*(2+i%3)+phase)
+            rotate(root,.065*np.sin(t*2+phase)+.22*reach,
+                   .12*search,.075*np.sin(t*3+phase+.7)+.09*recoil*np.sin(i))
+            # Extend the whole swept neck from its fixed root; the head stays
+            # attached. Compensate its scale so faces retain their proportions.
+            depth=max(.10,self.pivots[head][2]-self.pivots[root][2])
+            extension=np.column_stack((np.ones_like(t),np.ones_like(t),1+.42/depth*reach))
+            channel(root,"scale",extension)
+            # Undo extension BEFORE the independent head rotation, avoiding
+            # shear when a head turns while its neck is fully extended.
+            channel(socket,"scale",1/extension)
+            rotate(head,.14*np.sin(t*3+phase)-.30*strike+.15*recoil,
+                   .32*search*(1-.9*strike),.12*np.sin(t*2+phase+1))
+            rotate(jaw,.015+1.35*gape,np.zeros_like(t),np.zeros_like(t))
+            flick=gape*(.5+.5*np.sin(local*TAU*11))
+            channel(tongue,"scale",np.column_stack((np.ones_like(t),.12+.88*flick,.28+1.1*flick)))
+        for i,node in enumerate(tendrils):
+            phase=i*2.7
+            rotate(node,.08*np.sin(t*2+phase),.10*np.sin(t*3+phase),.06*np.sin(t+phase))
         self.doc["animations"]=[clip]
 
     def save(self):
@@ -277,7 +329,8 @@ def main():
             pts.append((r*math.cos(a),.10+.32*(1-t)**2,r*math.sin(a)))
         body.tube(0,pts,[.13,.15,.135,.115,.09,.061,.033,.003],20,10)
     asset.node("Petrified oracle and root coils",body)
-    moving=[]
+    rigs=[]
+    tendrils=[]
     # Uneven crown: tips face the player, so the many little masks read in play.
     for i in range(11):
         a=(i/10)*math.pi
@@ -289,19 +342,29 @@ def main():
              (tip[0]+x*.13,tip[1]+.15,tip[2]-.16),tip]
         g=Geometry()
         g.tube(0,pts,[.070,.073,.062,.048,.043],20,15)
-        mask(g,tip,.34,True)
+        root_node=asset.node(f"Crown serpent {i+1:02}",g,root)
+        head=Geometry(); mask(head,tip,.34,True)
+        socket_node=asset.anchor(f"Head socket {i+1:02}",tip,root_node)
+        head_node=asset.node(f"Searching head {i+1:02}",head,tip,socket_node)
+        p=np.asarray(tip)
+        jaw=Geometry()
+        jaw.ellipsoid(0,p+(0,-.059,.035),(.027,.013,.021),16,10)
+        jaw.tube(0,p+np.array([(-.023,-.049,.043),(0,-.052,.056),(.023,-.049,.043)]),
+                 [.004,.006,.004],10,6)
+        jaw_node=asset.node(f"Hissing jaw {i+1:02}",jaw,p+(0,-.037,.018),head_node)
+        tongue=Geometry()
         # Long forked tongue below each small mask.
         for s in (-1,1):
-            p=np.asarray(tip)
-            g.tube(3,p+np.array([(0,-.055,.05),(0,-.09,.07),(s*.017,-.11,.075)]),[.005,.004,.001],8,5)
-        moving.append(asset.node(f"Crown serpent {i+1:02}",g,root))
+            tongue.tube(3,p+np.array([(0,-.055,.05),(0,-.09,.07),(s*.017,-.11,.075)]),[.005,.004,.001],8,5)
+        tongue_node=asset.node(f"Flicking tongue {i+1:02}",tongue,p+(0,-.055,.05),jaw_node)
+        rigs.append((root_node,socket_node,head_node,jaw_node,tongue_node))
     # Two long tendrils frame the face; their recurved tips echo the crown.
     for s in (-1,1):
         root=(s*.16,1.72,-.02); g=Geometry()
         g.tube(0,[root,(s*.29,1.52,-.01),(s*.35,1.25,.18),(s*.49,1.32,.28),
                   (s*.48,1.48,.26),(s*.39,1.47,.24)], [.06,.062,.045,.033,.022,.002],18,14)
-        moving.append(asset.node(f"Temple tendril {s}",g,root))
-    asset.animate(moving)
+        tendrils.append(asset.node(f"Temple tendril {s}",g,root))
+    asset.animate(rigs,tendrils)
     asset.save()
     print(f"Medusa: {len(asset.doc['nodes'])} nodes, "
           f"{sum(len(m['primitives']) for m in asset.doc['meshes'])} draws, {len(asset.data):,} geometry bytes")

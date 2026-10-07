@@ -62,6 +62,7 @@ typedef struct
 	bool mouse_left, mouse_right; /* held */
 	bool mouse_left_pressed, mouse_left_released;
 	float wheel; /* notches this frame, + away from the user */
+	float map_zoom; /* held keyboard axis: - minus zooms out, = zooms in */
 	bool tab;	 /* Tab pressed */
 } Input;
 

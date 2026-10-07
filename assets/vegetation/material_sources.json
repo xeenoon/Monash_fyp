@@ -1,0 +1,77 @@
+{
+  "license": "CC0-1.0",
+  "materials": [
+    {
+      "role": "broadleaf_bark",
+      "source": "bark_brown_02",
+      "page": "https://polyhaven.com/a/bark_brown_02",
+      "width_m": 1.0,
+      "files": {
+        "albedo": {
+          "size": 7259413,
+          "md5": "6661ce5ba6acc2071f99d28b9bb8f1d6",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/bark_brown_02/bark_brown_02_diff_4k.jpg",
+          "resolution": "4k",
+          "path": "textures/broadleaf_bark_albedo.jpg"
+        },
+        "normal": {
+          "size": 34689257,
+          "md5": "1fe34b7314293cbbe957cfeaaa999359",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/4k/bark_brown_02/bark_brown_02_nor_gl_4k.png",
+          "resolution": "4k",
+          "path": "textures/broadleaf_bark_normal.png"
+        },
+        "orm": {
+          "size": 3075636,
+          "md5": "8ba2549800bba309c12ef329faf1339b",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/bark_brown_02/bark_brown_02_arm_4k.jpg",
+          "resolution": "4k",
+          "path": "textures/broadleaf_bark_orm.jpg"
+        },
+        "height": {
+          "size": 6555476,
+          "md5": "8bc0ca06214c073060c7bafee313214d",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/2k/bark_brown_02/bark_brown_02_disp_2k.png",
+          "resolution": "2k",
+          "path": "textures/broadleaf_bark_height.png"
+        }
+      }
+    },
+    {
+      "role": "conifer_bark",
+      "source": "pine_bark",
+      "page": "https://polyhaven.com/a/pine_bark",
+      "width_m": 1.0,
+      "files": {
+        "albedo": {
+          "size": 11772992,
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/pine_bark/pine_bark_diff_4k.jpg",
+          "md5": "4a9aac215ce5740f54b784780a45e5c9",
+          "resolution": "4k",
+          "path": "textures/conifer_bark_albedo.jpg"
+        },
+        "normal": {
+          "size": 93402266,
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/4k/pine_bark/pine_bark_nor_gl_4k.png",
+          "md5": "3fa861ff0a1fba53a731793f3075f47e",
+          "resolution": "4k",
+          "path": "textures/conifer_bark_normal.png"
+        },
+        "orm": {
+          "size": 11602814,
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/4k/pine_bark/pine_bark_arm_4k.jpg",
+          "md5": "c766465ee4736adeecafd3c889645284",
+          "resolution": "4k",
+          "path": "textures/conifer_bark_orm.jpg"
+        },
+        "height": {
+          "size": 6454207,
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/2k/pine_bark/pine_bark_disp_2k.png",
+          "md5": "7a63428effcf14a5cb4cbe7d62c8d94d",
+          "resolution": "2k",
+          "path": "textures/conifer_bark_height.png"
+        }
+      }
+    }
+  ]
+}

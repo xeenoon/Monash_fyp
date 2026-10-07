@@ -17,6 +17,7 @@
 #define CHEST_REACH_M 1.8f
 #define CHEST_BLOCK_M 0.85f
 #define GEM_PICKUP_M 0.9f
+#define ENTRY_DESCENT_SECONDS 4.6f
 
 static const DungeonBiome biomes[] = {
 	{"Ember Vault", "Volcanic halls where the stone still holds the heat of the forge.",
@@ -125,7 +126,15 @@ void dungeon_game_enter(DungeonGame *game, uint32_t level)
 		return;
 	game->load_level = level % DUNGEON_GAME_LEVELS;
 	game->screen = DUNGEON_GAME_LOADING;
-	game->loading_frames = 2;
+	game->screen_time = 0.0f;
+	game->loading_entry = true;
+}
+
+float dungeon_game_entry_progress(const DungeonGame *game)
+{
+	if (game->screen != DUNGEON_GAME_LOADING || !game->loading_entry)
+		return -1.0f;
+	return fminf(1.0f, fmaxf(0.0f, game->screen_time / ENTRY_DESCENT_SECONDS));
 }
 
 const char *dungeon_game_biome_name(const DungeonGame *game, uint32_t level)
@@ -391,6 +400,7 @@ void dungeon_game_begin_level(DungeonGame *game, DungeonScene *scene, uint32_t l
 	dialogue_close(&game->monk_dialogue);
 	game->screen = DUNGEON_GAME_PLAYING;
 	game->in_overworld = false;
+	game->loading_entry = false;
 	game->run_time = 0.0f;
 	game->spotted = game->gem_taken = game->chest_open = false;
 	game->chest_lid = 0.0f;
@@ -504,6 +514,8 @@ static DungeonGameAction request_load(DungeonGame *game, uint32_t level)
 {
 	game->load_level = level % DUNGEON_GAME_LEVELS;
 	game->screen = DUNGEON_GAME_LOADING;
+	game->screen_time = 0.0f;
+	game->loading_entry = false;
 	game->loading_frames = 2; /* paint the loading card before blocking on the load */
 	return DUNGEON_GAME_ACTION_NONE;
 }
@@ -514,6 +526,8 @@ static DungeonGameAction return_to_overworld(DungeonGame *game)
 	game->cursor = 0;
 	game->screen_time = 0.0f;
 	game->in_overworld = true;
+	game->loading_entry = false;
+	game->hovered = game->selected = game->fly_request = -1;
 	return DUNGEON_GAME_ACTION_RETURN;
 }
 
@@ -569,7 +583,8 @@ DungeonGameAction dungeon_game_update(DungeonGame *game, const Input *in, Dungeo
 			go(game, DUNGEON_GAME_PAUSED);
 		break;
 	case DUNGEON_GAME_LOADING:
-		if (--game->loading_frames <= 0)
+		if ((game->loading_entry && game->screen_time >= ENTRY_DESCENT_SECONDS) ||
+			(!game->loading_entry && --game->loading_frames <= 0))
 			return DUNGEON_GAME_ACTION_LOAD;
 		break;
 	case DUNGEON_GAME_PLAYING:
@@ -974,31 +989,13 @@ static void build_props(DungeonGame *game, DungeonScene *scene)
 									  {0.2f, 0.2f, 0.2f}, -spin * 1.3f, -0.62f,
 									  {0.6f, 1.9f, 2.0f}, 0.0f});
 	}
-	/* The guardian: a hulking dark figure with eyes that burn when it hunts. */
+	/* The guardian's sculpture has its own textured meshes and curve crown. */
 	DungeonGuardian *g = &game->guard;
-	if (g->active)
-	{
-		float face = 1.5707963f - g->facing; /* local +Z along facing */
-		float step = sinf(g->bob * (g->mode == GUARD_CHASE ? 12.0f : 6.0f)) * 0.04f;
-		const float body[3] = {0.55f, 0.12f, 0.08f};
-		add_prop(scene, (DungeonProp){offset(g->position, floor, face, 0, 0, 0), {0.7f, 1.25f, 0.5f},
-									  face, 0, {body[0], body[1], body[2]}, 0.3f});
-		add_prop(scene, (DungeonProp){offset(g->position, floor, face, 0, 1.25f + step, 0.02f),
-									  {0.46f, 0.42f, 0.44f}, face, 0,
-									  {body[0] * 1.3f, body[1], body[2]}, 0.3f});
-		for (int side = -1; side <= 1; side += 2)
-			add_prop(scene, (DungeonProp){offset(g->position, floor, face, side * 0.36f, 0.55f - step,
-												 0.06f),
-										  {0.18f, 0.62f, 0.2f}, face, 0.0f,
-										  {body[0], body[1], body[2]}, 0.3f});
-		bool hunting = g->mode == GUARD_CHASE;
-		float eye[3] = {hunting ? 4.0f : 2.4f, hunting ? 0.3f : 1.6f, hunting ? 0.15f : 0.3f};
-		for (int side = -1; side <= 1; side += 2)
-			add_prop(scene, (DungeonProp){offset(g->position, floor, face, side * 0.1f, 1.48f + step,
-												 0.23f),
-										  {0.09f, 0.05f, 0.03f}, face, 0,
-										  {eye[0], eye[1], eye[2]}, 0.0f});
-	}
+	scene->guardian.active = g->active;
+	scene->guardian.hunting = g->mode == GUARD_CHASE;
+	scene->guardian.position = (WorldPosition){g->position.x, floor, g->position.z};
+	scene->guardian.yaw = 1.5707963f - g->facing; /* local +Z along facing */
+	scene->guardian.time = scene->time;
 }
 
 void dungeon_game_post_update(DungeonGame *game, DungeonScene *scene, float dt)
@@ -1191,7 +1188,7 @@ static void draw_how_to_play(DungeonGame *game, UiCanvas *c)
 	ui_text(c, UI_FONT_HEADING, W / 2, 46, UI_ALIGN_CENTRE, GOLD, "How to Play");
 	int y = 108, x = 110, col = 300;
 	static const char *rows[][2] = {
-		{"Map", "Drag to pan, scroll to zoom, click a pin, then Descend"},
+		{"Map", "WASD moves; arrows rotate and tilt; - / = zoom. Click a pin to enter."},
 		{"Move", "W A S D        Turn camera: Left / Right arrows"},
 		{"Interact", "E  -  pick a lock, open the treasure chest"},
 		{"Pin tumbler", "Left/Right choose a pin, Up/Down raise it until it sets. Enter tries."},
@@ -1217,16 +1214,6 @@ static void draw_how_to_play(DungeonGame *game, UiCanvas *c)
 	footer(c, "Enter or Esc to go back");
 }
 
-/* The selection card's Descend button, in canvas pixels. */
-#define CARD_W 520
-#define CARD_H 170
-#define CARD_X (W / 2 - CARD_W / 2)
-#define CARD_Y (H - CARD_H - 20)
-#define BUTTON_W 170
-#define BUTTON_H 44
-#define BUTTON_X (CARD_X + CARD_W - BUTTON_W - 20)
-#define BUTTON_Y (CARD_Y + CARD_H - BUTTON_H - 18)
-
 void dungeon_game_overworld_pointer(DungeonGame *game, float x, float y, bool click, bool tab,
 									bool confirm)
 {
@@ -1250,28 +1237,18 @@ void dungeon_game_overworld_pointer(DungeonGame *game, float x, float y, bool cl
 			game->hovered = (int)i;
 		}
 	}
-	bool on_button = game->selected >= 0 && x >= BUTTON_X && x <= BUTTON_X + BUTTON_W &&
-					 y >= BUTTON_Y && y <= BUTTON_Y + BUTTON_H;
 	if (click)
 	{
-		if (on_button)
-		{
-			dungeon_game_enter(game, (uint32_t)game->selected);
-			return;
-		}
 		if (game->hovered >= 0)
 		{
 			game->selected = game->hovered;
-			game->fly_request = game->hovered;
+			dungeon_game_enter(game, (uint32_t)game->selected);
+			return;
 		}
-		else if (!(x >= CARD_X && x <= CARD_X + CARD_W && y >= CARD_Y && y <= CARD_Y + CARD_H))
-			game->selected = -1; /* a click on open ground puts the card away */
+		game->selected = -1;
 	}
 	if (tab)
-	{
 		game->selected = (game->selected + 1) % (int)DUNGEON_GAME_LEVELS;
-		game->fly_request = game->selected;
-	}
 	if (confirm && game->selected >= 0)
 		dungeon_game_enter(game, (uint32_t)game->selected);
 }
@@ -1334,38 +1311,33 @@ static void draw_overworld_hud(DungeonGame *game, UiCanvas *c)
 	if (game->hovered >= 0 && game->hovered != game->selected)
 		draw_pin(game, c, (uint32_t)game->hovered);
 	if (game->selected >= 0)
-	{
 		draw_pin(game, c, (uint32_t)game->selected);
-		const DungeonGameLevel *level = &game->levels[game->selected];
-		const DungeonBiome *biome = &biomes[level->biome];
-		panel(c, CARD_X, CARD_Y, CARD_W, CARD_H);
-		char title[96];
-		snprintf(title, sizeof(title), "%u.  %s", game->selected + 1, biome->name);
-		ui_text(c, UI_FONT_BODY, CARD_X + 22, CARD_Y + 14, UI_ALIGN_LEFT, GOLD, title);
-		ui_text(c, UI_FONT_SMALL, CARD_X + 22, CARD_Y + 48, UI_ALIGN_LEFT, DIM, level->name);
-		ui_text_wrapped(c, UI_FONT_SMALL, CARD_X + 22, CARD_Y + 74, CARD_W - 44, WHITE, biome->blurb);
-		stars_row(c, CARD_X + 70, BUTTON_Y + BUTTON_H / 2, 13.0f, level->best_stars, 3.0f);
-		bool on_button = game->pointer_x >= BUTTON_X && game->pointer_x <= BUTTON_X + BUTTON_W &&
-						 game->pointer_y >= BUTTON_Y && game->pointer_y <= BUTTON_Y + BUTTON_H;
-		ui_fill_rect(c, BUTTON_X, BUTTON_Y, BUTTON_W, BUTTON_H,
-					 on_button ? (UiColor){190, 130, 40, 240} : (UiColor){120, 80, 25, 220});
-		ui_frame_rect(c, BUTTON_X, BUTTON_Y, BUTTON_W, BUTTON_H, 2, GOLD);
-		ui_text(c, UI_FONT_BODY, BUTTON_X + BUTTON_W / 2, BUTTON_Y + 7, UI_ALIGN_CENTRE, WHITE,
-				"Descend");
-	}
-	else
-		footer(c, "Drag to pan   Scroll to zoom   Right-drag to rotate   Click a pin to choose a dungeon");
+	footer(c, "WASD move   Arrows rotate / tilt   - / = zoom   Click a pin to enter");
 }
 
 static void draw_loading(DungeonGame *game, UiCanvas *c)
 {
-	ui_fill_rect(c, 0, 0, W, H, (UiColor){4, 3, 5, 255});
 	const DungeonGameLevel *level = &game->levels[game->load_level];
-	ui_text(c, UI_FONT_SMALL, W / 2, H / 2 - 70, UI_ALIGN_CENTRE, DIM, "Descending into");
-	ui_text(c, UI_FONT_HEADING, W / 2, H / 2 - 42, UI_ALIGN_CENTRE, GOLD,
+	if (!game->loading_entry)
+	{
+		ui_fill_rect(c, 0, 0, W, H, (UiColor){4, 3, 5, 255});
+		ui_text(c, UI_FONT_SMALL, W / 2, H / 2 - 70, UI_ALIGN_CENTRE, DIM,
+				"Descending into");
+		ui_text(c, UI_FONT_HEADING, W / 2, H / 2 - 42, UI_ALIGN_CENTRE, GOLD,
+				biomes[level->biome].name);
+		ui_text(c, UI_FONT_BODY, W / 2, H / 2 + 10, UI_ALIGN_CENTRE, WHITE, level->name);
+		ui_text(c, UI_FONT_SMALL, W / 2, H / 2 + 70, UI_ALIGN_CENTRE, DIM, "Loading...");
+		return;
+	}
+	float progress = dungeon_game_entry_progress(game);
+	uint8_t bars = (uint8_t)(150.0f + 105.0f * fminf(1.0f, progress * 2.0f));
+	ui_fill_rect(c, 0, 0, W, 54, (UiColor){2, 2, 3, bars});
+	ui_fill_rect(c, 0, H - 70, W, 70, (UiColor){2, 2, 3, bars});
+	ui_text(c, UI_FONT_SMALL, W / 2, 17, UI_ALIGN_CENTRE, DIM,
+			progress < 0.42f ? "Approaching the entrance" : "Descending into");
+	ui_text(c, UI_FONT_BODY, W / 2, H - 56, UI_ALIGN_CENTRE, GOLD,
 			biomes[level->biome].name);
-	ui_text(c, UI_FONT_BODY, W / 2, H / 2 + 10, UI_ALIGN_CENTRE, WHITE, level->name);
-	ui_text(c, UI_FONT_SMALL, W / 2, H / 2 + 70, UI_ALIGN_CENTRE, DIM, "Loading...");
+	ui_text(c, UI_FONT_SMALL, W / 2, H - 28, UI_ALIGN_CENTRE, WHITE, level->name);
 }
 
 static void draw_hud(DungeonGame *game, const DungeonScene *scene, UiCanvas *c)
@@ -1373,9 +1345,6 @@ static void draw_hud(DungeonGame *game, const DungeonScene *scene, UiCanvas *c)
 	const DungeonGameLevel *level = &game->levels[game->current];
 	const DungeonSession *session = &scene->session;
 	bool picking = session->phase != DUNGEON_PHASE_EXPLORING;
-	/* Top left: where you are, and how long you've been here. */
-	ui_fill_rect(c, 0, 0, 330, 62, (UiColor){0, 0, 0, 110});
-	ui_text(c, UI_FONT_SMALL, 14, 8, UI_ALIGN_LEFT, GOLD, biomes[level->biome].name);
 	char line[160];
 	char clock[16];
 	format_time(game->run_time, clock, sizeof(clock));
@@ -1383,9 +1352,20 @@ static void draw_hud(DungeonGame *game, const DungeonScene *scene, UiCanvas *c)
 	for (uint32_t i = 0; i < session->door_count; ++i)
 		shut += session->doors[i].open ? 0u : 1u;
 	snprintf(line, sizeof(line), "%s   %s   Locked doors: %u", level->name, clock, shut);
+	/* Top left: size the backing from both lines so long generated dungeon
+	 * names never spill onto the scene. Leave a gap before the objectives. */
+	int ox = W - 270;
+	int info_width = ui_text_width(UI_FONT_SMALL, biomes[level->biome].name);
+	int detail_width = ui_text_width(UI_FONT_SMALL, line);
+	if (detail_width > info_width)
+		info_width = detail_width;
+	info_width += 28;
+	if (info_width > ox - 20)
+		info_width = ox - 20;
+	ui_fill_rect(c, 0, 0, info_width, 62, (UiColor){0, 0, 0, 110});
+	ui_text(c, UI_FONT_SMALL, 14, 8, UI_ALIGN_LEFT, GOLD, biomes[level->biome].name);
 	ui_text(c, UI_FONT_SMALL, 14, 32, UI_ALIGN_LEFT, WHITE, line);
 	/* Top right: the three stars' objectives. */
-	int ox = W - 270;
 	ui_fill_rect(c, ox - 10, 0, 280, 96, (UiColor){0, 0, 0, 110});
 	struct
 	{
@@ -1415,14 +1395,21 @@ static void draw_hud(DungeonGame *game, const DungeonScene *scene, UiCanvas *c)
 		else
 			snprintf(line, sizeof(line),
 					 "Arrows: choose optic    Enter: grab / release    Left/Right: rotate    Q: leave");
-		char full[160] = {0};
-		dungeon_session_status_text(session, full, sizeof(full));
-		/* Drop the "Dungeon | Lockpick | " window-title prefix. */
-		const char *text = full;
-		for (int skip = 0; skip < 2 && strstr(text, " | "); ++skip)
-			if (!strncmp(text, "Dungeon", 7) || !strncmp(text, "Lockpick", 8))
-				text = strstr(text, " | ") + 3;
-		snprintf(status, sizeof(status), "%s", text);
+		/* The padlock itself already exposes the selected pin and every pin's
+		 * height. Its old diagnostic strip duplicated that visual information.
+		 * Keep status readouts for the safe and optics puzzles, where progress and
+		 * light power are not otherwise visible. */
+		if (session->phase != DUNGEON_PHASE_PIN_TUMBLER)
+		{
+			char full[160] = {0};
+			dungeon_session_status_text(session, full, sizeof(full));
+			/* Drop the "Dungeon | Lockpick | " window-title prefix. */
+			const char *text = full;
+			for (int skip = 0; skip < 2 && strstr(text, " | "); ++skip)
+				if (!strncmp(text, "Dungeon", 7) || !strncmp(text, "Lockpick", 8))
+					text = strstr(text, " | ") + 3;
+			snprintf(status, sizeof(status), "%s", text);
+		}
 	}
 	else if (dungeon_game_monk_in_reach(game, scene))
 		snprintf(line, sizeof(line), "[E]  Talk to the monk");
@@ -1450,8 +1437,14 @@ static void draw_hud(DungeonGame *game, const DungeonScene *scene, UiCanvas *c)
 	if (line[0])
 	{
 		int w = ui_text_width(UI_FONT_BODY, line) + 40;
-		ui_fill_rect(c, W / 2 - w / 2, H - 62, w, 42, (UiColor){0, 0, 0, 150});
-		ui_text(c, UI_FONT_BODY, W / 2, H - 56, UI_ALIGN_CENTRE, WHITE, line);
+		/* Lock controls belong against the bottom edge so they do not cover the
+		 * mechanism. Ordinary proximity prompts retain their slightly raised
+		 * position, where they are easier to notice while exploring. */
+		int prompt_height = picking ? ui_line_height(UI_FONT_BODY) + 4 : 42;
+		int prompt_y = picking ? H - prompt_height : H - 62;
+		int text_y = prompt_y + (picking ? 2 : 6);
+		ui_fill_rect(c, W / 2 - w / 2, prompt_y, w, prompt_height, (UiColor){0, 0, 0, 150});
+		ui_text(c, UI_FONT_BODY, W / 2, text_y, UI_ALIGN_CENTRE, WHITE, line);
 	}
 	/* Danger: red edges while the guardian hunts. */
 	if (game->guard.active && game->guard.mode == GUARD_CHASE)

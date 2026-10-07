@@ -75,6 +75,7 @@ void input_poll(Input *in, SDL_Window *window)
 	in->mouse_dx = in->mouse_dy = 0.0f;
 	in->mouse_left_pressed = in->mouse_left_released = false;
 	in->wheel = 0.0f;
+	in->map_zoom = 0.0f;
 	in->tab = false;
 
 	SDL_Event event;
@@ -273,6 +274,7 @@ void input_poll(Input *in, SDL_Window *window)
 	{
 		in->rotate_sun = in->sprint = false;
 		in->move_forward = in->move_right = in->orbit_yaw = in->orbit_pitch = 0;
+		in->map_zoom = 0.0f;
 		in->look_dx = in->look_dy = 0;
 		return;
 	}
@@ -283,5 +285,7 @@ void input_poll(Input *in, SDL_Window *window)
 		(keys[SDL_SCANCODE_D] ? 1.0f : 0.0f) - (keys[SDL_SCANCODE_A] ? 1.0f : 0.0f);
 	in->orbit_yaw = (keys[SDL_SCANCODE_RIGHT] ? 1.0f : 0.0f) - (keys[SDL_SCANCODE_LEFT] ? 1.0f : 0.0f);
 	in->orbit_pitch = (keys[SDL_SCANCODE_DOWN] ? 1.0f : 0.0f) - (keys[SDL_SCANCODE_UP] ? 1.0f : 0.0f);
+	in->map_zoom = (keys[SDL_SCANCODE_EQUALS] ? 1.0f : 0.0f) -
+				   (keys[SDL_SCANCODE_MINUS] ? 1.0f : 0.0f);
 	in->sprint = keys[SDL_SCANCODE_LSHIFT];
 }

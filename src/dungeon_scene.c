@@ -1482,12 +1482,20 @@ static bool scene_create(Renderer *renderer, DungeonScene *out, const uint32_t *
 		out->monk.yaw = atan2f(out->level.spawn.x - out->level.monk_spawn.x,
 							   out->level.spawn.z - out->level.monk_spawn.z);
 	}
-	if (!out->lab && !dungeon_guardian_load(renderer, &out->guardian))
+	bool guardian_study = out->lab && getenv("DUNGEON_GUARDIAN_STUDY") &&
+		atoi(getenv("DUNGEON_GUARDIAN_STUDY")) != 0;
+	if ((!out->lab || guardian_study) && !dungeon_guardian_load(renderer, &out->guardian))
 	{
 		if (error)
 			snprintf(error->message, sizeof(error->message), "could not load Medusa guardian");
 		dungeon_scene_destroy(renderer, out);
 		return false;
+	}
+	if (guardian_study)
+	{
+		/* Inspect the shipping material beside the existing lab fixture. */
+		out->guardian.active = true;
+		out->guardian.position = (WorldPosition){3.0, out->level.floor_y, 2.0};
 	}
 	if (!dungeon_session_create(&out->session, &out->level))
 	{
@@ -1797,6 +1805,8 @@ bool dungeon_scene_update(DungeonScene *scene, float move_forward, float move_ri
 		scene->player_stride = 0;
 		return false;
 	}
+	if (scene->lab)
+		scene->guardian.time = scene->time;
 	dungeon_session_update(&scene->session, dt);
 	update_pick(scene, dt);
 	update_padlocks(scene, dt);

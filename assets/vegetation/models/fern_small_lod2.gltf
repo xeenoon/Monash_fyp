@@ -1,0 +1,184 @@
+{
+  "asset": {
+    "version": "2.0",
+    "generator": "Gameport detailed vegetation"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "fern_small_lod2"
+    }
+  ],
+  "meshes": [
+    {
+      "name": "fern_small_lod2",
+      "primitives": [
+        {
+          "material": 0,
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2,
+            "TANGENT": 3
+          },
+          "indices": 4
+        }
+      ]
+    }
+  ],
+  "materials": [
+    {
+      "name": "Fern fronds",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "metallicFactor": 0,
+        "roughnessFactor": 1,
+        "baseColorTexture": {
+          "index": 0
+        },
+        "metallicRoughnessTexture": {
+          "index": 1
+        }
+      },
+      "doubleSided": false,
+      "normalTexture": {
+        "index": 2,
+        "scale": 0.55
+      },
+      "occlusionTexture": {
+        "index": 1
+      }
+    }
+  ],
+  "images": [
+    {
+      "uri": "../textures/fern_albedo.png"
+    },
+    {
+      "uri": "../textures/fern_orm.png"
+    },
+    {
+      "uri": "../textures/fern_normal.png"
+    }
+  ],
+  "textures": [
+    {
+      "source": 0,
+      "sampler": 0
+    },
+    {
+      "source": 1,
+      "sampler": 0
+    },
+    {
+      "source": 2,
+      "sampler": 0
+    }
+  ],
+  "samplers": [
+    {
+      "magFilter": 9729,
+      "minFilter": 9987,
+      "wrapS": 10497,
+      "wrapT": 10497
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 25861,
+      "type": "VEC3",
+      "min": [
+        -0.919969916343689,
+        0.019966818392276764,
+        -0.8763135671615601
+      ],
+      "max": [
+        0.7739891409873962,
+        0.49354735016822815,
+        0.5781469941139221
+      ]
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 25861,
+      "type": "VEC3",
+      "min": [
+        -0.9999894499778748,
+        -0.9997830986976624,
+        -0.9999793767929077
+      ],
+      "max": [
+        0.9995546936988831,
+        0.9997830986976624,
+        0.9999771118164062
+      ]
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 25861,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5126,
+      "count": 25861,
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 4,
+      "componentType": 5125,
+      "count": 85932,
+      "type": "SCALAR"
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 310332
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 310332,
+      "byteLength": 310332
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 620664,
+      "byteLength": 206888
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 827552,
+      "byteLength": 413776
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 1241328,
+      "byteLength": 343728
+    }
+  ],
+  "buffers": [
+    {
+      "uri": "fern_small_lod2.bin",
+      "byteLength": 1585056
+    }
+  ]
+}
