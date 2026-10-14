@@ -16,6 +16,9 @@ def check():
     assets={asset["id"]:asset for asset in manifest["assets"]}
     laurel=assets["laurel_giant"]["lods"][0]
     oak=assets["oak_tall"]["lods"][0]
+    laurel_doc=json.loads((PACK/laurel["path"]).read_text())
+    assert "KHR_mesh_quantization" in laurel_doc["extensionsRequired"]
+    assert laurel_doc["buffers"][0]["byteLength"]<100_000_000
     assert laurel["bounds_max"][1]>oak["bounds_max"][1]*1.4
     assert laurel["foliage_elements"]>oak["foliage_elements"]*2
     assert all(laurel["bounds_max"][axis]-laurel["bounds_min"][axis]>18 for axis in (0,2)), "laurel crown must spread widely in both directions"
@@ -31,16 +34,28 @@ def check():
             def read(index):
                 a=doc["accessors"][index]; v=doc["bufferViews"][a["bufferView"]]
                 n={"SCALAR":1,"VEC2":2,"VEC3":3,"VEC4":4}[a["type"]]
-                return np.frombuffer(binary,"<u4" if a["componentType"]==5125 else "<f4",
-                                     count=a["count"]*n,offset=v["byteOffset"]).reshape(-1,n)
+                dtype={5120:"i1",5121:"u1",5122:"<i2",5123:"<u2",5125:"<u4",5126:"<f4"}[a["componentType"]]
+                value=np.frombuffer(binary,dtype,count=a["count"]*n,
+                                    offset=v["byteOffset"]).reshape(-1,n)
+                if a.get("normalized"):
+                    divisor={5120:127,5121:255,5122:32767,5123:65535}[a["componentType"]]
+                    value=np.maximum(value.astype(float)/divisor,-1)
+                return value
+            node=next(node for node in doc["nodes"] if node.get("mesh")==0)
+            translation=np.asarray(node.get("translation",[0,0,0]))
+            scale=np.asarray(node.get("scale",[1,1,1]))
             positions=[]; foliage=[]; count=0
             for primitive in doc["meshes"][0]["primitives"]:
                 p,n,uv,t=(read(primitive["attributes"][key]) for key in ("POSITION","NORMAL","TEXCOORD_0","TANGENT"))
+                p=p*scale+translation
+                n=n/scale;n/=np.linalg.norm(n,axis=1,keepdims=True)
+                t=t.astype(float,copy=True)
+                t[:,:3]*=scale;t[:,:3]/=np.linalg.norm(t[:,:3],axis=1,keepdims=True)
                 assert len(p)==len(n)==len(uv)==len(t)
                 assert all(np.isfinite(v).all() for v in (p,n,uv,t)),path
                 assert np.allclose(np.linalg.norm(n,axis=1),1,atol=.002),path
                 assert np.allclose(np.linalg.norm(t[:,:3],axis=1),1,atol=.002),path
-                assert np.max(abs(np.sum(n*t[:,:3],axis=1)))<.002,path
+                assert np.max(abs(np.sum(n*t[:,:3],axis=1)))<.025,path
                 indices=read(primitive["indices"]).reshape(-1,3)
                 assert indices.max()<len(p)
                 faces=p[indices]
@@ -60,8 +75,8 @@ def check():
                 assert np.quantile(leaves[:,1],.10)<lod["bounds_max"][1]*.40
                 assert leaves[radius<4,1].max()>leaves[radius>8.5,1].max()+1
             assert count==lod["triangles"] and len(positions)==lod["vertices"]
-            assert np.allclose(positions.min(axis=0),lod["bounds_min"])
-            assert np.allclose(positions.max(axis=0),lod["bounds_max"])
+            assert np.allclose(positions.min(axis=0),lod["bounds_min"],atol=.001)
+            assert np.allclose(positions.max(axis=0),lod["bounds_max"],atol=.001)
             assert positions[:,1].min()>-.5,(path,"buried pivot")
             for mat in doc["materials"]:
                 assert mat.get("alphaMode","OPAQUE")=="OPAQUE"

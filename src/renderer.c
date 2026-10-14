@@ -22,6 +22,21 @@ typedef struct RendererMaterialCacheEntry
 	struct RendererMaterialCacheEntry *next;
 } RendererMaterialCacheEntry;
 
+/* A float knob with a default. Used for the post-processing parameters that
+   are worth being able to sweep from a shell without a rebuild. */
+static float environment_float(const char *name, float fallback)
+{
+	const char *value = getenv(name);
+	return value && *value ? (float)atof(value) : fallback;
+}
+
+/* Mirrors the BloomData push block in bloom_common.glsl. */
+typedef struct
+{
+	float filter_parameters[4]; /* source mip, prefilter flag, threshold, knee */
+	float blend_parameters[4];  /* upsample radius, coarse-level weight, reserved */
+} BloomPushConstants;
+
 #ifdef DEBUG_SHADER_DUMP
 #include <libgen.h>
 #include <stdio.h>
@@ -44,21 +59,6 @@ typedef struct
 } DumpRecord;
 _Static_assert(sizeof(DumpRecord) == SHADER_DUMP_RECORD_FLOATS * 4u,
 			   "DumpRecord must match std430 DumpRecord in shader_dump.glsl");
-
-/* A float knob with a default. Used for the post-processing parameters that
-   are worth being able to sweep from a shell without a rebuild. */
-static float environment_float(const char *name, float fallback)
-{
-	const char *value = getenv(name);
-	return value && *value ? (float)atof(value) : fallback;
-}
-
-/* Mirrors the BloomData push block in bloom_common.glsl. */
-typedef struct
-{
-	float filter_parameters[4]; /* source mip, prefilter flag, threshold, knee */
-	float blend_parameters[4];  /* upsample radius, coarse-level weight, reserved */
-} BloomPushConstants;
 
 /* Kept in sync with the DUMP_SHADER_* constants in shaders/shader_dump.glsl. */
 #define DUMP_SHADER_TERRAIN 0u

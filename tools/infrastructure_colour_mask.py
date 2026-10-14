@@ -339,13 +339,25 @@ def infrastructure_mask(rgb: np.ndarray, *, metres_per_pixel: float = 0.5,
     # Grey roofs, platforms and rail yards on grey rock pass every colour test
     # as rock. Their geometry does not: dense straight edges at right angles.
     seeds = orth > 0.06  # stations 0.08-0.13, huts 0.065; nature <= 0.023
+    if metres_per_pixel > 1.5:
+        # Coarser than ~1.5 m a building is a few pixels and its edges are not
+        # straight runs any more; crevasses and strata dominate. Off.
+        seeds &= False
     grown = (orth > 0.025) | (straightness > 0.08)
     labels, count = label(grown, structure=np.ones((3, 3)))
     if count:
         seeded = np.zeros(count + 1, bool)
         seeded[np.unique(labels[seeds])] = True
         seeded[0] = False
-        rectilinear = binary_fill_holes(seeded[labels])
+        rectilinear = seeded[labels]
+        # Fill only small enclosed holes (a courtyard, a roof's interior); a
+        # loop of edges round a whole valley must not fill the valley.
+        holes = binary_fill_holes(rectilinear) & ~rectilinear
+        hl, hn = label(holes)
+        if hn:
+            small = np.bincount(hl.ravel()) <= 2000 * px * px
+            small[0] = False
+            rectilinear |= small[hl]
         rectilinear = binary_opening(rectilinear, structure=disk(max(1, int(round(4 * px)))))
         labels, count, area, width, length = component_form(rectilinear)
         if count:
@@ -353,7 +365,7 @@ def infrastructure_mask(rgb: np.ndarray, *, metres_per_pixel: float = 0.5,
             # structure is mostly built surface: neither green nor snow-white.
             built_surface = (exg < 0.03) & (lum < 0.80) & (lum > 0.08)
             surface_share = component_mean(labels, count, built_surface.astype(np.float32))
-            keep = (area >= 300 * px * px) & (surface_share > 0.55)
+            keep = (area >= 300 * px * px) & (area <= 80000 * px * px) & (surface_share > 0.55)
             keep[0] = False
             building |= keep[labels]
 

@@ -4,7 +4,10 @@
 Y up and its pivot at ground centre. Each glTF is standalone except for the
 shared `textures/` directory. Keep `models/` and `textures/` beside each other.
 The assets use the existing renderer's opaque PBR path, indexed meshes and
-explicit tangents. No shader changes or alpha-cutout support are required.
+explicit tangents. Vertex attributes use standard `KHR_mesh_quantization`:
+positions retain sub-millimetre precision at tree scale, while normalized
+vectors and foliage UVs avoid wasting four bytes per component. No shader
+changes or alpha-cutout support are required.
 
 ## Contents
 

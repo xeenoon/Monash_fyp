@@ -7,13 +7,21 @@ include(CTest)
 # sink (see shaders/shader_dump.glsl): X captures a frame and C clears the dump.
 # Keep an escape hatch for memory-constrained builds, but make diagnostics the
 # default so a normal configure is immediately able to capture rendering bugs.
-option(DEBUG_SHADER_DUMP "Enable the 'X'-key per-fragment shader data dump" ON)
+if(WIN32)
+    set(DEBUG_SHADER_DUMP_DEFAULT OFF)
+else()
+    set(DEBUG_SHADER_DUMP_DEFAULT ON)
+endif()
+option(DEBUG_SHADER_DUMP "Enable the 'X'-key per-fragment shader data dump"
+    ${DEBUG_SHADER_DUMP_DEFAULT})
 option(TERRAIN_STRETCH_OVERLAY
     "Compile the diagnostic red terrain texture-stretch overlay" OFF)
 option(TERRAIN_GOLDEN
     "Boot the modern-render/legacy-sampling golden terrain dataset by default" ON)
 option(TERRAIN_BAKE
     "Build the headless Vulkan compute terrain baker (terrain_bake) and its tests" OFF)
+option(TERRAIN_GAME_DEFAULT
+    "Launch the full dungeon game when TERRAIN_SCENE is not set" OFF)
 set(SHADER_DUMP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/debug_dumps")
 
 set(CMAKE_C_STANDARD 11)
@@ -342,7 +350,10 @@ add_library(dungeon_level STATIC
     src/dungeon_lock_layout.c
     src/dungeon_padlock.c
     src/dungeon_session.c)
-target_include_directories(dungeon_level PUBLIC src)
+target_include_directories(dungeon_level PUBLIC
+    src
+    $<TARGET_PROPERTY:Vulkan::Vulkan,INTERFACE_INCLUDE_DIRECTORIES>
+    $<TARGET_PROPERTY:cglm::cglm,INTERFACE_INCLUDE_DIRECTORIES>)
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(dungeon_level PRIVATE -Wall -Wextra -Wpedantic)
 endif()
@@ -525,24 +536,39 @@ endif()
 # Pinned decoder sources used by the strict static glTF importer.  cgltf:
 # 85cd62382dfea638278962690cf515023f33ed00 (MIT); MikkTSpace:
 # 3e895b49d05ea07e4c2133156cfa94369e19e409 (zlib).
+if(WIN32)
+    # The Windows archive is relocatable: main() changes into the executable's
+    # directory before any files are opened, so these paths stay valid after
+    # the bundle is moved or extracted anywhere on the target machine.
+    set(RUNTIME_SHADER_DIR "shaders")
+    set(RUNTIME_SOURCE_DIR ".")
+    set(RUNTIME_TERRAIN_DIR "trn-golden")
+else()
+    set(RUNTIME_SHADER_DIR "${SHADER_OUTPUT_DIR}")
+    set(RUNTIME_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+    set(RUNTIME_TERRAIN_DIR "${ACTIVE_TERRAIN_DATASET_DIR}")
+endif()
 target_compile_definitions(terrain_renderer PRIVATE
-    SHADER_DIR="${SHADER_OUTPUT_DIR}"
-    ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets"
-    TEXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/textures"
-    BENCHMARK_DIR="${CMAKE_CURRENT_SOURCE_DIR}/benchmark-assets"
-    QUARRY_DIR="${CMAKE_CURRENT_SOURCE_DIR}/valley-of-the-ancient"
-    TRN_DIR="${ACTIVE_TERRAIN_DATASET_DIR}"
-    SHADOWED_TERRAIN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/alps-data/trn-alps-16km-shadowed"
-    UNSHADOWED_ALPS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/alps-data/trn-alps-16km"
-    GRADED_ALPS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/alps-data/trn-alps-16km-graded"
-    ENV_HDR_PATH="${CMAKE_CURRENT_SOURCE_DIR}/assets/env.hdr"
-    DUNGEON_TORCH_PATH="${CMAKE_CURRENT_SOURCE_DIR}/assets/dungeons/torch/walltorch.gltf"
-    INDIANA_RUNTIME_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets/characters/indiana_jones/runtime"
-    DUNGEON_PADLOCK_PATH="${CMAKE_CURRENT_SOURCE_DIR}/assets/dungeons/padlock/runtime/padlock.gltf"
-    DUNGEON_TEXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/textures/dungeon/runtime"
-    DUNGEON_GUARDIAN_PATH="${CMAKE_CURRENT_SOURCE_DIR}/assets/characters/medusa/medusa.gltf"
-    DUNGEON_MONK_PATH="${CMAKE_CURRENT_SOURCE_DIR}/assets/characters/praying_monk/praying_monk.gltf"
+    SHADER_DIR="${RUNTIME_SHADER_DIR}"
+    ASSET_DIR="${RUNTIME_SOURCE_DIR}/assets"
+    TEXTURE_DIR="${RUNTIME_SOURCE_DIR}/textures"
+    BENCHMARK_DIR="${RUNTIME_SOURCE_DIR}/benchmark-assets"
+    QUARRY_DIR="${RUNTIME_SOURCE_DIR}/valley-of-the-ancient"
+    TRN_DIR="${RUNTIME_TERRAIN_DIR}"
+    SHADOWED_TERRAIN_DIR="${RUNTIME_SOURCE_DIR}/alps-data/trn-alps-16km-shadowed"
+    UNSHADOWED_ALPS_DIR="${RUNTIME_SOURCE_DIR}/alps-data/trn-alps-16km"
+    GRADED_ALPS_DIR="${RUNTIME_SOURCE_DIR}/alps-data/trn-alps-16km-graded"
+    ENV_HDR_PATH="${RUNTIME_SOURCE_DIR}/assets/env.hdr"
+    DUNGEON_TORCH_PATH="${RUNTIME_SOURCE_DIR}/assets/dungeons/torch/walltorch.gltf"
+    INDIANA_RUNTIME_DIR="${RUNTIME_SOURCE_DIR}/assets/characters/indiana_jones/runtime"
+    DUNGEON_PADLOCK_PATH="${RUNTIME_SOURCE_DIR}/assets/dungeons/padlock/runtime/padlock.gltf"
+    DUNGEON_TEXTURE_DIR="${RUNTIME_SOURCE_DIR}/textures/dungeon/runtime"
+    DUNGEON_GUARDIAN_PATH="${RUNTIME_SOURCE_DIR}/assets/characters/medusa/medusa.gltf"
+    DUNGEON_MONK_PATH="${RUNTIME_SOURCE_DIR}/assets/characters/praying_monk/praying_monk.gltf"
     CGLM_FORCE_DEPTH_ZERO_TO_ONE)
+if(TERRAIN_GAME_DEFAULT)
+    target_compile_definitions(terrain_renderer PRIVATE TERRAIN_GAME_DEFAULT)
+endif()
 if(DEBUG_SHADER_DUMP)
     target_compile_definitions(terrain_renderer PRIVATE
         DEBUG_SHADER_DUMP

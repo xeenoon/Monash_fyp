@@ -3,6 +3,12 @@
     "version": "2.0",
     "generator": "Gameport detailed vegetation"
   },
+  "extensionsUsed": [
+    "KHR_mesh_quantization"
+  ],
+  "extensionsRequired": [
+    "KHR_mesh_quantization"
+  ],
   "scene": 0,
   "scenes": [
     {
@@ -14,6 +20,16 @@
   "nodes": [
     {
       "mesh": 0,
+      "translation": [
+        -0.08281612396240234,
+        9.009979248046875,
+        -0.30176210403442383
+      ],
+      "scale": [
+        9.809215545654297,
+        9.121305465698242,
+        9.990947723388672
+      ],
       "name": "laurel_giant_lod0"
     }
   ],
@@ -215,34 +231,36 @@
   "accessors": [
     {
       "bufferView": 0,
-      "componentType": 5126,
+      "componentType": 5122,
       "count": 309032,
       "type": "VEC3",
+      "normalized": true,
       "min": [
-        -9.645781517028809,
-        -0.11132664978504181,
-        -10.148418426513672
+        -0.9748832667012544,
+        -1.0,
+        -0.9855647450178533
       ],
       "max": [
-        9.423385620117188,
-        18.04205322265625,
-        9.462400436401367
+        0.9691152684102908,
+        0.9902035584582048,
+        0.9772942289498581
       ]
     },
     {
       "bufferView": 1,
-      "componentType": 5126,
+      "componentType": 5120,
       "count": 309032,
       "type": "VEC3",
+      "normalized": true,
       "min": [
         -1.0,
         -1.0,
-        -0.9999993443489075
+        -1.0
       ],
       "max": [
         1.0,
         1.0,
-        0.9999996423721313
+        1.0
       ]
     },
     {
@@ -253,9 +271,10 @@
     },
     {
       "bufferView": 3,
-      "componentType": 5126,
+      "componentType": 5120,
       "count": 309032,
-      "type": "VEC4"
+      "type": "VEC4",
+      "normalized": true
     },
     {
       "bufferView": 4,
@@ -265,47 +284,51 @@
     },
     {
       "bufferView": 5,
-      "componentType": 5126,
+      "componentType": 5122,
       "count": 2056320,
       "type": "VEC3",
+      "normalized": true,
       "min": [
-        -9.728404998779297,
-        3.8772873878479004,
-        -10.292709350585938
+        -0.9833063753166296,
+        -0.5627002777184362,
+        -1.0
       ],
       "max": [
-        9.726399421691895,
-        18.131284713745117,
-        9.575078964233398
+        1.0,
+        1.0,
+        0.988586077455977
       ]
     },
     {
       "bufferView": 6,
-      "componentType": 5126,
+      "componentType": 5120,
       "count": 2056320,
       "type": "VEC3",
+      "normalized": true,
       "min": [
-        -0.9999991655349731,
-        -0.9999997019767761,
-        -0.9999999403953552
+        -1.0,
+        -1.0,
+        -1.0
       ],
       "max": [
-        0.9999991655349731,
-        0.9999997019767761,
-        0.9999999403953552
+        1.0,
+        1.0,
+        1.0
       ]
     },
     {
       "bufferView": 7,
-      "componentType": 5126,
+      "componentType": 5123,
       "count": 2056320,
-      "type": "VEC2"
+      "type": "VEC2",
+      "normalized": true
     },
     {
       "bufferView": 8,
-      "componentType": 5126,
+      "componentType": 5120,
       "count": 2056320,
-      "type": "VEC4"
+      "type": "VEC4",
+      "normalized": true
     },
     {
       "bufferView": 9,
@@ -315,47 +338,51 @@
     },
     {
       "bufferView": 10,
-      "componentType": 5126,
+      "componentType": 5122,
       "count": 604800,
       "type": "VEC3",
+      "normalized": true,
       "min": [
-        -9.8920316696167,
-        3.879657030105591,
-        -10.228547096252441
+        -1.0,
+        -0.5624561296426283,
+        -0.9935911130100405
       ],
       "max": [
-        9.537633895874023,
-        18.12228775024414,
-        9.68918514251709
+        0.9807428205206458,
+        0.9990234076967681,
+        1.0
       ]
     },
     {
       "bufferView": 11,
-      "componentType": 5126,
+      "componentType": 5120,
       "count": 604800,
       "type": "VEC3",
+      "normalized": true,
       "min": [
-        -0.9999875426292419,
-        -0.9999997615814209,
-        -0.9999927282333374
+        -1.0,
+        -1.0,
+        -1.0
       ],
       "max": [
-        0.9999875426292419,
-        0.9999997615814209,
-        0.9999927282333374
+        1.0,
+        1.0,
+        1.0
       ]
     },
     {
       "bufferView": 12,
-      "componentType": 5126,
+      "componentType": 5123,
       "count": 604800,
-      "type": "VEC2"
+      "type": "VEC2",
+      "normalized": true
     },
     {
       "bufferView": 13,
-      "componentType": 5126,
+      "componentType": 5120,
       "count": 604800,
-      "type": "VEC4"
+      "type": "VEC4",
+      "normalized": true
     },
     {
       "bufferView": 14,
@@ -368,83 +395,83 @@
     {
       "buffer": 0,
       "byteOffset": 0,
-      "byteLength": 3708384
+      "byteLength": 1854192
     },
     {
       "buffer": 0,
-      "byteOffset": 3708384,
-      "byteLength": 3708384
+      "byteOffset": 1854192,
+      "byteLength": 927096
     },
     {
       "buffer": 0,
-      "byteOffset": 7416768,
+      "byteOffset": 2781288,
       "byteLength": 2472256
     },
     {
       "buffer": 0,
-      "byteOffset": 9889024,
-      "byteLength": 4944512
+      "byteOffset": 5253544,
+      "byteLength": 1236128
     },
     {
       "buffer": 0,
-      "byteOffset": 14833536,
+      "byteOffset": 6489672,
       "byteLength": 5352960
     },
     {
       "buffer": 0,
-      "byteOffset": 20186496,
-      "byteLength": 24675840
+      "byteOffset": 11842632,
+      "byteLength": 12337920
     },
     {
       "buffer": 0,
-      "byteOffset": 44862336,
-      "byteLength": 24675840
+      "byteOffset": 24180552,
+      "byteLength": 6168960
     },
     {
       "buffer": 0,
-      "byteOffset": 69538176,
-      "byteLength": 16450560
+      "byteOffset": 30349512,
+      "byteLength": 8225280
     },
     {
       "buffer": 0,
-      "byteOffset": 85988736,
-      "byteLength": 32901120
+      "byteOffset": 38574792,
+      "byteLength": 8225280
     },
     {
       "buffer": 0,
-      "byteOffset": 118889856,
+      "byteOffset": 46800072,
       "byteLength": 28788480
     },
     {
       "buffer": 0,
-      "byteOffset": 147678336,
-      "byteLength": 7257600
+      "byteOffset": 75588552,
+      "byteLength": 3628800
     },
     {
       "buffer": 0,
-      "byteOffset": 154935936,
-      "byteLength": 7257600
+      "byteOffset": 79217352,
+      "byteLength": 1814400
     },
     {
       "buffer": 0,
-      "byteOffset": 162193536,
-      "byteLength": 4838400
+      "byteOffset": 81031752,
+      "byteLength": 2419200
     },
     {
       "buffer": 0,
-      "byteOffset": 167031936,
-      "byteLength": 9676800
+      "byteOffset": 83450952,
+      "byteLength": 2419200
     },
     {
       "buffer": 0,
-      "byteOffset": 176708736,
+      "byteOffset": 85870152,
       "byteLength": 8467200
     }
   ],
   "buffers": [
     {
       "uri": "laurel_giant_lod0.bin",
-      "byteLength": 185175936
+      "byteLength": 94337352
     }
   ]
 }

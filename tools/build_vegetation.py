@@ -470,19 +470,28 @@ class Export:
     def __init__(self):
         self.buffer=bytearray()
         self.doc={"asset":{"version":"2.0","generator":"Gameport detailed vegetation"},
+                  "extensionsUsed":["KHR_mesh_quantization"],
+                  "extensionsRequired":["KHR_mesh_quantization"],
                   "scene":0,"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0}],
                   "meshes":[],"materials":[],"images":[],"textures":[],
                   "samplers":[{"magFilter":9729,"minFilter":9987,"wrapS":10497,"wrapT":10497}],
                   "accessors":[],"bufferViews":[]}
 
-    def accessor(self,a,kind,index=False):
-        a=np.asarray(a,dtype="<u4" if index else "<f4")
+    def accessor(self,a,kind,component=5126,normalized=False):
+        dtype={5120:"i1",5121:"u1",5122:"<i2",5123:"<u2",5125:"<u4",5126:"<f4"}[component]
+        a=np.asarray(a,dtype=dtype)
         while len(self.buffer)%4:self.buffer.append(0)
         v=len(self.doc["bufferViews"])
         self.doc["bufferViews"].append({"buffer":0,"byteOffset":len(self.buffer),"byteLength":a.nbytes})
         self.buffer.extend(a.tobytes())
-        acc={"bufferView":v,"componentType":5125 if index else 5126,"count":len(a),"type":kind}
-        if kind=="VEC3":acc.update(min=a.min(axis=0).tolist(),max=a.max(axis=0).tolist())
+        acc={"bufferView":v,"componentType":component,"count":len(a),"type":kind}
+        if normalized: acc["normalized"]=True
+        if kind=="VEC3":
+            value=a.astype(float)
+            if normalized:
+                divisor=127 if component==5120 else 32767 if component==5122 else 255 if component==5121 else 65535
+                value=np.maximum(value/divisor,-1)
+            acc.update(min=value.min(axis=0).tolist(),max=value.max(axis=0).tolist())
         self.doc["accessors"].append(acc)
         return len(self.doc["accessors"])-1
 
@@ -492,6 +501,16 @@ class Export:
 
     def write(self,g,name):
         primitives=[]; all_pos=[]; triangles=0; vertices=0
+        # Quantized positions use one model-space decode transform. At the
+        # giant laurel's scale this retains better than 0.4 mm precision while
+        # halving POSITION storage. Normals and tangents are transformed into
+        # that local space before SNORM8 packing, so cgltf's ordinary node
+        # transform reconstructs their original directions.
+        source_positions=np.concatenate([part[0] for parts in g.parts.values() for part in parts])
+        bounds_min=source_positions.min(axis=0); bounds_max=source_positions.max(axis=0)
+        center=(bounds_min+bounds_max)/2
+        scale=np.maximum((bounds_max-bounds_min)/2,1e-6)
+        self.doc["nodes"][0].update(translation=center.tolist(),scale=scale.tolist())
         for mat,parts in sorted(g.parts.items()):
             positions=[]; normals=[]; uvs=[]; tangents=[]; indices=[]; offset=0
             for p,n,uv,t,idx in parts:
@@ -500,6 +519,13 @@ class Export:
             arrays=list(map(np.concatenate,(positions,normals,uvs,tangents,indices)))
             p,n,uv,t,idx=arrays
             all_pos.append(p); triangles+=len(idx)//3; vertices+=len(p)
+            qp=np.rint(np.clip((p-center)/scale,-1,1)*32767).astype(np.int16)
+            qn=np.rint(unit(n*scale)*127).astype(np.int8)
+            qt=np.empty(t.shape,dtype=np.int8)
+            qt[:,:3]=np.rint(unit(t[:,:3]/scale)*127).astype(np.int8)
+            qt[:,3]=np.where(t[:,3]<0,-127,127).astype(np.int8)
+            packed_uv=np.all((uv>=0)&(uv<=1))
+            quv=np.rint(np.clip(uv,0,1)*65535).astype(np.uint16) if packed_uv else uv
             material_index=len(self.doc["materials"])
             label,texture,color=MATERIALS[mat]
             pbr={"baseColorFactor":[*color,1],"metallicFactor":0,"roughnessFactor":1 if texture else .7}
@@ -512,9 +538,11 @@ class Export:
                 material["occlusionTexture"]=pbr["metallicRoughnessTexture"].copy()
             self.doc["materials"].append(material)
             primitives.append({"material":material_index,"attributes":{
-                "POSITION":self.accessor(p,"VEC3"),"NORMAL":self.accessor(n,"VEC3"),
-                "TEXCOORD_0":self.accessor(uv,"VEC2"),"TANGENT":self.accessor(t,"VEC4")},
-                "indices":self.accessor(idx,"SCALAR",True)})
+                "POSITION":self.accessor(qp,"VEC3",5122,True),
+                "NORMAL":self.accessor(qn,"VEC3",5120,True),
+                "TEXCOORD_0":self.accessor(quv,"VEC2",5123,True) if packed_uv else self.accessor(quv,"VEC2"),
+                "TANGENT":self.accessor(qt,"VEC4",5120,True)},
+                "indices":self.accessor(idx,"SCALAR",5125)})
         self.doc["meshes"]=[{"name":name,"primitives":primitives}]
         self.doc["nodes"][0]["name"]=name
         self.doc["buffers"]=[{"uri":name+".bin","byteLength":len(self.buffer)}]

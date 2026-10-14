@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #ifndef DUNGEON_TEXTURE_DIR
 #define DUNGEON_TEXTURE_DIR "textures/dungeon"
@@ -67,6 +68,12 @@ static bool manifest_extent(const char *root, double extent[4])
 				  &extent[3]) == 4;
 }
 
+static bool directory_exists(const char *path)
+{
+	struct stat info;
+	return stat(path, &info) == 0 && S_ISDIR(info.st_mode);
+}
+
 /* Loads the finest tile level under the square region centred on
  * (centre_x, centre_z) into one height grid, plus a grass and a snow estimate
  * per sample from the same tiles' imagery. World X is easting and world Z is
@@ -79,12 +86,8 @@ static bool load_heights(Overworld *world, const char *root, double centre_x, do
 	for (int l = 8; l >= 0 && level < 0; --l)
 	{
 		snprintf(path, sizeof(path), "%s/tiles/%d", root, l);
-		FILE *probe = fopen(path, "rb");
-		if (probe)
-		{
-			fclose(probe);
+		if (directory_exists(path))
 			level = l;
-		}
 	}
 	double extent[4];
 	if (level < 0 || !manifest_extent(root, extent))

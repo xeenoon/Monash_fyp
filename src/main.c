@@ -5,6 +5,10 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
 
 #include "atmosphere.h"
 #include "benchmark_ground.h"
@@ -29,6 +33,25 @@
 
 #define WINDOW_WIDTH 1280
 #define WINDOW_HEIGHT 720
+
+#ifdef _WIN32
+static void use_executable_directory(void)
+{
+	wchar_t path[32768];
+	DWORD length = GetModuleFileNameW(NULL, path, (DWORD)(sizeof(path) / sizeof(path[0])));
+	if (length == 0 || length >= (DWORD)(sizeof(path) / sizeof(path[0])))
+		return;
+	for (DWORD i = length; i > 0; --i)
+	{
+		if (path[i - 1u] == L'\\' || path[i - 1u] == L'/')
+		{
+			path[i - 1u] = L'\0';
+			SetCurrentDirectoryW(path);
+			return;
+		}
+	}
+}
+#endif
 
 static bool dungeon_cache_path(uint32_t dungeon_id, char *out, size_t capacity)
 {
@@ -410,6 +433,9 @@ static void game_script_step(const char *script, uint64_t frame, Input *input, D
 
 int main(int argc, char *argv[])
 {
+#ifdef _WIN32
+	use_executable_directory();
+#endif
 	TerrainTextureSet terrain_textures;
 	if (!terrain_texture_set_from_arguments(argc, argv, &terrain_textures))
 	{
@@ -422,6 +448,10 @@ int main(int argc, char *argv[])
 		printf("Texture stretch overlay: on (threshold %.2fx, opacity %.2f)\n",
 			   stretch_overlay.threshold, stretch_overlay.opacity);
 	const char *scene = getenv("TERRAIN_SCENE");
+#ifdef TERRAIN_GAME_DEFAULT
+	if (!scene || !*scene)
+		scene = "dungeon";
+#endif
 	bool use_terrain = !scene || strcmp(scene, "terrain") == 0;
 	bool use_quarry = scene && strcmp(scene, "quarry") == 0;
 	bool use_phase_d_demo = scene && strcmp(scene, "phase_d_demo") == 0;
@@ -443,7 +473,11 @@ int main(int argc, char *argv[])
 		}
 		char selector[8];
 		snprintf(selector, sizeof(selector), "%d", (int)lab_scene);
+	#ifdef _WIN32
+		_putenv_s("DUNGEON_LAB", selector);
+	#else
 		setenv("DUNGEON_LAB", selector, 1);
+	#endif
 	}
 	bool use_torch_lab = lab_scene != DUNGEON_LAB_NONE;
 	bool use_dungeon = use_torch_lab || (scene && strcmp(scene, "dungeon") == 0);
