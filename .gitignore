@@ -19,7 +19,8 @@
 # Python bytecode caches.
 __pycache__/
 
-# Generated captures and texture outputs are kept out of source control.
+# Generated captures, geometry buffers, and texture outputs stay out of Git.
+*.bin
 *.png
 
 # Repository-root notes and plans. Keep the public README tracked.

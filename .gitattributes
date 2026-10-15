@@ -1,1 +1,0 @@
-assets/vegetation/models/laurel_giant_lod0.bin filter=lfs diff=lfs merge=lfs -text
