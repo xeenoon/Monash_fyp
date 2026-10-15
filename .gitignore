@@ -19,9 +19,12 @@
 # Python bytecode caches.
 __pycache__/
 
+# Generated captures and texture outputs are kept out of source control.
+*.png
+
 # Repository-root notes and plans. Keep the public README tracked.
 /*.md
-!/readme.md
+!/README.md
 /out/
 # generated shape-bank cache (deterministic, rebuildable)
 **/.shape_cache/
